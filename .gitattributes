@@ -1,0 +1,55 @@
+# PiTrac V2 — line-ending and diff policy
+#
+# Git for Windows defaults to core.autocrlf=true, which converts LF to CRLF on
+# checkout. That is harmless for most files and BREAKS shell scripts destined for
+# Linux: bash reports `bad interpreter: /bin/bash^M` and the error names the
+# interpreter, not the line endings, so it is genuinely confusing to diagnose.
+#
+# tools/flash_swd.sh runs on a Raspberry Pi. It must stay LF.
+
+# Normalise text files to LF in the repository; check out per-platform default.
+* text=auto
+
+# ---------------------------------------------------------------------------
+# MUST be LF — these execute on Linux (the Pi) regardless of where they are edited
+# ---------------------------------------------------------------------------
+*.sh        text eol=lf
+*.cfg       text eol=lf
+*.py        text eol=lf
+
+# ---------------------------------------------------------------------------
+# Source — normal text handling, diffs are useful
+# ---------------------------------------------------------------------------
+*.c         text
+*.h         text
+*.pio       text
+*.cmake     text
+*.md        text
+CMakeLists.txt text
+
+# ---------------------------------------------------------------------------
+# KiCad — S-expression text. Diffable, but very large; expect noisy diffs on the
+# PCB file in particular. Keep them text so merges and history stay meaningful.
+# ---------------------------------------------------------------------------
+*.kicad_sch  text
+*.kicad_pcb  text
+*.kicad_pro  text
+*.kicad_sym  text
+*.kicad_mod  text
+*.kicad_dru  text
+*.net        text
+*.csv        text
+
+# ---------------------------------------------------------------------------
+# Binary — never touch, never try to diff
+# ---------------------------------------------------------------------------
+*.pdf        binary
+*.zip        binary
+*.uf2        binary
+*.elf        binary
+*.bin        binary
+*.png        binary
+*.jpg        binary
+*.step       binary
+*.stp        binary
+*.wrl        binary

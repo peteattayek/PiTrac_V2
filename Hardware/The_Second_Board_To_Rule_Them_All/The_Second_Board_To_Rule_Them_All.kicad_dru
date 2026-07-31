@@ -1,0 +1,10 @@
+(version 1)
+(rule "Enforce_3W_Between_Tracks"
+    (constraint clearance (min 0.4064mm))
+    (condition "A.NetClass == 'Digital_HighFrequency' && A.Type == 'Track' && B.Type == 'Track'")
+)
+
+(rule "Relax_Clearance_In_Breakout"
+    (constraint clearance (min 0.15mm))
+    (condition "A.insideArea('Breakout_Zone')")
+)

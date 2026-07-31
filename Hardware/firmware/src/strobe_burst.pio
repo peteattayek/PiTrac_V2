@@ -1,0 +1,97 @@
+﻿; SPDX-License-Identifier: GPL-3.0-or-later
+; Copyright (C) 2026 PiTrac contributors
+;
+; strobe_burst.pio â€” Phase 6 burst engine for PIO0 SM0, driving GPIO25 (Strobe_Pulse).
+;
+; NOT IN THE BUILD YET. Added to CMakeLists (pico_generate_pio_header) when Phase 6
+; starts. Written now because the program itself is measurement-independent â€” only
+; the *schedule* fed to it depends on the clamp width measured in 6a.
+;
+; ---------------------------------------------------------------------------
+; Contract
+; ---------------------------------------------------------------------------
+; The state machine consumes a stream of 32-bit words from the TX FIFO, DMA-fed:
+;
+;     width_0, gap_0, width_1, gap_1, ... , 0
+;
+; Each value is a duration in microseconds MINUS loop overhead (see below). A
+; width of 0 is the sentinel that ends the burst, raises IRQ0, and blocks waiting
+; for the next burst.
+;
+; Clock: divided to 1 MHz, so one `jmp x--` iteration is 1 us and durations are
+; expressed directly in microseconds.
+;
+; ---------------------------------------------------------------------------
+; What this program does NOT do, deliberately
+; ---------------------------------------------------------------------------
+; It does not enforce a maximum pulse width. That is U5's job â€” a 74LVC1G123
+; monostable in hardware, which clamps every high phase regardless of what the
+; PIO, the DMA, or a crashed core ever asks for. Duplicating the limit here would
+; create a second source of truth and tempt someone to "fix" the discrepancy by
+; defeating the hardware one.
+;
+; Firmware clamps schedules to STROBE_SW_MAX_US (0.85 x the MEASURED hardware
+; limit) so the hardware watchdog is a backstop that never normally fires, not a
+; routine part of pulse shaping.
+;
+; ---------------------------------------------------------------------------
+; Timing note
+; ---------------------------------------------------------------------------
+; Each loop iteration is 1 cycle (1 us). The set/pull/mov instructions around the
+; loops add a fixed few cycles per phase. The host must subtract that overhead
+; when building the schedule â€” see STROBE_PIO_OVERHEAD_US in strobe.c. Measure it
+; on the logic analyzer in 6a.2 rather than trusting this comment.
+;
+
+.program strobe_burst
+
+start:
+    pull block              ; width in us; 0 ends the burst
+    mov x, osr
+    jmp !x done
+
+    set pins, 1             ; ---- pulse high ----
+hi:
+    jmp x-- hi
+
+    set pins, 0             ; ---- pulse low ----
+    pull block              ; gap in us
+    mov y, osr
+lo:
+    jmp y-- lo
+
+    jmp start
+
+done:
+    irq set 0               ; burst complete -> wakes the engine loop on core 1
+    jmp start               ; block on pull, waiting for the next burst
+
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+// Initialise SM `sm` on `pio` to drive `pin` at 1 MHz (1 us per loop iteration).
+static inline void strobe_burst_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_sm_config c = strobe_burst_program_get_default_config(offset);
+
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    sm_config_set_set_pins(&c, pin, 1);
+
+    // 1 MHz: one `jmp x--` per microsecond, so schedule values are microseconds.
+    float div = (float)clock_get_hz(clk_sys) / 1000000.0f;
+    sm_config_set_clkdiv(&c, div);
+
+    // All 32 bits out, no autopull â€” `pull block` is explicit so the sentinel
+    // and the FIFO-empty stall are both well defined.
+    sm_config_set_out_shift(&c, false, false, 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);   // deeper TX FIFO, 8 words
+
+    pio_sm_init(pio, sm, offset, &c);
+
+    // Leave the pin low and the SM stopped. Phase 6 enables it explicitly, and
+    // only once strobe_permitted() agrees.
+    pio_sm_set_pins_with_mask(pio, sm, 0, 1u << pin);
+    pio_sm_set_enabled(pio, sm, false);
+}
+%}
