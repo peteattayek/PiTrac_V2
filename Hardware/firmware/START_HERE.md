@@ -48,7 +48,7 @@ Windows saves a great deal of pain.
 
 1. **File → Open Folder** → choose:
    ```
-   C:\Users\ATTAYEKP\Downloads\The_Second_Board_To_Rule_Them_All\firmware
+   C:\Users\ATTAYEKP\Github-Personal\PiTrac_V2\Hardware\firmware
    ```
    Open the **`firmware`** folder itself, not the folder above it. This matters —
    `CMakeLists.txt` has to be at the top level of what you open.
@@ -98,10 +98,15 @@ at the bottom of the window.
 ```
 and a new file at `firmware/build/pitrac.uf2`.
 
-**This is the step most likely to throw errors on the first attempt.** The code
-has never been compiled — see the Troubleshooting section at the bottom, and
-paste any error text to me; first-build errors in a fresh project are routine
-and usually one-line fixes.
+**The firmware builds clean** (SDK 2.3.0, toolchain 15_2_Rel1, no warnings) — roughly
+73 KB of 2 MB flash and 35 KB of 520 KB RAM. If *your* first build throws errors it is
+almost certainly the toolchain or the import step, not the code; see Troubleshooting at
+the bottom.
+
+**Faster than the IDE button**, once it has configured itself once:
+```
+& "$env:USERPROFILE\.pico-sdk\ninja\v1.13.2\ninja.exe" -C <firmware>\build
+```
 
 ---
 
@@ -164,13 +169,27 @@ The important one. Expect roughly:
 ```
 state    : STANDBY (12345 ms)
 fault    : none
-5V_IN    : 4.65 V   (guard 4.90 V, scale 1.0000)
+5V_IN    : 4.850 V   (latch guard 5.05 V, load floor 4.60 V, scale 1.0630)
 latch    : 0   railsready 0
 pi       : present 0  3v3 0  userspace 0  isdown 1
 button   : released
+adcmode  : 1
 ```
-The number that matters is **5V_IN around 4.6–4.7 V**. That's USB power coming
-through diode D8, and it's below the 4.90 V guard.
+The number that matters is **5V_IN in the 4.6–4.85 V range** — 4.85 V was measured on
+this board, but USB VBUS legitimately varies by port and 4.59 V has been seen on another.
+That is USB power arriving through diode D8, and it is below the **5.05 V latch guard**,
+which is the point.
+
+> **Two different thresholds appear on that line and they are not interchangeable.**
+> `latch guard` (5.05 V) is the USB-vs-real-supply discriminator, asked once before the
+> latch closes. `load floor` (4.60 V) is a much lower bar asked *after* the latch closes,
+> because a real supply is allowed to sag once the Pi and the boost start drawing. A third
+> threshold, 4.90 V, runs continuously while latched. See `board.h` for why all three exist.
+>
+> **`scale` should read 1.0630, not 1.0000.** The +5V_IN read path is ~5.9 % low
+> (`PROGRESS.md` Q9), so that compile-time correction is what makes a good 5.2 V supply
+> read as 5.2 V instead of 4.89 V. If you see 1.0000, you are running an old build and the
+> board will refuse to latch on a perfectly good supply.
 
 ```
 adc5v
@@ -187,8 +206,10 @@ One more, to prove the analog path and the data plumbing:
 capture 0x02 1000 100000
 ```
 This samples the +5 V monitor 1000 times and prints the numbers as CSV. Expect a
-flat run of nearly identical values around 2900. This same command is what makes
-the later optical work possible — it turns the board into its own oscilloscope.
+flat run of nearly identical values **around 2830** on USB power. (These are raw ADC
+codes, before the 1.063 scale is applied — that is why the number looks low against
+`stat`'s 4.850 V.) This same command is what makes the later optical work possible —
+it turns the board into its own oscilloscope.
 
 ---
 
@@ -264,6 +285,19 @@ up once you're iterating; the buttons get old around the twentieth cycle.
 | Reboot to flash mode without buttons | type `bootsel` |
 | Start over on a bad build | delete `firmware\build`, rebuild |
 
-**Document map:** `START_HERE.md` (you are here) → `BENCH.md` (bench procedures,
-phase by phase) → `PROGRESS.md` (what's done, open questions, measurement log) →
-`SETUP.md` (toolchain details and the manual install path).
+**Document map**
+
+| Doc | What it is |
+|---|---|
+| `START_HERE.md` | You are here — build, flash, first commands |
+| **`PROGRESS.md`** | **The living record.** What's done, open questions, measurement log. Read this first when resuming. |
+| `BENCH.md` | Phases 0 → 1c: toolchain, rails, latch, Pi shutdown, panel |
+| `BENCH_P2_BEAM.md` | Phase 2 — beam carrier and demod phase lock |
+| `BENCH_P3_DETECT.md` | Phases 3 & 4 — photodiode chain and trigger selection |
+| `BENCH_P5_P7_MIC_CAMERA.md` | Phases 5 & 7 — mic (USB power only) and cameras |
+| `BENCH_P6_STROBE.md` | Phase 6 — ⚠ 9 A, linear-mode FET. Read fully before powering. |
+| `BENCH_P8_PI.md` | Phase 8 — real Pi integration |
+| `ARCHITECTURE.md` | What runs on PIO/PWM/DMA vs the CPU |
+| `SETUP.md` | Toolchain detail and the manual install path |
+
+**Current status: phases 0 through 1c are complete on hardware. Phase 2 is next.**

@@ -67,9 +67,10 @@ static const char *k_help =
     "  beam clamp                 1 kHz / 50%% â€” scope TP5 to measure the U9 clamp (Q1)\n"
     "  beam sweep <f0> <f1> <n> <dwell_ms>   duty-fidelity sweep (Q2)\n"
     "\n"
-    "  fault                      show / 'fault clear'\n"
-    "  reset                      soft reset\n"
-    "  bootsel                    reboot to USB mass storage\n";
+    "  fault                      show / 'fault clear' (also acks FAULT -> STANDBY)\n"
+    "  reset [force]              soft reset. REFUSED while a Pi is powered:\n"
+    "                             a reset drops the latch = hard power cut\n"
+    "  bootsel [force]            reboot to USB mass storage (same guard)\n";
 
 // ---------------------------------------------------------------------------
 
@@ -85,6 +86,32 @@ static void cmd_id(void) {
     printf("sysclk   : %u Hz\n", (unsigned)clock_get_hz(clk_sys));
     printf("NOTE: run 'picotool info -a' on the host for the die revision;\n");
     printf("      erratum E9 (input+pulldown latching ~2.2V) affects GPIO0/8/9 here.\n");
+}
+
+// ---------------------------------------------------------------------------
+// Reset guard.
+//
+// `reset` and `bootsel` do not merely restart the MCU. Both reset the pads, so
+// GPIO15 goes high-Z, R12 pulls Q2's gate low, and the +5V latch OPENS. With a
+// Pi on the header that is a hard power cut mid-write -- no shutdown request, no
+// filesystem sync, no warning. Netlist net 62 "LATCH_CONTROL" = Q2 gate + R12 +
+// GPIO15, so this is structural, not a firmware choice.
+//
+// Guarded rather than forbidden: there are legitimate reasons to reflash with a
+// Pi attached. It just must not happen by reflex on a console.
+// ---------------------------------------------------------------------------
+static bool reset_guard_ok(int argc, char **argv, const char *cmd) {
+    // A Pi we know about, and a latch that is currently feeding it.
+    if (!(power_pi_present() && gpio_get_out_level(PIN_LATCH_CONTROL))) return true;
+    if (argc > 1 && !strcmp(argv[1], "force")) return true;
+
+    printf("REFUSED: a Pi is present and powered (state %s).\n"
+           "  '%s' resets the pads -> GPIO15 high-Z -> R12 pulls the latch open ->\n"
+           "  the Pi loses +5V instantly. No shutdown, no sync, no warning.\n"
+           "  Shut the Pi down first ('off', or the panel button), then retry.\n"
+           "  If you really mean it: '%s force'\n",
+           power_state_name(power_fsm_state()), cmd, cmd);
+    return false;
 }
 
 static void cmd_stat(void) {
@@ -237,7 +264,11 @@ static void dispatch(int argc, char **argv) {
         if (argc < 2) { printf("usage: adc <ch> [n]\n"); return; }
         uint ch = (uint)strtoul(argv[1], NULL, 0);
         uint n  = (argc > 2) ? (uint)strtoul(argv[2], NULL, 0) : 64;
-        if (!((ADC_VALID_MASK >> ch) & 1u)) {
+        // The ch > 7 test is not redundant. Shifting a uint32_t by >= 32 is
+        // undefined behaviour, and on ARM the shift count is taken mod 32 -- so
+        // `adc 32` would evaluate (ADC_VALID_MASK >> 0) & 1, see bit 0 set, and
+        // sail through to adc_read_avg() with a nonexistent channel.
+        if (ch > 7 || !((ADC_VALID_MASK >> ch) & 1u)) {
             printf("ERR: ch%u is not an analog input on this board (valid: 0,1,2,5,7)\n", ch);
             return;
         }
@@ -511,15 +542,30 @@ static void dispatch(int argc, char **argv) {
     }
 
     else if (!strcmp(c, "fault")) {
-        if (argc > 1 && !strcmp(argv[1], "clear")) { fault_clear(); printf("cleared\n"); }
+        if (argc > 1 && !strcmp(argv[1], "clear")) {
+            // Clear the CODE, and also acknowledge a latched PS_FAULT so the FSM
+            // actually leaves that state. Clearing only the code used to leave
+            // the panel ring double-blinking (it keys off the FSM state) while
+            // the on-board red LED went dark (it keys off the code).
+            bool latched = (power_fsm_state() == PS_FAULT);
+            fault_clear();
+            power_request_fault_ack();
+            if (latched)
+                printf("cleared, and acknowledging FAULT: the rail drops and we\n"
+                       "return to STANDBY. Press the button again to power back up.\n");
+            else
+                printf("cleared\n");
+        }
         else printf("fault = %s\n", fault_name(fault_current()));
     }
 
     else if (!strcmp(c, "reset")) {
+        if (!reset_guard_ok(argc, argv, "reset")) return;
         printf("resetting...\n"); sleep_ms(50);
         watchdog_reboot(0, 0, 0);
     }
     else if (!strcmp(c, "bootsel")) {
+        if (!reset_guard_ok(argc, argv, "bootsel")) return;
         printf("rebooting to BOOTSEL...\n"); sleep_ms(50);
         reset_usb_boot(0, 0);
     }

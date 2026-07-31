@@ -93,11 +93,48 @@ Unit-test `compute_schedule()` against the .md §15 table:
 | 20 m/s | 2.29 ms | 50 µs | 2.13 ms | 19 ms | 4.5 mC |
 | 10 m/s | 4.57 ms | 100 µs → **clamped** | 4.27 ms | 38 ms | 9 mC → **shed pulses** |
 
-Verify the `BURST_CHARGE_MAX_mC` (6.0) interlock actually sheds pulses at 10 m/s.
+> **Two assumptions are baked into that table and neither is stated in the .md.** Without
+> them the rows cannot be checked, so make them explicit before you unit-test against it:
+>
+> - **10 pulses per burst** (hence 9 inter-pulse periods). Check: 9 × 474 µs = 4.27 ms ✓,
+>   9 × 853 µs = 7.68 ms ✓, 9 × 2.13 ms = 19.2 ms ✓, 9 × 4.27 ms = 38.4 ms ✓.
+>   Charge follows: 10 × 11 µs × 9 A = 0.99 mC ✓, 10 × 20 × 9 = 1.8 ✓,
+>   10 × 50 × 9 = 4.5 ✓, 10 × 100 × 9 = 9.0 ✓.
+> - **Transit is over 45.72 mm, not the ball's 42.67 mm diameter.** Check: 45.72/90 = 508 µs ✓,
+>   45.72/50 = 914 µs ✓, 45.72/20 = 2.29 ms ✓, 45.72/10 = 4.57 ms ✓. That is ball diameter
+>   plus ~3 mm; **confirm where the 3 mm came from** before trusting the geometry downstream.
+>
+> The table is internally consistent to three digits on both, so these are almost certainly
+> the intended assumptions rather than coincidence.
+
+Verify the `BURST_CHARGE_MAX_mC` (6.0) interlock actually sheds pulses at 10 m/s — and note
+it is the only row that exceeds it, at 9 mC. The 20 m/s row (4.5 mC) passes with 25 % margin.
 
 ---
 
 ## 6b — Gate DAC only, still no LED bank
+
+> ### 🔴 Do this before configuring the gate DAC — finding A7
+>
+> **`GPIO28` (Gate_PWM) and `GPIO12` (the panel ready LED) are the same PWM channel** —
+> slice 6A on RP2350B. Note that is the same **channel**, not just the same slice. Two
+> channels of one slice (6A and 6B) would have been fine: they share `TOP` and `DIV`, so a
+> common frequency, but each has its own compare register and so its own duty. **The same
+> channel shares the compare register as well**, so both pins emit the identical waveform.
+> There is no second register to write, and letting the gate DAC "win" on frequency does not
+> help — it would inherit the LED's duty cycle, which *is* the current setpoint.
+>
+> `panel.c` configures 6A today (wrap 999, div 150). **Whichever is configured second
+> silently takes over both.** So either the ready-LED brightness becomes your 9 A current
+> setpoint, or your current setpoint becomes the LED brightness — and neither announces
+> itself. You would be chasing it as an analog fault in the gate chain.
+>
+> **Fix first: take the ready LED off the PWM block** — plain SIO on/off, or software PWM
+> from the 50 Hz timer in `ARCHITECTURE.md` A4. Both GPIO numbers are fixed by the PCB, so
+> the collision cannot be routed around; the indicator is the one that yields.
+>
+> See the PWM SLICE MAP in `board.h`. Two other pairs collide but are safe as long as
+> **GPIO15 (the latch) and GPIO27 (the watchdog defeat) never go on PWM.**
 
 Ramp Gate_PWM 0 → full, scope **TP3**.
 
@@ -168,6 +205,7 @@ hardware clamp truncates it. Record it.
 - [ ] Commanded widths reproduce at Q10's gate
 - [ ] PIO burst patterns verified on the LA, 1 µs granularity, IRQ on completion
 - [ ] Energy interlock sheds pulses at 10 m/s
+- [ ] **A7 resolved** — ready LED off the PWM block before the gate DAC was configured
 - [ ] TP3 = 3 × DAC, no ringing
 - [ ] Strobe current LUT built, ADC0 agrees with TP4
 - [ ] Q9 and HS1 thermals sane, heatsink demonstrably coupling

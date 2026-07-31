@@ -128,7 +128,12 @@ void panel_update(void) {
     } else if (s_force_pat >= 0) {
         pwr = pattern_pct((panel_pattern_t)s_force_pat, t); // forced pattern
     } else {
-        pwr = pattern_pct(panel_pattern_for_state(), t);    // automatic
+        // Automatic patterns run on time-since-state-entry, NOT free-running
+        // time, so every state starts its pattern at the beginning. Without
+        // this, a short-lived state shows an arbitrary slice of the waveform --
+        // POWERING_ON could be caught near zero brightness and look like
+        // nothing happened at all.
+        pwr = pattern_pct(panel_pattern_for_state(), power_state_elapsed_ms());
     }
 
     int rdy = (s_ovr_rdy >= 0) ? s_ovr_rdy : (s_ready ? 100 : 0);

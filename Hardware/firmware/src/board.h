@@ -91,12 +91,16 @@
 // --- Strobe -----------------------------------------------------------------
 #define PIN_STROBE_PULSE    25   // out (PIO0) : hardware-clamped pulse gate. R57 1K pulldown.
 #define PIN_PULSE_LIMIT_DIS 27   // out : DANGER â€” defeats the strobe watchdog. TEST ONLY.
-#define PIN_GATE_PWM        28   // out (PWM 2A) : strobe current setpoint DAC
+#define PIN_GATE_PWM        28   // out (PWM 6A) : strobe current setpoint DAC
+                                 //   *** SHARES SLICE 6A WITH PIN_READY_LED (GPIO12).
+                                 //   *** See the PWM SLICE MAP below. Phase 6 blocker.
 
 // --- Optical chain ----------------------------------------------------------
-#define PIN_MOD_PWM         31   // out (PWM 3B) : beam carrier. R69 1K pulldown.
+#define PIN_MOD_PWM         31   // out (PWM 7B) : beam carrier. R69 1K pulldown.
+                                 //   *** shares slice 7B with PIN_LATCH_CONTROL (GPIO15).
+                                 //   *** GPIO15 MUST STAY SIO. See the PWM SLICE MAP below.
 #define PIN_HPF_TOGGLE      33   // out : 1 = baseline tracking, 0 = hold (U14 TMUX1219 SEL)
-#define PIN_DEMOD_PWM       39   // out (PWM 7B) : demod clock, phase-locked to slice 3
+#define PIN_DEMOD_PWM       39   // out (PWM 11B): demod clock, phase-locked to slice 7
 #define PIN_THRESHOLD_PWM   44   // out (PWM 10A): comparator threshold DAC (also ADC4 â€” never sample)
 #define PIN_D_COMPARATOR    46   // in  : ball-detect comparator. EXTERNAL 10K pull-up (R103).
 
@@ -107,6 +111,68 @@
 
 // ===========================================================================
 // ADC CHANNELS  (RP2350B: ADC channel n == GPIO 40+n)
+// ===========================================================================
+// PWM SLICE MAP -- READ THIS BEFORE PUTTING ANY PIN ON GPIO_FUNC_PWM
+// ===========================================================================
+//
+// RP2350B has 12 slices and the GPIO->slice mapping is NOT the RP2040 formula.
+// From SDK 2.3.0 hardware/pwm.h:
+//
+//     gpio < 32 :  slice = (gpio >> 1) & 7          channel = gpio & 1
+//     gpio >= 32:  slice = 8 + ((gpio >> 1) & 3)    channel = gpio & 1
+//
+// Getting this wrong is easy and the earlier comments in this file did (GPIO28
+// was documented as "2A", GPIO31 as "3B", GPIO39 as "7B" -- all wrong).
+//
+//   GPIO11  PWR_BTN_LED       slice  5B    panel, PWM, active
+//   GPIO12  READY_LED         slice  6A    panel, PWM, active
+//   GPIO15  LATCH_CONTROL     slice  7B    SIO ONLY
+//   GPIO27  PULSE_LIMIT_DIS   slice  5B    SIO ONLY
+//   GPIO28  GATE_PWM          slice  6A    strobe DAC, Phase 6
+//   GPIO31  MOD_PWM           slice  7B    beam carrier, PWM, active
+//   GPIO39  DEMOD_PWM         slice 11B    demod clock, PWM, active
+//   GPIO44  THRESHOLD_PWM     slice 10A    comparator DAC, Phase 3
+//
+// THREE PAIRS COLLIDE, and in every case it is the SAME CHANNEL, not merely the
+// same slice. That distinction is the whole problem:
+//
+//   same slice, DIFFERENT channel (6A vs 6B) -> shares TOP and DIV, so a common
+//       frequency, but each channel has its OWN compare register. Independent
+//       duty cycles. This is fine and is the normal way to get two PWMs from one
+//       slice.
+//   same slice, SAME channel (6A and 6A)     -> ONE compare register. The block
+//       produces a single output and the GPIO mux routes it to both pins. They
+//       emit the IDENTICAL waveform. There is no second register to write, so
+//       "let the one that needs a specific frequency win" does not help --
+//       the duty is shared too.
+//
+// Any two GPIOs **16 apart** collide this way: slice = (gpio>>1)&7 wraps and the
+// channel bit (gpio&1) is unchanged. 12/28, 15/31, 11/27 are all exactly 16 apart.
+// **Design rule for the next board spin: never put two PWM functions on GPIOs
+// 16 apart.** Note slice 6 channel B (GPIO13/GPIO29) is unassigned -- had the
+// ready LED been routed to GPIO13, it and GPIO28 would have coexisted perfectly.
+//
+// 1. GPIO12 READY_LED  vs GPIO28 GATE_PWM   -- slice 6A. **A REAL CONFLICT, NOT
+//    YET HIT.** panel.c drives 6A today; Phase 6b needs it for the strobe current
+//    setpoint. Whichever is configured second silently takes over both. The LED
+//    brightness would become the 9 A current setpoint, or vice versa.
+//    RESOLUTION: the ready LED must give up the PWM block -- plain on/off, or
+//    software PWM off the 50 Hz timer (ARCHITECTURE.md A4). Both GPIO numbers are
+//    fixed by the PCB, so the indicator is the one that yields. Do this in 6b.
+//
+// 2. GPIO15 LATCH_CONTROL vs GPIO31 MOD_PWM -- slice 7B. Safe ONLY because GPIO15
+//    stays SIO. If GPIO15 were ever set to GPIO_FUNC_PWM it would switch the +5V
+//    rail -- the Pi's power -- at the beam carrier frequency and duty. NEVER put
+//    GPIO15 on PWM.
+//
+// 3. GPIO11 PWR_BTN_LED vs GPIO27 PULSE_LIMIT_DIS -- slice 5B. Safe ONLY because
+//    GPIO27 stays SIO (see hard rule 2 above). If GPIO27 were ever set to
+//    GPIO_FUNC_PWM it would toggle the strobe hardware watchdog defeat line at the
+//    panel LED's ~1 kHz. NEVER put GPIO27 on PWM.
+//
+// beam.c and panel.c both resolve slices at runtime via pwm_gpio_to_slice_num(),
+// so the CODE has always been correct. It was the documentation that was wrong.
+//
 // ===========================================================================
 #define ADC_FIRST_GPIO      40
 
@@ -247,14 +313,27 @@
 // ACTIVE-LOW with an internal pull-up (active_low=1, gpio_pull=up), so the
 // pseudocode is backwards for the default overlay.
 //
-// We commit to ACTIVE-LOW here because it matches the overlay default AND
-// because it is inherently safe through an RP2354 reset: the pad reverts to
-// input (high-Z) and the Pi's own pull-up holds the line deasserted.
+// We commit to ACTIVE-LOW here because it matches the overlay default.
+//
+// This block used to claim active-low was "inherently safe through an RP2354
+// reset: the pad reverts to input (high-Z) and the Pi's own pull-up holds the
+// line deasserted." THAT IS WRONG and the error cut the safe direction.
+// PADS_BANK0_GPIO43_RESET = 0x116 -> PDE=1, PUE=0. The output driver is high-Z,
+// but a ~50-80K internal pull-down is ACTIVE from the reset edge until
+// safe_state_init() runs. For active-low, that is the ASSERTED level. So the
+// reset behaviour is a hazard to be measured, not a safety property to lean on.
 //
 // Pi side:  dtoverlay=gpio-shutdown,gpio_pin=26
 //
 // INVARIANT, non-negotiable: an RP2354 reset must never look like a shutdown
-// request. Verify by scoping GPIO43 through an SW2 press with the Pi up.
+// request. Verify by scoping GPIO43 through an SW2 press -- but judge it by
+// PULSE WIDTH, not by the presence of an edge. A few ms of low is the pad
+// default; 200 ms (PI_SHUTDOWN_PULSE_MS) is a real assertion and a failure.
+//
+// Still open (PROGRESS.md Q10): with a Pi seated, that pull-down divides against
+// gpio-shutdown's ~50K pull-up through R39's 1K, putting J8.37 near 1.7-2.0 V --
+// at or below RP1's VIH. Measured in Phase 1b with an emulated pull-up. If it
+// reads low, fit a 10K pull-up from J8.37 to the always-on +3V3.
 #define PI_SHUTDOWN_ACTIVE_LOW  1
 #define PI_SHUTDOWN_PULSE_MS   200
 
@@ -270,5 +349,35 @@
 #define RAIL_SETTLE_MS                250
 #define BUTTON_DEBOUNCE_MS             25
 #define BUTTON_LONG_PRESS_MS         5000
+
+// How long POWERING_ON keeps LOOKING for a Pi before concluding there is not
+// one and dropping into BENCH_RUNNING.
+//
+// This used to be the same instant as RAIL_SETTLE_MS, which conflated two
+// unrelated timings: RAIL_SETTLE_MS sizes the BOOST soft start (~86 ms), and has
+// nothing to say about how long a Pi 5 takes to raise its header 3V3 rail after
+// +5V is applied. A single sample at 250 ms means a Pi that is merely slow gets
+// classified as absent -- and in BENCH_RUNNING a button press is a hard
+// FORCE_OFF, so the next press yanks the rail out from under a booting Pi.
+// That is the SD-card corruption this whole subsystem exists to prevent.
+//
+// Note the Phase 1b test matrix cannot catch this: every simulated-Pi test
+// asserts the jumpers BEFORE the button press, an ordering a real Pi can never
+// produce (it cannot raise 3V3 until after the rail it is powered by comes up).
+//
+// 3 s is a deliberately generous placeholder. The real number comes from Phase
+// 8.3 -- scope +5V at J8.2 against Pi 3V3 at J8.1 and measure the latency. The
+// only cost of an over-long window is that a no-Pi bench session waits this long
+// before the ring goes solid, which is also what makes POWERING_ON visible.
+#define PI_DETECT_WINDOW_MS          3000
+
+// Debounce for LATE Pi detection (BENCH_RUNNING -> PI_BOOTING). The promotion is
+// a backstop for a Pi slower than PI_DETECT_WINDOW_MS, which is what keeps that
+// window's exact value from being critical.
+//
+// Load-bearing: without it, one glitch on the sense line promotes us to
+// PI_BOOTING, and if it then de-asserts we raise FAULT_NO_PI_DETECTED and
+// FORCE_OFF -- dropping the rail in the middle of, say, a beam ramp.
+#define PI_PRESENT_DEBOUNCE_MS        100
 
 #endif // PITRAC_BOARD_H

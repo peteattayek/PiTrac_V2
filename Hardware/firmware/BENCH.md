@@ -8,13 +8,17 @@ Step-by-step, with the exact CLI commands. **Record every measurement in
 `PROGRESS.md` §6 as you go.**
 
 **Standing rules, all phases:**
-- **No Pi 5 seated on J8 until Phase 7c**, and not before Phase 1b passes.
+- **No Pi 5 seated on J8 until Phase 7c.** (Phase 1b, the firmware gate for this, ✅ passed
+  2026-07-31.)
+- **An RP2354 reset is a hard power cut to the Pi, not a reboot** — the pads reset, GPIO15
+  goes high-Z, R12 pulls the latch open. `reset`/`bootsel` are guarded in firmware; **SW2
+  is not.** Tape over it once a Pi is seated. See `BENCH_P8_PI.md` §8.0.
 - **`PULSE_LIMIT_DISABLE` (GPIO27) stays 0.** It defeats the strobe hardware
   watchdog. There is deliberately no CLI path to it.
 
-**Status: phases 0, 0.5, 1 and 1c are ✅ complete on the first board.** Results are
-recorded inline below. 1b is outstanding (needs a scope). The procedures stay here
-as-written so a second board can be brought up the same way.
+**Status: every phase in this document — 0, 0.5, 1, 1b and 1c — is ✅ complete on the first
+board (2026-07-31).** Results are recorded inline below. The procedures stay here as-written
+so a second board can be brought up the same way. **Next: `BENCH_P2_BEAM.md`.**
 
 **LED reference** (used throughout):
 
@@ -341,21 +345,148 @@ matching the `gpio-shutdown` overlay default. Check with `pisim` that
 RPI5_SHUTDOWN idles **1** (deasserted), then scope J8.37 during a shutdown
 request and confirm it pulses **low** for 200 ms.
 
+### ⚠ Before the "reset ≠ shutdown" test — read this or you will misread the scope
+
+**GPIO43 goes low through reset, and that is not a firmware bug.** RP2350 pads reset
+with the internal **pull-down enabled** — `PADS_BANK0_GPIO43_RESET` = `0x116`, i.e.
+PDE=1, PUE=0, OD=0, IE=0 (SDK 2.3.0 `hardware/regs/pads_bank0.h`). The output driver
+is high-Z, but a ~50–80 kΩ pull-down is actively holding the pin down until
+`safe_state_init()` executes and drives it high. For an **active-low** signal, that
+reset default *is* the asserted level.
+
+So the pass criterion is **not** "no edge appears."
+
+> ⚠ **And it is not the pulse width either.** An earlier revision of this document said
+> "a few ms = the pad, 200 ms = a real assertion." **That is wrong.** SW2 holds the chip
+> *in* reset, so GPIO43's low lasts as long as your thumb is on the button — the bench
+> measurement on 2026-07-31 was **116 ms on the fastest possible press**, and a deliberate
+> hold sails past 200 ms with nothing wrong at all. Width measures the operator.
+
+**The correct discriminator is correlation.** Put RUN and GPIO43 on two channels:
+
+| What you see | Means |
+|---|---|
+| GPIO43 low **only** while RUN is low, plus a short tail after release | ✅ The pad's reset pull-down. Expected. |
+| GPIO43 low at any moment while RUN is **high** (chip running) | ❌ **Firmware asserted. This is the fail.** |
+
+**The number worth recording is RUN rising edge → GPIO43 rising edge.** That is the true
+"firmware not yet running" window — bootrom + XIP + the handful of instructions before
+`safe_state_init()` — and it is independent of how long you held the button. Trigger on
+RUN's **rising** edge. Record it in `PROGRESS.md` §6; Phase 8 will want it.
+
+### The part this test cannot see without help (Q10)
+
+With no Pi seated there is **no pull-up anywhere in the circuit**, so the above only
+proves the firmware's behaviour, not the Pi's interpretation of it. With a real Pi,
+the RP2354's reset pull-down fights `gpio-shutdown`'s ~50 kΩ pull-up through R39's
+1 kΩ, and J8.37 lands around **1.7–2.0 V** during the reset window — at or below
+RP1's VIH. If RP1 reads that low, **every RP2354 reset requests a Pi halt.**
+
+You can measure it without a Pi. **Any pull-up from ~20 kΩ to 220 kΩ works** — you extract
+the unknown and compute the real case, so you do not need to match the Pi's 50 kΩ:
+
+1. Fit a resistor `R` from **J8.37 to +3.3 V (J5.2)**.
+2. Scope **J8.37** (not GPIO43 — you want the node the Pi would see) through an SW2 press.
+3. Read `V` during the reset window, and `3V3` with GPIO43 driven high.
+
+```
+X    = V·R / (3V3 − V)        # R39 + the pad's pull-down, lumped
+V_pi = 3V3 · X / (50k + X)    # what a real Pi's ~50k pull-up would see
+```
+
+**Judge `V_pi`, not `V`.** A pull-up stronger than 50 kΩ biases the node high and will look
+safer than reality. Below ~10 kΩ the arithmetic gets noise-sensitive — `3V3 − V` collapses.
+
+| `V_pi` | Verdict |
+|---|---|
+| **> 2.3 V** | ✅ Safe. Q10 closes. |
+| **2.0–2.3 V** | ⚠ Marginal. Do the rework anyway; it costs one resistor. |
+| **< 2.0 V** | ❌ Level fails. Fit the pull-up if convenient — but see the correction below: the latch drop dominates either way. |
+
+### 🟢 Result, 2026-07-31: the level fails, but it barely matters
+
+> ⚠ **Read this before acting on the numbers below.** This section originally called the
+> result a blocker. It is not, and the correction is important enough to lead with:
+>
+> **Every RP2354 reset already opens the +5 V latch.** Net 62 `LATCH_CONTROL` is Q2's gate
+> + R12 + GPIO15, so when the pads reset, GPIO15 goes high-Z, R12 pulls the gate low, and
+> **the Pi loses power outright** — no shutdown, no sync, no warning. The spurious GPIO43
+> assertion arrives at a Pi that is losing its rail in the same instant.
+>
+> There is no case on this board where GPIO43 goes low but the latch holds: both pads reset
+> together, and the Pi has no power source other than the latch. So the pull-up below is
+> **defence-in-depth, not a gate.** The hazard worth your attention is the power cut, and
+> the mitigation that matters is the `reset`/`bootsel` CLI guard, not a resistor.
+
+The measurement itself, for the record:
+
+Measured with **R = 20 kΩ** (two 10 kΩ in series): `3V3` = **3.246 V**, `V` = **2.07 V**.
+
+```
+X    = 2.07 × 20k / (3.246 − 2.07) = 35.2 kΩ    → pad pull-down ≈ 34 kΩ
+V_pi = 3.246 × 35.2 / 85.2         = 1.34 V     → FAIL
+```
+
+Note the raw reading of 2.07 V looks fine. It is `V_pi` that fails, which is exactly why
+the formula is not optional. The pad's pull-down is also **~34 kΩ** — considerably stronger
+than the 50–80 kΩ assumed, which is what pushes the result under. **The verdict is robust:**
+even at a datasheet-typical 60 kΩ pull-down it would be 1.81 V, still a fail. Do not
+re-measure hoping for a better number.
+
+### 🔧 The optional rework
+
+**10 kΩ pull-up from J8.37 to +3V3.** With the measured 35.2 kΩ:
+
+| | Level at J8.37 | Threshold | Margin |
+|---|---|---|---|
+| Through reset | **2.67 V** | VIH 2.31 V | +0.36 V ✅ |
+| Firmware asserting | **0.35 V** | VIL 0.99 V | −0.63 V ✅ |
+
+Correct in both directions. **6.8 kΩ** balances the margins better (+0.51 / −0.52); both work.
+
+**No PCB work needed if you don't want it:** run the resistor between **J8.37 and J8.1**,
+both header pins. J8.1 is the Pi's own 3.3 V output, so it parallels the Pi's internal
+~50 kΩ pull-up and the arithmetic is identical. It can sit on the underside of the header
+or on a Pi-side breakout.
+
+If you do use the board's +3V3 instead, note it must be the **always-on** +3V3, not the
+switched +5 V — the entire point is holding the line while the MCU is not running.
+
+**Fit it if convenient. It does not gate Phase 8.** If you do, re-measure both directions,
+record in `PROGRESS.md` §6, and verify against a real Pi in `BENCH_P8_PI.md` §8.4.
+
 ### Test matrix
 
-| Test | Method | Pass |
-|---|---|---|
-| Normal boot | Assert PI_3V3_SENSE, then RPI5_ON, then press the button | `POWERING_ON` → `PI_BOOTING` → `RUNNING` |
-| Pi never boots | Assert PI_3V3_SENSE only | `PI_BOOT_TIMEOUT` at 90 s; **latch stays on** (so you could debug the Pi); CLI responsive |
-| Normal shutdown | From RUNNING press the button; drop both sim signals after 8 s | Request pulses low for 200 ms; **latch releases at the 15 s hold-off floor, not at 8 s** |
-| Pi never halts | Press; leave both sim signals asserted | Latch releases at 60 s, `PI_SHUTDOWN_TIMEOUT` logged |
-| 3V3 stays up | Drop RPI5_ON only, hold PI_3V3_SENSE | Fallback indicator fires; shutdown still completes |
-| Button during shutdown | Short press mid-`SHUTTING_DOWN` | No re-latch, no second request |
-| Escape hatch | 5 s hold mid-`SHUTTING_DOWN` | Immediate `FORCE_OFF` |
-| **Reset ≠ shutdown** | SW2 while the "Pi" is up | Scope GPIO43 — **no assertion edge at any point** through the reset |
+| ✓ | Test | Method | Pass |
+|---|---|---|---|
+| ✅ | Normal boot | Assert PI_3V3_SENSE, then RPI5_ON, then press the button | `POWERING_ON` → `PI_BOOTING` → `RUNNING` |
+| ✅ | Pi never boots | Assert PI_3V3_SENSE only | `PI_BOOT_TIMEOUT` at 90 s; **latch stays on** (so you could debug the Pi); CLI responsive |
+| ✅ | Normal shutdown | From RUNNING press the button; drop both sim signals after 8 s | Request pulses low for 200 ms; **latch releases at the 15 s hold-off floor, not at 8 s** |
+| ✅ | Pi never halts | Press; leave both sim signals asserted | Latch releases at 60 s, `PI_SHUTDOWN_TIMEOUT` logged |
+| ✅ | 3V3 stays up | Drop RPI5_ON only, hold PI_3V3_SENSE | Fallback indicator fires; shutdown still completes |
+| ✅ | Button during shutdown | Short press mid-`SHUTTING_DOWN` | No re-latch, no second request |
+| ✅ | Escape hatch | 5 s hold mid-`SHUTTING_DOWN` | Immediate `FORCE_OFF` |
+| ✅ | **Reset ≠ shutdown** | **Two channels: RUN and GPIO43.** SW2 while the "Pi" is up | GPIO43 low **only while RUN is low** — no assertion with the chip running. *Optional extra: `RUN rising → GPIO43 rising` is the boot-window number. Nice to have, no longer load-bearing now that Q10 is demoted.* |
+| 🟢 | **Reset ≠ shutdown, Pi's view (Q10)** | Pull-up J8.37 → J5.2, then SW2. Compute `V_pi` | **2026-07-31: `V_pi` = 1.34 V — level fails, impact minor.** Every reset opens the latch anyway, so the Pi loses power regardless. Optional 10 kΩ; not a gate. |
 
-The last one is non-negotiable. A reset that looks like a shutdown request means
-every firmware crash also halts the Pi.
+**Added after the FSM changed on 2026-07-31.** Pi detection became a 3 s window with a
+debounced late-detect promotion, and `fault clear` became a full acknowledgement. All three
+of these are new code on the highest-risk path in the project, so they need their own rows:
+
+| ✓ | Test | Method | Pass |
+|---|---|---|---|
+| ✅ | **POWERING_ON is visible** | Press with **no** sim jumpers fitted | Ring **breathes for 3 s**, then goes solid (`BENCH_RUNNING`). It used to jump straight to solid in 250 ms. |
+| ✅ | **Late Pi detection** | Press with no jumpers; once solid, fit **J5.2 → J8.1** | Promotes `BENCH_RUNNING` → `PI_BOOTING` after ~100 ms; ring changes to the slow breath |
+| ✅ | **Late detect is debounced** | Briefly tap the J8.1 jumper on and off | **No** promotion, **no** `NO_PI_DETECTED` fault, rail stays up |
+| ✅ | **`fault clear` acknowledges** | Provoke `PI_BOOT_TIMEOUT`, then type `fault clear` | Ring leaves the fault pattern, rail drops, `stat` shows `STANDBY`. Previously the ring kept double-blinking. |
+
+**On the two reset rows in the first table** (this paragraph refers to those, not to the
+FSM table immediately above): the first proves the *firmware* never asserts a shutdown
+request; the second measures what a real Pi's input *would* see while the firmware is not
+yet running, which is only measurable while no Pi is on the header. Both were run on
+2026-07-31. The second one's level fails, but the finding that came out of it is that
+**every reset opens the +5 V latch anyway** — so the Pi loses power regardless and the
+GPIO43 level is a footnote. See the Q10 correction above.
 
 Watch state transitions live with `stat` and `pisim`.
 
@@ -456,8 +587,12 @@ FSM runs:
 STANDBY --press--> POWERING_ON --250 ms--> BENCH_RUNNING --press--> FORCE_OFF --> STANDBY
 ```
 
-- **POWERING_ON lasts 250 ms** against a 600 ms breath period, so you see well under
-  half a cycle. Effectively invisible, and that is fine — it is a transient state.
+- ~~**POWERING_ON lasts 250 ms**, so you see well under half a breath cycle.~~
+  **Changed 2026-07-31.** POWERING_ON now lasts up to `PI_DETECT_WINDOW_MS` (**3 s**) while
+  it looks for a Pi, so the fast breath is clearly visible — about five full cycles — before
+  it drops to `BENCH_RUNNING` and goes solid. Automatic patterns are also phase-aligned to
+  state entry now, so the breath always starts from zero instead of catching the waveform
+  at an arbitrary point.
 - **PI_BOOTING is never entered**, because it requires PI_3V3_SENSE asserted.
 - **SHUTTING_DOWN is never entered.** It is reachable only from `PS_RUNNING`, which needs
   a Pi. In `BENCH_RUNNING` a press goes straight to FORCE_OFF.
@@ -468,10 +603,17 @@ STANDBY --press--> POWERING_ON --250 ms--> BENCH_RUNNING --press--> FORCE_OFF --
 
 | Step | Shows |
 |---|---|
+| No jumpers, press | **POWERING_ON fast breath** for 3 s, then solid `BENCH_RUNNING`. Press again to drop the rail. |
 | Jumper **J5.2 → J8.1** only (PI_3V3_SENSE), then press | **PI_BOOTING slow breath**, held for a full 90 s |
 | Let it time out | **FAULT double-blink** — and `PI_BOOT_TIMEOUT` deliberately leaves the rail UP, so the panel LED can actually show it |
-| Add **J5.2 → J8.15** (RPI5_ON), clear fault, press | Straight to **RUNNING, solid** |
+| Add **J5.2 → J8.15** (RPI5_ON), then clear the fault | `fault clear` (or a press) — **both drop the rail and return to STANDBY** |
+| Press to power up | **POWERING_ON** briefly, then straight to **RUNNING, solid** |
 | Press again | **SHUTTING_DOWN fast blink** for the full 15 s hold-off |
+
+> **That is two presses, not one.** An earlier revision of this table said "clear fault,
+> press → straight to RUNNING." It is not: acknowledging a fault always exits via
+> `FORCE_OFF` → `STANDBY` with the rail down, so one press (or `fault clear`) acknowledges,
+> and a *second* press powers back up.
 
 ---
 

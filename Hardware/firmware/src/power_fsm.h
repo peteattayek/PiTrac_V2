@@ -38,13 +38,28 @@ const char *power_state_name(pstate_t s);
 // finished its ~86 ms soft start. Nothing high-energy may run before this.
 bool power_rails_ready(void);
 
-// Requests. Both are honoured only from a state where they make sense.
+// Requests. All are honoured only from a state where they make sense.
 void power_request_on(void);
 void power_request_shutdown(void);
 void power_request_force_off(void);   // escape hatch; skips the orderly sequence
 
-// Is a Pi actually present? Decided by PI_3V3_SENSE at POWERING_ON time. This
-// is what selects PS_RUNNING vs PS_BENCH_RUNNING.
+// Acknowledge a latched PS_FAULT, exactly as a button press does: clear the
+// fault code AND leave PS_FAULT via FORCE_OFF, so the rail drops and we return
+// to STANDBY. Ignored in every other state.
+//
+// This exists because clearing only the fault CODE leaves the FSM latched in
+// PS_FAULT, which the panel ring keys off -- so the ring kept double-blinking
+// while the on-board red LED (which keys off the code) went dark. Two
+// indicators disagreeing. Confirmed on the bench during Phase 1b, 2026-07-31.
+void power_request_fault_ack(void);
+
+// Is a Pi actually present? This is what selects PS_RUNNING vs PS_BENCH_RUNNING.
+//
+// Decided by polling PI_3V3_SENSE across a WINDOW (PI_DETECT_WINDOW_MS), not by a
+// single sample -- and revisited afterwards by the debounced late-detect
+// promotion in PS_BENCH_RUNNING. A single sample meant a Pi merely slow to raise
+// its header 3V3 was classified as absent, and in PS_BENCH_RUNNING a button press
+// is a hard FORCE_OFF. See board.h.
 bool power_pi_present(void);
 
 // "Pi is down" indicator, two-of-three. Exposed for the CLI so you can watch it

@@ -90,7 +90,7 @@ Two directions, both need answering:
 | Direction | Question |
 |---|---|
 | **Out** (D_Cam_Trigger) | Will 3.3 V through 220 Ω damage a 1.8 V input? Budget for a divider or level shifter. |
-| **In** (Cam_Strobe 0/1) | Does the sensor's strobe output swing high enough? **RP2350 V_IH is ~2.0 V at 3.3 V I/O — a 1.8 V output will not register without translation.** |
+| **In** (Cam_Strobe 0/1) | Does the sensor's strobe output swing high enough? **A 1.8 V output will not register without translation.** RP2350 V_IH is **2.0–2.31 V** on a 3.3 V rail depending on which spec line you take (a flat 2.0 V, or 0.7 × VDD = 2.31 V). Use **2.31 V** as the design floor — it is the conservative reading and it is what `PROGRESS.md` Q10 uses, so the two docs agree. 1.8 V fails against either. |
 
 Do not connect J4 to a camera until both are answered.
 
@@ -135,7 +135,13 @@ Drive Cam_Strobe_0/1 from a function generator or a spare Pico with a programmab
 
 ## 7c — Real cameras, Pi seated
 
-**Only after Phase 1b has passed** — that is the hard gate protecting the Pi's SD card.
+**Phase 1b passed 2026-07-31**, so that gate is cleared. Two things now govern instead:
+
+- **Work through `BENCH_P8_PI.md` §8.0 before seating a Pi** — it is the current gate list.
+- ⚠ **An RP2354 reset is a hard power cut to the Pi, not a reboot.** The pads reset, GPIO15
+  goes high-Z, R12 pulls the latch open. `reset` and `bootsel` are guarded in firmware;
+  **SW2 is not.** Tape over it while a Pi is seated — and note that this phase involves a
+  lot of reflashing, which is exactly when a reflex reach for SW2 happens.
 
 - Verify trigger polarity against the real sensor
 - Confirm both strobe-monitor edges arrive

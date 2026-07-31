@@ -14,7 +14,10 @@ static pstate_t s_ps = PS_STANDBY;
 static uint32_t s_t_state;         // ms at entry to the current state
 static uint32_t s_t_shutdown_req;  // ms when RPI5_SHUTDOWN was asserted
 static bool     s_pi_present;
-static bool     s_req_on, s_req_shutdown, s_req_force_off;
+static bool     s_req_on, s_req_shutdown, s_req_force_off, s_req_fault_ack;
+static bool     s_rail_checked;    // POWERING_ON: the one-shot under-load check has run
+static bool     s_pi_seen;         // BENCH_RUNNING: 3V3 high, debounce in progress
+static uint32_t s_t_pi_seen;
 
 static const char *const k_state_names[PS__COUNT] = {
     [PS_STANDBY]       = "STANDBY",
@@ -150,8 +153,10 @@ void power_fsm_init(void) {
     s_btn_last_change = s_btn_press_start = now_ms();
     s_btn_long_fired = false;
     s_evt_short_press = s_evt_long_press = false;
-    s_req_on = s_req_shutdown = s_req_force_off = false;
+    s_req_on = s_req_shutdown = s_req_force_off = s_req_fault_ack = false;
     s_pi_present = false;
+    s_rail_checked = false;
+    s_pi_seen = false;
     v5_monitor_reset();
     enter(PS_STANDBY);
 }
@@ -159,6 +164,7 @@ void power_fsm_init(void) {
 void power_request_on(void)        { s_req_on = true; }
 void power_request_shutdown(void)  { s_req_shutdown = true; }
 void power_request_force_off(void) { s_req_force_off = true; }
+void power_request_fault_ack(void) { s_req_fault_ack = true; }
 
 pstate_t power_fsm_state(void) { return s_ps; }
 bool     power_pi_present(void) { return s_pi_present; }
@@ -195,6 +201,11 @@ static void begin_shutdown(void) {
 
 void power_fsm_step(void) {
     button_poll();
+
+    // A fault acknowledgement only means anything while a fault is actually
+    // latched. Drop a stale one otherwise, or a `fault clear` typed in STANDBY
+    // would sit pending and instantly self-acknowledge the NEXT fault to occur.
+    if (s_ps != PS_FAULT) s_req_fault_ack = false;
 
     // The escape hatch works from anywhere.
     if (s_req_force_off || take_long_press()) {
@@ -244,6 +255,7 @@ void power_fsm_step(void) {
 
         gpio_put(PIN_LATCH_CONTROL, 1);
         v5_monitor_reset();
+        s_rail_checked = false;
         enter(PS_POWERING_ON);
         break;
     }
@@ -257,19 +269,34 @@ void power_fsm_step(void) {
         // Confirm the rail actually came up and didn't collapse under load.
         // Deliberately a much lower bar than V5_MIN_FOR_LATCH: the Pi and the
         // boost are drawing now, and a real supply is allowed to sag.
-        if (adc_read_5vin_volts() < V5_MIN_UNDER_LOAD) {
-            fault_raise(FAULT_RAIL_COLLAPSE);
-            enter(PS_FORCE_OFF);
-            break;
+        //
+        // Once only, at the settle boundary. adc_read_avg() is blocking and
+        // tears down any free-running ADC mode (ARCHITECTURE.md A1), so it must
+        // not run on every superloop pass through this state.
+        if (!s_rail_checked) {
+            if (adc_read_5vin_volts() < V5_MIN_UNDER_LOAD) {
+                fault_raise(FAULT_RAIL_COLLAPSE);
+                enter(PS_FORCE_OFF);
+                break;
+            }
+            s_rail_checked = true;
         }
 
-        s_pi_present = pi_3v3_present();
-        if (s_pi_present) {
+        // Pi detection is a WINDOW, not a single sample. See PI_DETECT_WINDOW_MS
+        // in board.h: a Pi 5 merely slow to raise its header 3V3 used to be
+        // classified as absent, which made the NEXT button press a hard
+        // FORCE_OFF against a Pi that was still booting.
+        if (pi_3v3_present()) {
+            s_pi_present = true;
             enter(PS_PI_BOOTING);
-        } else {
+            break;
+        }
+        if (since(s_t_state) >= PI_DETECT_WINDOW_MS) {
             // No Pi on the header. This is the normal bench path for phases
             // 1-6 and it stays in the final firmware â€” it is how development
             // always happens.
+            s_pi_present = false;
+            s_pi_seen    = false;
             enter(PS_BENCH_RUNNING);
         }
         break;
@@ -294,6 +321,27 @@ void power_fsm_step(void) {
         break;
 
     case PS_BENCH_RUNNING:
+        // LATE Pi detection. A Pi slower than PI_DETECT_WINDOW_MS still gets
+        // recognised here, which is what stops that window's exact value from
+        // being safety-critical. Without this, a slow Pi stays classified as
+        // absent and the press below becomes a hard power cut on a booting Pi.
+        //
+        // Debounced: a bare edge would promote us to PI_BOOTING, and a
+        // subsequent de-assert raises FAULT_NO_PI_DETECTED and drops the rail --
+        // in the middle of a beam ramp, say.
+        if (pi_3v3_present()) {
+            if (!s_pi_seen) {
+                s_pi_seen = true;
+                s_t_pi_seen = now_ms();
+            } else if (since(s_t_pi_seen) >= PI_PRESENT_DEBOUNCE_MS) {
+                s_pi_present = true;
+                enter(PS_PI_BOOTING);
+                break;
+            }
+        } else {
+            s_pi_seen = false;
+        }
+
         // No Pi to shut down: a press just drops the rail.
         if (s_req_shutdown || take_short_press()) {
             s_req_shutdown = false;
@@ -341,9 +389,12 @@ void power_fsm_step(void) {
 
     case PS_FAULT:
         // Latched. A button press acknowledges and returns to standby with the
-        // rail down; the fault code itself stays readable over the CLI.
-        if (take_short_press() || s_req_shutdown) {
+        // rail down; the fault code itself stays readable over the CLI until
+        // then. `fault clear` over the CLI does exactly the same thing, so the
+        // two routes cannot leave the indicators disagreeing.
+        if (take_short_press() || s_req_shutdown || s_req_fault_ack) {
             s_req_shutdown = false;
+            s_req_fault_ack = false;
             fault_clear();
             enter(PS_FORCE_OFF);
         }

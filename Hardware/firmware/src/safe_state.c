@@ -89,10 +89,23 @@ void safe_state_init(void) {
 
     // Pi-facing outputs.
     // RPI5_SHUTDOWN idles DEASSERTED. With active-low polarity that means HIGH.
-    // INVARIANT: a reset must never look like a shutdown request. Through reset
-    // the pad is high-Z and the Pi's internal pull-up holds it deasserted;
-    // here we take over and drive it actively so a floating 1K line cannot
-    // couple a spurious request into the Pi's KEY_POWER input.
+    // INVARIANT: a reset must never look like a shutdown request.
+    //
+    // CAREFUL, and this used to be documented wrong here: the pad does NOT come
+    // out of reset floating. PADS_BANK0_GPIO43_RESET = 0x116, so PDE=1 -- the
+    // output driver is high-Z but a ~50-80K internal PULL-DOWN is active. For an
+    // active-low signal that is the ASSERTED level. From the reset edge until
+    // this line executes, GPIO43 is held low.
+    //
+    // With no Pi seated that is harmless (nothing is listening). With a Pi, that
+    // pull-down divides against gpio-shutdown's ~50K pull-up through R39's 1K and
+    // puts J8.37 at roughly 1.7-2.0 V -- at or below RP1's VIH. Unresolved: see
+    // PROGRESS.md Q10, measured in Phase 1b with an emulated pull-up. If it reads
+    // low, the fix is a 10K pull-up from J8.37 to the always-on +3V3.
+    //
+    // What this line DOES buy: once we are running, the line is actively driven
+    // rather than left to a 1K pull, so noise cannot couple a spurious request
+    // into the Pi's KEY_POWER input. It cannot shorten the pre-main window.
 #if PI_SHUTDOWN_ACTIVE_LOW
     out_high(PIN_RPI5_SHUTDOWN);
 #else

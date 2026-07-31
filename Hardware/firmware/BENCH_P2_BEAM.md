@@ -42,13 +42,64 @@ Two open questions get answered here, and both change downstream code:
 Do this first. It is the trickiest code in the project and it costs nothing to prove
 before any current flows.
 
-**Setup:** rails **down** (`off`, or never latch). LA on GPIO31 and GPIO39. Because
-`beam on` refuses while the rail is open, you have two options:
+**Setup:** LA on GPIO31 and GPIO39, **rails up** — `beam_enable()` hard-refuses unless
+`power_rails_ready()`, so this test cannot be run with the latch open. (An earlier draft of
+this line said "rails down"; that was never possible.) What keeps 2a safe is not the rail
+being off, it is the **duty being tiny**. Two ways to get there:
 
-- **Preferred:** probe the RP2354 pins directly (GPIO31 = pin 39, GPIO39 = pin 48) or the
-  U9/U13 input side, latch the rail with `on`, and start at **2 % duty** — a 0.6 µs high
-  phase at 104 kHz is nothing thermally.
-- Or run the whole test at **1 kHz**, where U9 clamps everything anyway.
+- **Preferred:** latch the rail with `on` and start at **2 % duty** — a **0.19 µs** high phase
+  at 104 kHz is nothing thermally. (An earlier draft said 0.6 µs; that is wrong —
+  9.6 µs × 0.02 = 0.192 µs, and level 28 of 1440 confirms it.)
+- Or run the whole test at **1 kHz**, where U9 clamps everything anyway. Phase ticks are
+  6.67 ns **regardless of carrier frequency** (clkdiv = 1), so `beam phase 360` is still
+  exactly 2.4 µs — the phase measurement is identical, and GPIO31's high phase becomes
+  500 µs instead of 0.19 µs. Worth it if your LA is slow; unnecessary at 100 MS/s or better.
+
+### Where to put the probes
+
+**Do not probe the RP2354 pins.** The chip pins are GPIO31 = U3 pin 39 and GPIO39 = U3 pin 48
+(netlist-verified), but that is 0.4 mm pitch on a QFN-80 and there is no reason to risk it.
+Both signals pass through 0 Ω links and have 1 K pull-downs, which gives four better pads:
+
+| Part | Signal pad | Other pad | Why |
+|---|---|---|---|
+| **R69** (1K) | **pin 2 = Modulation_PWM** (GPIO31) | **pin 1 = GND** | **Best.** Signal and a local ground on the same part |
+| **R91** (1K) | **pin 1 = Demodulation_PWM** (GPIO39) | **pin 2 = GND** | **Best.** Same |
+| R38 (0R) | either pad — it is a 0 Ω link, both ends are the same node | | Use if R69 is awkward |
+| R40 (0R) | either pad | | Use if R91 is awkward |
+
+R69 and R91 are the ones you want: an adjacent ground pad means a short ground lead, which
+is what keeps edges clean at 500 MS/s. Loading is a non-issue — a few pF against a 3.3 V CMOS
+driver into 1 K at 104 kHz changes nothing.
+
+Netlist topology, for reference:
+
+```
+U3 pin 39 (GPIO31) --[R38 0R]--> Modulation_PWM  --> U9 pin 2 (B) + pin 3 (~CLR)
+                                       |                (both tied together --
+                                   R69 1K                 the monostable wiring)
+                                       v
+                                      GND
+
+U3 pin 48 (GPIO39) --[R40 0R]--> Demodulation_PWM --> U13 pin 1 (SEL)
+                                       |
+                                   R91 1K
+                                       v
+                                      GND
+```
+
+### LA setup
+
+You need **two channels only**, which on most instruments is exactly the case where the top
+sample rate is available — use it. Capture length is trivial: a few carrier periods is
+plenty, so **100 µs is generous**. Do not fill memory with a long capture; you will only
+have more data to scroll through.
+
+| Sample rate | Resolution | In ticks (1 tick = 6.67 ns) | Verdict |
+|---|---|---|---|
+| 500 MS/s | 2 ns | **0.3** | Sub-tick. Everything below is easy. |
+| 100 MS/s | 10 ns | 1.5 | Fine |
+| 24 MS/s | 41.7 ns | 6.3 | Checks 1–6 OK; check 7 needs the caveat below |
 
 ```
 on                       # rail up
@@ -74,15 +125,50 @@ beam                     # confirm: TOP=1439, level 28, actual 104166 Hz
 varies run-to-run, the two slices are not starting on the same clock edge and every
 Phase 3 phase calibration will be built on sand.
 
+**How to judge check 7 — by the spread, not by any single capture.** Take ~10 captures of
+the same configuration and record the measured offset each time. An LA samples
+asynchronously, so every edge is quantised to a sample boundary and the number will move by
+±1 sample *even when the lock is perfect*. The question is not "did it move" but **"is the
+scatter bounded by one sample period, or much larger?"**
+
+| Observed scatter | Means |
+|---|---|
+| Within ±1 sample (**±2 ns at 500 MS/s**, well under one 6.67 ns tick) | ✅ Quantisation artifact. The lock is exact. |
+| Tens to hundreds of ns, wandering | ❌ Real. The atomic enable is not atomic — two separate register writes, so the error is however many core cycles elapse between them, and it varies with flash XIP stalls. |
+
+At 500 MS/s the two cases are unmistakable — a genuine failure is orders of magnitude larger
+than your ±2 ns noise floor. **Pass criterion: scatter under one tick (6.67 ns).**
+
+> **If your scope has automated ch1→ch2 delay measurement with statistics** (mean / min / max
+> / σ over thousands of acquisitions), that is a strictly better instrument for *this check
+> alone* — it accumulates σ directly with no quantisation artifact and no manual tallying.
+> Ideal split: LA for checks 1–6, scope statistics for check 7.
+
+**Getting the 6.67 ns/tick scale: do not try to measure a single tick.** Use the largest
+step instead — `beam phase 720` should read **4.800 µs**, and 4800 / 720 = 6.67 ns/tick.
+Dividing by 720 also divides your measurement error by 720. (At 500 MS/s you *can* resolve
+single-tick steps if you want to confirm monotonicity at the finest granularity, but ±2 ns
+on a 6.67 ns step is ~30 % error — fine for "did it move in the right direction", useless
+for calibration.)
+
 > **Implementation note worth knowing:** the SDK's `pwm_set_mask_enabled()` assigns PWM_EN
 > wholesale, which would switch off slices 5 and 6 — the panel LEDs. `beam.c` does a
-> read-modify-write of just bits 3 and 7 instead, still in one store, so phase lock is
+> read-modify-write of just **bits 7 and 11** instead, still in one store, so phase lock is
 > preserved without collateral damage. If you ever see the panel ring die when the beam
 > starts, that is the bug that came back.
+>
+> *(Corrected 2026-07-31 — this said "bits 3 and 7". On RP2350B the carrier is slice **7B**
+> and the demod clock slice **11B**; for GPIO ≥ 32 the slice is `8 + ((gpio >> 1) & 3)`, not
+> the RP2040 formula. `beam.c` resolves slices at runtime so the code was never wrong. Full
+> slice map, including three colliding pairs, is in `board.h`.)*
 
 ### Exit criteria
 Phase offset is exact, monotonic, wraps cleanly, and is **reproducible across
-reconfiguration**. Record the tick↔time scale (should be 6.67 ns/tick).
+reconfiguration** — check-7 scatter under one tick (6.67 ns).
+
+Record in `PROGRESS.md` §6:
+- the **`phase 720` offset** (expect 4.800 µs) and the tick scale derived from it, 4800/720
+- the **check-7 scatter** across ~10 reconfigurations, in ns
 
 ---
 
@@ -135,6 +221,21 @@ beam clamp        # sets 1 kHz / 50 %, i.e. a 500 us commanded high phase
 
 Scope **TP5**. The pulse width you see **is** the clamp. Safe: even 113 µs at 1 kHz is
 only 11 % duty.
+
+> 🔴 **When you are done here, type `beam duty 2` before anything else.**
+>
+> `beam clamp` writes the duty to **50 %** and it *persists*. The 35 % ceiling is checked
+> only inside the `beam duty` command — `beam freq`, `beam clamp` and `beam sweep` all call
+> `beam_configure()` directly and skip it. So a bare `beam freq 104167` after this step
+> gives you **104 kHz at 50 % duty**: ~1.6 A average against a 0.95 A design point, and
+> ~5.25 W in D11 against 3.15 W.
+>
+> **U9 will not save you.** Its one-shot clamps pulse *width* (~86 µs); a 50 % high phase
+> at 104 kHz is 4.8 µs, nowhere near the clamp. Nothing in hardware or firmware stops this.
+>
+> Step 2d below happens to be safe because it opens with `beam duty 30`. Any other path out
+> of 2c is not. The permanent fix is to move the ceiling into `beam_configure()` — see
+> `PROGRESS.md` §9.
 
 - .md claims **113 µs**
 - 0.7 · R68 · C57 = 0.7 · 56 kΩ · 2.2 nF = **~86 µs**

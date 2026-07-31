@@ -6,8 +6,9 @@ sequencer, with the cores only setting things up and reading results.
 
 This document audits every function against that goal, records what is already
 compliant, and flags the places where the current code or the .md pseudocode falls
-short. **Two of the findings are real problems, not stylistic preferences** — see
-A1 and A2.
+short. **Three of the findings are real problems, not stylistic preferences** — see
+A1, A2 and **A7**. A7 is a hardware collision found on 2026-07-31 and it will surface
+in Phase 6b; board-level fix proposed as CR-01 in `NEXT_BOARD_REV.md`.
 
 ---
 
@@ -36,14 +37,19 @@ could simply have their own state machine. We are not short of state machines.
 
 | Function | Hardware | CPU cost |
 |---|---|---|
-| Beam carrier, GPIO31 | PWM slice 3B | zero after setup |
-| Demod clock, GPIO39 | PWM slice 7B, phase-locked | zero after setup |
-| Strobe current DAC, GPIO28 | PWM slice 2A + 2-pole RC | zero |
+| Beam carrier, GPIO31 | PWM slice **7B** | zero after setup |
+| Demod clock, GPIO39 | PWM slice **11B**, phase-locked | zero after setup |
+| Strobe current DAC, GPIO28 | PWM slice **6A** + 2-pole RC | zero |
 | Comparator threshold DAC, GPIO44 | PWM slice 10A + 2-pole RC | zero |
-| Panel LED brightness, GPIO11/12 | PWM slices 5B/6A | see A4 |
+| Panel LED brightness, GPIO11/12 | PWM slices 5B/**6A** | see A4, **and A7** |
 | ADC block capture | DMA, `DREQ_ADC` | zero during transfer |
 | Strobe burst train, GPIO25 | **PIO0 SM0** + DMA-fed schedule | zero during burst |
 | I²S mic, GPIO4/5/6 | **PIO1 SM0** + DMA | zero (Phase 5, optional) |
+
+> **Slice numbers corrected 2026-07-31.** This table previously said 3B / 7B / 2A. RP2350B
+> has 12 slices and the mapping is not the RP2040 formula — for GPIO ≥ 32 it is
+> `8 + ((gpio >> 1) & 3)`. The code was always right (it resolves at runtime via
+> `pwm_gpio_to_slice_num()`); the documentation was not. Full map in `board.h`.
 
 The carrier/demod phase lock is worth calling out as the model for the rest: two
 counters preloaded while disabled, then enabled in a **single register write**, so
@@ -150,6 +156,60 @@ superloop, immune to loop jitter. Ten-line change; do it whenever convenient.
 
 ---
 
+### 🔴 A7 — The ready LED and the strobe current DAC are on the same PWM channel
+
+**Found 2026-07-31. This will surface in Phase 6b and it is not a documentation problem.**
+
+`GPIO12` (READY_LED) and `GPIO28` (GATE_PWM) both map to **slice 6, channel A** — the same
+*channel*, not merely the same slice. That distinction is the entire problem:
+
+| | Shares | Result |
+|---|---|---|
+| Same slice, **different** channel (6A vs 6B) | `TOP` and `DIV` | Common frequency, **independent duty** — each channel has its own compare register. Perfectly usable. |
+| Same slice, **same** channel (6A and 6A) | `TOP`, `DIV` **and the compare register** | **Identical waveform on both pins.** One output, routed by the GPIO mux to two places. |
+
+So this is not "same frequency, different duty," and letting whichever function needs a
+specific frequency win does not help — **the duty is shared too**, and the duty *is* the
+current setpoint.
+
+Any two GPIOs **16 apart** collide this way: `slice = (gpio>>1)&7` wraps while the channel
+bit `gpio&1` is unchanged. All three pairs on this board (12/28, 15/31, 11/27) are exactly
+16 apart. **Design rule for the next spin: never put two PWM functions on GPIOs 16 apart.**
+Slice 6 channel B (GPIO13/GPIO29) is unassigned — had the ready LED been routed to GPIO13,
+it and the gate DAC would have coexisted. This is a layout accident, not a firmware one.
+
+`panel.c` configures 6A today (wrap 999, div 150, for ~1 kHz). Phase 6b needs that same
+channel for the strobe current setpoint DAC. **Whichever is configured second silently takes
+over both**, so the ready-LED brightness becomes the 9 A current setpoint, or the current
+setpoint becomes the LED brightness. Neither failure announces itself.
+
+**Fix: the ready LED gives up the PWM block.** Both GPIO numbers are fixed by the PCB, so
+the slice collision cannot be routed around — one function has to yield, and a status
+indicator is obviously it. Options, cheapest first:
+
+1. **Plain on/off** via SIO. D7 is a single ready indicator; brightness control is a luxury.
+2. **Software PWM from the 50 Hz timer** proposed in A4, if dimming is wanted.
+
+Do it in **6b**, before the gate DAC is first configured — not after, because the symptom
+(LED brightness moving the strobe setpoint) is exactly the kind of thing that reads as an
+analog fault.
+
+**Two more pairs collide but are currently safe**, and both are on safety-critical pins:
+
+| Pair | Slice | Why it is safe | What breaks it |
+|---|---|---|---|
+| GPIO15 LATCH_CONTROL / GPIO31 MOD_PWM | 7B | GPIO15 stays SIO | Putting GPIO15 on PWM would switch the **+5 V rail — the Pi's power** — at the beam carrier frequency |
+| GPIO11 PWR_BTN_LED / GPIO27 PULSE_LIMIT_DIS | 5B | GPIO27 stays SIO | Putting GPIO27 on PWM would toggle the **strobe watchdog defeat line** at the panel LED's ~1 kHz |
+
+Neither is a bug today. Both are landmines for anyone who adds a PWM without checking the
+map in `board.h`.
+
+**Board fix proposed:** `NEXT_BOARD_REV.md` **CR-01** — move READY_LED to GPIO13 (slice 6B,
+unconnected today). Same slice as the gate DAC so a shared frequency, but a *different
+channel*, hence its own compare register and independent duty. One trace.
+
+---
+
 ### 🟢 A5 — UART to the Pi must be DMA on both directions
 
 Not yet written, so this is a specification rather than a fix. At 921600 baud with
@@ -182,7 +242,7 @@ are allowed to; production paths are not.
 | Demod clock | PWM 7B, phase-locked | ✅ done |
 | Gate DAC | PWM 2A | ✅ done |
 | Threshold DAC | PWM 10A | ✅ done |
-| Panel LEDs | PWM 5B/6A + 50 Hz timer | 🟢 A4 |
+| Panel LEDs | PWR 5B + 50 Hz timer; **RDY off PWM entirely** | 🟢 A4, 🔴 **A7** |
 | Strobe burst | **PIO0 SM0** + DMA | planned, `.pio` written |
 | **Comparator transit timing** | **PIO0 SM1** | 🟡 A2 — new |
 | **Camera trigger/strobe handshake** | **PIO0 SM2** | 🟡 A3 — new |

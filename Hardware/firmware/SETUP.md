@@ -1,7 +1,16 @@
 # Toolchain Setup
 
-**Nothing is installed on this machine yet.** Checked 2026-07-28: `cmake`, `ninja`,
-`arm-none-eabi-gcc`, `picotool` all absent; `PICO_SDK_PATH` unset. `git` and `python` are present.
+> **✅ Already installed on this machine (as of 2026-07-29) — you do not need this document.**
+> Path A was taken. Installed: **SDK 2.3.0, toolchain 15_2_Rel1, ninja 1.13.2, cmake 4.3.4,
+> picotool 2.3.0**, all in `%USERPROFILE%\.pico-sdk`. The firmware builds clean.
+>
+> Rebuild from the command line, faster than the IDE button:
+> ```
+> & "$env:USERPROFILE\.pico-sdk\ninja\v1.13.2\ninja.exe" -C <firmware>\build
+> ```
+>
+> What follows is kept for a **second machine or a fresh checkout.** The original note said
+> "nothing is installed" — true when written on 2026-07-28, misleading now.
 
 Pick **one** of the two paths below. The VS Code extension path is much less fiddly on Windows
 and is what I'd recommend — it installs its own private copies of CMake, Ninja, the ARM
