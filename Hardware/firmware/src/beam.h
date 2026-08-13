@@ -72,6 +72,11 @@ float    beam_duty(void);
 int32_t  beam_phase_ticks(void);
 uint32_t beam_top(void);
 
+// PWM clock divider. 1 everywhere above ~2289 Hz; only `beam clamp` (1 kHz)
+// needs more, because one period will not fit in the 16-bit counter at div=1.
+// With div > 1 a phase tick is div * 6.67 ns.
+uint32_t beam_clkdiv(void);
+
 // Actual achieved frequency for the current TOP, which differs from the requested
 // value whenever SYSCLK/freq is not an integer.
 uint32_t beam_actual_freq_hz(void);

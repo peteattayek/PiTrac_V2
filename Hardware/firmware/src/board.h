@@ -300,8 +300,21 @@
 // of controlled by firmware. Measure both clamps (Phase 2 step 4 for U9,
 // Phase 6a for U5), then set these from measurement and delete this warning.
 // ---------------------------------------------------------------------------
-#define STROBE_HW_LIMIT_US_ASSUMED  86    // <-- MEASURE. .md says 113; physics says ~86.
-#define STROBE_SW_MAX_US            73    // 0.85 * assumed HW limit. Re-derive after measuring.
+// MEASURED on U9 (the identical circuit: 74LVC1G123, R 56K, C 2.2nF -- same part
+// numbers, BOM-confirmed) on 2026-08-13: t_w = 122.68 us, spread 0.22 us over
+// 1291 pulses. So K ~ 1.0, NOT the 0.7 assumed above and not the .md's 113 us.
+//
+// These constants govern U5 (strobe), which has not been measured yet -- do that
+// in Phase 6a.1 and set them from U5's own number. The values below are U9's
+// measurement, which is the best available evidence and far better than the 86
+// that the wrong K produced.
+//
+// NOTE the previous SW limit was 73 us, which is BELOW the 100 us that the
+// .md S15 slow-ball row needs at 10 m/s -- so slow-ball pulses would have been
+// firmware-truncated by 27 %. 100 us sits 18 % under the measured 122.7 us
+// clamp, so it is both achievable and safely below the hardware limit.
+#define STROBE_HW_LIMIT_US_ASSUMED 122    // U9 measured; VERIFY ON U5 in Phase 6a.1
+#define STROBE_SW_MAX_US           100    // meets .md S15 at 10 m/s; 0.82 x HW limit
 #define STROBE_MIN_GAP_US          150    // let the VIR bulk caps breathe between pulses
 
 // ===========================================================================

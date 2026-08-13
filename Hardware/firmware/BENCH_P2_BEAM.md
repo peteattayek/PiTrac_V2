@@ -33,7 +33,7 @@ Two open questions get answered here, and both change downstream code:
 | | |
 |---|---|
 | **Q1** | How wide is the one-shot clamp *really*? The .md says 113 µs; 0.7·R68·C57 = 0.7·56k·2.2n says **~86 µs**. This sets `STROBE_SW_MAX_US` for Phase 6, where the current software limit (100 µs) may be *above* the hardware limit. |
-| **Q2** | Can the '123 recover fast enough to reproduce 30 % duty at 104 kHz? Its timing node must reset via ~CLR inside each 6.7 µs low phase. If it cannot, the carrier design shifts. |
+| **Q2** | ✅ **ANSWERED — no limit up to 250 kHz.** The premise was wrong: ~CLR resets C57 through an internal low-impedance transistor (~0.1–0.2 µs), not through R68's 123 µs *charging* RC. Those are different mechanisms. Carrier design stands. |
 
 ---
 
@@ -61,16 +61,48 @@ being off, it is the **duty being tiny**. Two ways to get there:
 (netlist-verified), but that is 0.4 mm pitch on a QFN-80 and there is no reason to risk it.
 Both signals pass through 0 Ω links and have 1 K pull-downs, which gives four better pads:
 
-| Part | Signal pad | Other pad | Why |
+| Part | Package | Signal | Use it? |
 |---|---|---|---|
-| **R69** (1K) | **pin 2 = Modulation_PWM** (GPIO31) | **pin 1 = GND** | **Best.** Signal and a local ground on the same part |
-| **R91** (1K) | **pin 1 = Demodulation_PWM** (GPIO39) | **pin 2 = GND** | **Best.** Same |
-| R38 (0R) | either pad — it is a 0 Ω link, both ends are the same node | | Use if R69 is awkward |
-| R40 (0R) | either pad | | Use if R91 is awkward |
+| **R38** (0R) | **0805 HandSolder** | Modulation_PWM (GPIO31) — **either pad** | ✅ **Best.** Big pads, easy to land a clip on |
+| **R40** (0R) | **0805 HandSolder** | Demodulation_PWM (GPIO39) — **either pad** | ✅ **Best.** Same |
+| R69 (1K) | 0402 | pin 2 = Modulation_PWM, pin 1 = GND | Adjacent ground pad is nice in theory, but **0402 is realistically inaccessible** |
+| R91 (1K) | 0402 | pin 1 = Demodulation_PWM, pin 2 = GND | Same |
 
-R69 and R91 are the ones you want: an adjacent ground pad means a short ground lead, which
-is what keeps edges clean at 500 MS/s. Loading is a non-issue — a few pF against a 3.3 V CMOS
-driver into 1 K at 104 kHz changes nothing.
+**Use R38 and R40.** They are 0 Ω links in a hand-solder 0805 footprint, so both pads are the
+same node and either end works. (An earlier revision of this table recommended R69/R91 for
+their adjacent ground pad — correct electrically, useless in practice at 0402. Proven on the
+bench 2026-07-31.)
+
+**Ground separately**, since R38/R40 have no local ground pad: **J5 pin 4 or 6** is convenient
+and already identified from the Phase 1b jumpering. **A missing ground is the single most
+likely reason for "no signal"** — it looks identical to a dead pin.
+
+> **If one pad of R38 toggles and the other does not, the 0 Ω link is open** (tombstoned or
+> cold-jointed). "Both pads are the same node" holds only if the part is actually soldered.
+> Worth 10 seconds with a DMM before suspecting anything else.
+
+Loading is a non-issue — a few pF against a 3.3 V CMOS driver at 104 kHz changes nothing.
+
+### If you see nothing at all
+
+Type `beam` and read the **hardware readback** block, which reports the actual PWM registers
+rather than firmware's opinion of them. Healthy looks like:
+
+```
+PWM_EN   : 0x8e0  slice 7(car) ENABLED   slice 11(dem) ENABLED
+funcsel  : GPIO31=4 ok   GPIO39=4 ok   (4 = PWM)
+pad ISO  : GPIO31=0  GPIO39=0   (1 = pad ISOLATED, no output)
+slice 7  : top 1439  cc 0x001c0000  div 0x0010  csr 0x01
+slice 11 : top 1439  cc 0x02d00000  div 0x0010  csr 0x01
+ctr(car) : 1192 -> 685 -> 1122   counting (slice is live)
+```
+
+`cc` packs both channels — **bits 31:16 are channel B**, which is what both these pins use
+(`PWM_B_7`, `PWM_B_11`). So `0x001c0000` is B=28 (2 % carrier) and `0x02d00000` is B=720
+(50 % demod). `div 0x0010` is 8.4 fixed point = integer 1.
+
+**If all of that reads healthy and `ctr` is counting, the firmware is definitively driving
+the pins** and the fault is in the measurement setup — go back to ground.
 
 Netlist topology, for reference:
 
@@ -103,11 +135,17 @@ have more data to scroll through.
 
 ```
 on                       # rail up
-beam freq 104167
+beam freq 104166
 beam duty 2
 beam on
 beam                     # confirm: TOP=1439, level 28, actual 104166 Hz
 ```
+
+> **Why 104166 and not 104167?** Either works on firmware built after 2026-07-31, which
+> rounds to the nearest achievable period. On **earlier builds** `beam freq 104167` gave
+> **TOP=1438** and 104239 Hz — 72 Hz high — because `150e6/104167 = 1439.995` truncated to
+> 1439 before the code subtracted 1. **If you see TOP=1438, you are on an old build.**
+> Reflash; TOP must be **1439** or level 432 is not exactly 30 %.
 
 ### Checks
 
@@ -119,48 +157,63 @@ beam                     # confirm: TOP=1439, level 28, actual 104166 Hz
 | 4 | `beam phase 360` → offset moves by 360 ticks = 2.4 µs | **monotonic and exact** |
 | 5 | `beam phase 720` (180°) | offset = 4.8 µs |
 | 6 | `beam phase 1439`, then `beam phase 0` | wraps cleanly, returns to the reference |
-| 7 | Re-run `beam freq 104167` several times | **the phase relationship must be identical every time** |
+| 7 | Re-run `beam freq 104166` several times | **the phase relationship must be identical every time** |
+
+> **Analyse the CSV with `tools/la_phase.py`** rather than by eye — you will run this at
+> least five times (checks 3–7) and again in Phase 3.
+>
+> ```
+> python tools/la_phase.py digital.csv --ticks 0        # one capture
+> python tools/la_phase.py run*.csv --ticks 0 --compare # check 7
+> ```
+>
+> It auto-identifies which channel is which by duty cycle (the ~50 % one is the demod), so
+> LA channel order does not matter, and it reports period, duty in ticks, the phase-offset
+> histogram, and the pass/fail against the one-tick criterion.
 
 **Check 7 is the important one.** It proves the atomic-enable trick works. If the offset
 varies run-to-run, the two slices are not starting on the same clock edge and every
-Phase 3 phase calibration will be built on sand.
+Phase 3 phase calibration will be built on sand. **A single capture at one setting cannot
+demonstrate this** — you need several captures with a `beam freq` reconfiguration between
+them, which is what `--compare` is for.
 
-**How to judge check 7 — by the spread, not by any single capture.** Take ~10 captures of
-the same configuration and record the measured offset each time. An LA samples
-asynchronously, so every edge is quantised to a sample boundary and the number will move by
-±1 sample *even when the lock is perfect*. The question is not "did it move" but **"is the
-scatter bounded by one sample period, or much larger?"**
+### ✅ Result, 2026-07-31 — **2a COMPLETE, all seven checks pass**
 
-| Observed scatter | Means |
-|---|---|
-| Within ±1 sample (**±2 ns at 500 MS/s**, well under one 6.67 ns tick) | ✅ Quantisation artifact. The lock is exact. |
-| Tens to hundreds of ns, wandering | ❌ Real. The atomic enable is not atomic — two separate register writes, so the error is however many core cycles elapse between them, and it varies with flash XIP stalls. |
+Analysed with `tools/la_phase.py` at 500 MS/s (2 ns sample period, 0.30 ticks).
 
-At 500 MS/s the two cases are unmistakable — a genuine failure is orders of magnitude larger
-than your ±2 ns noise floor. **Pass criterion: scatter under one tick (6.67 ns).**
+| Check | | Measured | Error |
+|---|---|---|---|
+| 1 | Both signals, same period | **9600.00 ns** both channels → 104 166.7 Hz | — |
+| 2 | Demod is a 50 % square | **4800.00 ns high = 50.000 %** (720.0 ticks) | — |
+| 3 | `phase 0` reference | **0.00 ns** | 0.00 ticks |
+| 4 | `phase 360` = 2400.0 ns | **2399.00 ns** | −0.15 ticks |
+| 5 | `phase 720` = 4800.0 ns | **4800.00 ns** | **0.00 ticks** |
+| 6 | `phase 1439` = 9593.3 ns | **9592.50 ns** | −0.12 ticks |
+| 6 | back to `phase 0` | **−0.79 ns** | −0.12 ticks |
+| **7** | **6 runs, `beam freq 104166` between each** | **spread 1.02 ns** | **0.15 ticks** |
 
-> **If your scope has automated ch1→ch2 delay measurement with statistics** (mean / min / max
-> / σ over thousands of acquisitions), that is a strictly better instrument for *this check
-> alone* — it accumulates σ directly with no quantisation artifact and no manual tallying.
-> Ideal split: LA for checks 1–6, scope statistics for check 7.
+Carrier high measured **186.51 ns = 28.0 ticks** (2 % of 1440); demod **720.0 ticks**. Every
+per-capture spread was ≤ 2.0 ns = one LA sample.
 
-**Getting the 6.67 ns/tick scale: do not try to measure a single tick.** Use the largest
-step instead — `beam phase 720` should read **4.800 µs**, and 4800 / 720 = 6.67 ns/tick.
-Dividing by 720 also divides your measurement error by 720. (At 500 MS/s you *can* resolve
-single-tick steps if you want to confirm monotonicity at the finest granularity, but ±2 ns
-on a 6.67 ns step is ~30 % error — fine for "did it move in the right direction", useless
-for calibration.)
+**Tick scale: 6.6667 ns/tick** from the `phase 720` capture (4800.00 / 720), exactly nominal.
+The 360 and 1439 captures gave 6.6639 and 6.6661 — agreement to 0.04 %.
 
-> **Implementation note worth knowing:** the SDK's `pwm_set_mask_enabled()` assigns PWM_EN
-> wholesale, which would switch off slices 5 and 6 — the panel LEDs. `beam.c` does a
-> read-modify-write of just **bits 7 and 11** instead, still in one store, so phase lock is
-> preserved without collateral damage. If you ever see the panel ring die when the beam
-> starts, that is the bug that came back.
->
-> *(Corrected 2026-07-31 — this said "bits 3 and 7". On RP2350B the carrier is slice **7B**
-> and the demod clock slice **11B**; for GPIO ≥ 32 the slice is `8 + ((gpio >> 1) & 3)`, not
-> the RP2040 formula. `beam.c` resolves slices at runtime so the code was never wrong. Full
-> slice map, including three colliding pairs, is in `board.h`.)*
+**Check 7 is the one that matters and it is emphatic:** half an LA sample of drift across six
+full `beam_configure()` teardown-and-reload cycles. The atomic enable is working.
+
+> **A consistent ~−0.9 ns bias** shows up across every capture (offsets cluster near 9599
+> rather than 0). It is **sub-tick**, so it cannot be a counter or firmware effect — the PWM
+> can only place edges on 6.67 ns boundaries. It is LA inter-channel skew or a small pad-delay
+> difference between GPIO31 and GPIO39. Harmless: Phase 3 calibrates `demod_phase_ticks`
+> against the real optical signal, which absorbs any fixed skew in the chain.
+
+> ⚠ **On the analysis tool.** The first version of `la_phase.py` reported checks 4, 5 and 6 as
+> failures when the hardware was correct. Two bugs: it measured `carrier − demod` (the
+> *negative* of the commanded phase, since `beam.c` preloads the demod counter to
+> `period − phase`), and it used a nearest-edge search with no modular arithmetic — which
+> breaks exactly at `phase 720` (both edges equidistant) and `phase 1439` (wraps to 6.67 ns).
+> Both fixed with circular statistics. **If a phase reads as an exact negative or as
+> `period − expected`, suspect the analysis before the board.**
 
 ### Exit criteria
 Phase offset is exact, monotonic, wraps cleanly, and is **reproducible across
@@ -177,12 +230,74 @@ Record in `PROGRESS.md` §6:
 **Now current flows.** Set the PSU limit to 2.5 A and keep the FLIR pointed at
 **R73/R74 (the 0R27 ballast pair) and D11** for the whole ramp.
 
+### The drive chain, verified against the netlist and BOM
+
+```
++5V ──▶ D11 anode (pads 2 AND 3, tied)          D11 = VSMA1085250x02, 850 nm
+        D11 cathode (pad 1)                     "double stack emitter chip"
+              │                                  = TWO DIES IN SERIES, Vf ~ 3.4 V
+              ▼
+            R73 (0R27, 2512)
+              ▼
+            R74 (0R27, 2512)        R73 + R74 in SERIES = 0.54 Ω = 0.54 V/A
+              ▼
+       Q11 drain  ◀── TP5           Q11 = AO3400A, low-side N-channel
+              │
+       Q11 source ──▶ GND
+```
+
+The series stack is what makes the ballast value correct:
+`5.2 V = 3.4 (LED) + 0.54·I + 0.15 (Q11 on)` → **I ≈ 3.05 A**. Two dies in *parallel*
+(Vf ~1.7 V) would pass 6.2 A through the same resistors.
+
+### 🔴 Where the scope ground goes — read before clipping anything
+
+**Never put a probe ground clip on TP5.** A standard probe's ground lead is bonded to the
+scope chassis and to earth. TP5 is Q11's **drain**, swinging 0.15 V to 5.2 V. Clipping ground
+there shorts the drain to earth, so:
+
+- The LED conducts **continuously, DC**, at (5.2 − 3.4)/0.54 ≈ **3.3 A through your scope's
+  ground lead**.
+- It **bypasses U9's clamp entirely.** The one-shot protects by limiting *gate* drive; a clip
+  across the drain makes the probe the switch, and that switch never opens.
+
+> ⚠ **The net is named `Strobe_GND` in the schematic and it is NOT ground.** It is the
+> switched drain. That name is precisely the trap that leads someone to clip a ground lead
+> to it. (Renaming it is `NEXT_BOARD_REV.md` CR-11.)
+
+**Ground goes to board GND only** — J5 pin 4 or 6, the same points used for the 2a jumpers.
+
 ### Scope points
 
-| Point | What | Expect |
+| Measurement | How | Expect |
 |---|---|---|
-| **TP5** | Q11 drain, below the ballast chain | switching waveform; on-phase low ≤ **0.15 V** |
-| D11 pad 1 → TP5 (differential) | across R73+R74 = 0.54 Ω | **0.54 V/A** → ~1.6 V at 3 A |
+| **TP5 switching waveform** (2c) | **Single-ended:** tip on TP5, **ground clip on board GND** | ~5.2 V off, **≤ 0.15 V** on-phase |
+| **LED current** (2b) | **Differential across R73+R74:** ch1 tip on **D11 pad 1 (cathode)**, ch2 tip on **TP5**, *both* grounds to board GND, display **ch1 − ch2**. Or a true differential probe. | **0.54 V/A** → ~1.6 V at 3 A |
+
+> **TP5 is inverted relative to the LED.** When TP5 is **LOW**, Q11 is on, current flows and
+> the LED is lit. So in 2c you measure the **LOW** pulse width at TP5 — that is the LED-on
+> time and therefore the U9 clamp. Do not measure the high period.
+
+R73/R74 are **2512** parts, physically large and easy to land a probe on.
+
+### D11 ratings, and how much margin the design point has
+
+| | |
+|---|---|
+| Max **DC** forward current | **1.5 A** |
+| Max **pulsed** forward current | **5 A** |
+| Thermal resistance R<sub>thJSP</sub> | **6–9 K/W** |
+| Wavelength / half-intensity angle | 850 nm / ±28° |
+
+At the 30 % design point: **peak 3 A** (60 % of the pulsed rating) and **average 0.9 A**
+(60 % of the DC rating). At 104 kHz the 9.6 µs period is far shorter than the die's thermal
+time constant, so **thermally it behaves as DC at the average current** — the 0.9 A figure is
+the one that matters.
+
+Dissipation ≈ 3.4 V × 0.9 A = **3.06 W**, so junction rise over the solder point is at most
+3.06 × 9 = **~28 °C**. **FLIR check:** if D11's package reads much more than ~30 °C above the
+surrounding board, either the ballast is passing more than 3 A or the thermal path to the pad
+is poor.
 
 ### The ramp
 
@@ -204,6 +319,38 @@ if the ballast resistors run away. `beam duty` refuses above 35 % as a backstop.
 > but **any exposed metal reads falsely cool**. Put a scrap of electrical tape on shiny
 > parts. Take a reference image at 2 % duty before you start so you have an A/B.
 
+### ✅ Thermal result, 2026-08-13 — measured, with heatsink, still air, 23 °C ambient
+
+| Duty | Plateau (package) | Junction (pkg + 6…9 K/W) | Verdict |
+|---|---|---|---|
+| off (rails latched) | 37.4 °C | — | boost / R15-D4 floor, +14 °C over ambient |
+| 15 % | ~62 °C *(predicted)* | 72–77 °C | comfortable |
+| 20 % | ~75 °C *(predicted)* | 88–94 °C | good |
+| **25 %** | **87.5 °C (measured)** | **104–112 °C** | **OK for bench** |
+| **30 %** | **~100 °C (measured)** | 122–132 °C | **too hot to sit at** |
+
+**It plateaus** — τ ≈ **70 s**, settled within ~5 min. The thermal path works; heat leaves as
+fast as it arrives. **R_th package→ambient ≈ 24 K/W**, and that single number predicts both
+measured duty points, so use it to plan any other duty/ambient combination:
+`T_pkg = T_amb + 24 × P`, where `P ≈ 3.4 V × 3.1 A × duty`.
+
+**Where the resistance lives:**
+
+| Stage | R_th | |
+|---|---|---|
+| Junction → solder point | 6–9 K/W | datasheet |
+| Solder point → heatsink | **~2 K/W** | ✅ measured (87.0 → 81.5 °C at 2.7 W). TIM couples well |
+| **Heatsink → ambient** | **~22 K/W** | ⚠ **the bottleneck, 90 % of the total** |
+
+**Better thermal compound buys nothing. Airflow buys ~2–3×** — with a fan, total drops to
+~12 K/W and the full 30 % design point becomes viable even at 40 °C ambient.
+
+⚠ **Ambient does a lot of work in this table.** It was taken at 23 °C in open air. An
+enclosure at 40 °C shifts every figure **+17 °C**, which drops the sustainable duty to
+**~18–20 %**. Since the beam must stay on the whole time the system is armed, this is a
+design constraint on optical power and therefore on Phase 3 SNR — not just a bench note.
+See `NEXT_BOARD_REV.md` CR-12.
+
 **Do not sit at 30 % for long** on an open bench without airflow. It is the design
 operating point but nothing is heatsinked for continuous duty at this stage.
 
@@ -219,8 +366,45 @@ TP7 in Phase 3.
 beam clamp        # sets 1 kHz / 50 %, i.e. a 500 us commanded high phase
 ```
 
-Scope **TP5**. The pulse width you see **is** the clamp. Safe: even 113 µs at 1 kHz is
-only 11 % duty.
+**`beam clamp` turns the LED on immediately** — it reconfigures *and* enables, so you have a
+signal to scope straight away. That is intended.
+
+### What "commanded high phase" means
+
+The MCU never drives the LED. GPIO31 drives **U9**, a monostable with **B and ~CLR tied to the
+same signal** (netlist: U9 pins 2 and 3 both on `Modulation_PWM`). A rising edge triggers it;
+a falling edge clears it immediately. So:
+
+```
+LED on-time = min( commanded high phase , t_w )        t_w = K x R68 x C57
+```
+
+The commanded high phase is simply the MCU's high time. **Make it far longer than t_w and the
+one-shot becomes what ends the pulse — so the width at TP5 is t_w.** That is the measurement.
+It also needs a period much longer than t_w, which is why this drops from 104 kHz (9.6 µs
+period, shorter than the clamp) to 1 kHz.
+
+Scope **TP5** and measure the **LOW** width — remember TP5 is inverted, low = LED conducting.
+
+| | |
+|---|---|
+| Commanded high phase | **500 µs** (1 kHz, 50 %) |
+| Expected clamp | **~86 µs** (0.7 x 56k x 2.2n); .md claims 113 µs |
+| LED duty at 86 µs | **8.6 %** — well under the 25 % you have already run |
+
+> ⚠ **If the LOW width reads ~500 µs, that is NOT the clamp** — it means the one-shot is not
+> terminating the pulse and you are seeing the input width. Do not record it as t_w.
+
+> **Fixed 2026-08-13:** this command used to print "1 kHz / 500 µs" while actually producing
+> **2289 Hz / 218 µs**. `beam_configure()` hardcoded clkdiv = 1, and 1 kHz needs 150 000 counts
+> against a 16-bit counter, so TOP silently clamped to 65535. The measurement still worked
+> (218 µs > 86 µs) but the LED ran at ~20 % duty, not the ~9 % the procedure assumes, and a
+> reading of 218 µs could have been mistaken for the clamp. `beam_configure()` now engages a
+> clock divider below ~2289 Hz. **Type `beam` after `beam clamp` and confirm `TOP=49999,
+> clkdiv=3, 1000 Hz`** — if you see TOP=65535, you are on an old build.
+>
+> Note that with clkdiv > 1 a phase tick is `clkdiv x 6.67 ns`. Only the clamp command goes
+> there; 2a runs at 104 kHz where the divider is always 1.
 
 > 🔴 **When you are done here, type `beam duty 2` before anything else.**
 >
@@ -258,6 +442,38 @@ verify U5 independently in Phase 6a.
 
 ---
 
+### ✅ Result, 2026-08-13 — **Q1 answered: t_w = 122.68 µs**
+
+| | Measured |
+|---|---|
+| **LOW width (LED on) = the clamp** | **122.680 µs**, spread **0.22 µs** over 1291 pulses (0.18 %) |
+| HIGH width | 314.220 µs |
+| Period | 436.900 µs |
+| TP5 low / high level | −0.007 V / 3.637 V |
+
+**Neither prior estimate was right, and both were low:**
+
+| | t_w | implied K in t_w = K·R·C |
+|---|---|---|
+| 0.7 · R68 · C57 | 86 µs | 0.70 |
+| .md's claim | 113 µs | 0.92 |
+| **Measured** | **122.7 µs** | **0.996** |
+
+K is essentially **1.0**. The 0.7 coefficient is a TI datasheet condition; the fitted part is
+LCSC C26159250 and its coefficient differs.
+
+**The Phase 6 concern is inverted, favourably.** 122.7 µs is *above* the 100 µs
+`STROBE_SW_MAX_US`, so firmware controls the pulse width, hardware never truncates, and the
+.md §15 slow-ball rows need no re-derivation. **Keep `STROBE_SW_MAX_US` at 100 µs.**
+Still to confirm on **U5** — same part and RC, expect 109–136 µs with tolerance — in Phase 6a.1.
+
+> **Captured on the pre-fix firmware** (2289 Hz, 218 µs commanded). Still valid: 122.7 < 218,
+> so the one-shot genuinely terminated the pulse, with 1.8× headroom. On the fixed build the
+> headroom is 4× and the LED sits at **12.3 %** duty rather than the **28 %** this capture ran
+> at. Re-running is optional confirmation and thermally lighter.
+
+---
+
 ## 2d — Q2: duty-fidelity sweep
 
 ```
@@ -273,18 +489,53 @@ timing node (R68 56 kΩ / C57 2.2 nF, τ ≈ 123 µs) has to reset via ~CLR duri
 phase — only 6.7 µs at 104 kHz. If it cannot keep up, actual duty falls below commanded
 and the carrier frequency choice has to move.
 
-Record the breakdown frequency. If it is below ~104 kHz, **stop and tell me** — the
-carrier design changes and Phase 3 needs rethinking.
+Record the breakdown frequency. If it is below ~104 kHz, **stop** — the carrier design
+changes and Phase 3 needs rethinking.
+
+### ✅ Result, 2026-08-13 — **no breakdown anywhere in the range**
+
+Swept 5 → 250 kHz at 30 % commanded. At the top of the range:
+
+| At 250 kHz | Measured |
+|---|---|
+| Period | **4.0 µs** |
+| TP5 low (LED on) | **1.2 µs** |
+| **Actual duty** | **exactly 30 %** |
+
+**Why it passed, and why the question was mis-framed:** this section warned that a 123 µs
+timing constant must reset inside a 6.7 µs low phase. Those are two different mechanisms.
+The 123 µs is C57 **charging** through R68 — that is what sets t_w (122.7 µs, measured in 2c).
+The **reset** does not go through R68 at all: ~CLR discharges C57 through an internal
+low-impedance transistor, on the order of **0.1–0.2 µs**. Against a 2.8 µs low phase at
+250 kHz that is an order of magnitude of headroom, so there was never a recovery problem.
+
+**Consequences:** the carrier stays **104.167 kHz**, and **Q3's search space is unconstrained
+up to at least 250 kHz** — `scan carrier` can optimise purely for SNR without a hardware
+ceiling in the way.
 
 ---
 
 ## Exit criteria for Phase 2
 
-- [ ] Phase offset exact, monotonic, wrapping, and reproducible across reconfiguration (2a check 7)
-- [ ] Commanded duty reproduced at TP5 within a few percent at the operating carrier
-- [ ] **U9 clamp measured** and `board.h` updated (Q1)
-- [ ] **Duty-fidelity limit found** and recorded (Q2)
-- [ ] Thermals sane at 30 % — nothing running away
-- [ ] Peak LED current confirmed near 3 A via the 0.54 V/A ballast measurement
+- [x] Phase offset exact, monotonic, wrapping, and reproducible across reconfiguration (2a check 7)
+      — **scatter 0.15 ticks over 6 reconfigurations**
+- [x] Commanded duty reproduced at TP5 at the operating carrier — **exact 30 % to 250 kHz**
+- [x] **U9 clamp measured** (**122.68 µs**) and `board.h` updated — `STROBE_HW_LIMIT_US_ASSUMED`
+      86 → 122, `STROBE_SW_MAX_US` **73 → 100** (the old 73 was *below* the .md §15 slow-ball
+      requirement). **Verify on U5 in Phase 6a.1** — that is the part the constants govern.
+- [x] **Duty-fidelity limit found** — **none up to 250 kHz** (Q2)
+- [x] Thermals sane at 30 % — plateaus, nothing running away
+- [x] Peak LED current confirmed — **3.11 A cold / 3.165 A hot** via the 0.54 V/A ballast
+
+## ✅ PHASE 2 COMPLETE — 2026-08-13
+
+All exit criteria met. Q1 and Q2 both answered; Q3 (carrier choice) passes to Phase 3 with an
+unconstrained search space.
+
+**Outstanding but not blocking Phase 3:**
+- **D11 emissivity check** — put matte tape on the LED package and re-read. The 53.6 °C
+  reading came off a domed lens, which is the classic falsely-cool surface. It decides
+  whether `NEXT_BOARD_REV.md` CR-12 is a real constraint or a misattribution.
+- **U5 clamp** — Phase 6a.1, sets the strobe constants for real.
 
 Record everything in `PROGRESS.md` §6.

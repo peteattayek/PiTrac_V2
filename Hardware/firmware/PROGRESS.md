@@ -3,9 +3,10 @@
 **Read this first when resuming work.** It records what is done, what is next, and the
 decisions/measurements that must not be lost between sessions.
 
-Last updated: 2026-07-31 · **Phases 0, 0.5, 1, 1b and 1c are all complete and closed.**
-`BENCH.md` is finished end to end; the whole power path is proven on hardware.
-**Phase 2 (`BENCH_P2_BEAM.md`) is next and nothing blocks it.**
+Last updated: 2026-08-13 · **Phases 0, 0.5, 1, 1b, 1c and 2 are all complete and closed.**
+`BENCH.md` and `BENCH_P2_BEAM.md` are finished end to end. The power path and the optical
+transmit chain are both proven on hardware. **Q1 and Q2 are answered; Q5, Q7, Q9 closed.**
+**Phase 3 (`BENCH_P3_DETECT.md`) is next — but fix `ARCHITECTURE.md` A1 first, not during.**
 
 ⚠ **The property that actually matters for a real Pi: an RP2354 reset is a hard power cut.**
 Not a reboot. See §2 and §9. Q10 (the GPIO43 pull-down) is a *consequence* of this, and a
@@ -13,9 +14,22 @@ minor one — it was written up as a blocker on 2026-07-31 and that was an overs
 corrected below.
 
 **Verified build (SDK 2.3.0, toolchain 15_2_Rel1):** UF2 family `rp2350-arm-s` (ARM, not
-RISC-V), target chip RP2350, ARM Secure image, USB stdin/stdout. **73 KB flash of 2 MB
-(3.6 %); 35 KB RAM of 520 KB (6.7 %)** — mostly the 32 KB capture buffer. No warnings.
+RISC-V), target chip RP2350, ARM Secure image, USB stdin/stdout. ~**72 KB flash of 2 MB;
+35 KB RAM of 520 KB** — mostly the 32 KB capture buffer. No warnings.
 Includes phases 0–2 (`safe_state`, `adc_engine`, `power_fsm`, `panel`, `beam`, `cli`).
+
+**Firmware fixes made during Phase 2 bring-up (2026-08-13)** — reflash before any bench work:
+
+| Fix | Symptom it caused |
+|---|---|
+| `beam_configure()` rounds to **nearest** period | `beam freq 104167` gave TOP=**1438** (104239 Hz, +72 Hz) and broke the exact-30 %-at-level-432 design point |
+| `beam_configure()` engages a **clkdiv** below ~2289 Hz | `beam clamp` printed "1 kHz / 500 µs" while producing **2289 Hz / 218 µs** and ~20 % LED duty |
+| `beam` prints a **hardware readback** (PWM_EN, funcsel, pad ISO, CSR/TOP/CC, live counter) | Nothing distinguished "firmware not driving the pin" from "probe is wrong" |
+| `adc <ch>` rejects `ch > 7` | `adc 32` passed validation — shift-by-≥32 is UB and wrapped to bit 0 |
+| `fault clear` fully acknowledges `PS_FAULT` | Ring kept double-blinking while the red LED cleared |
+| Pi detection is a **3 s window** + debounced late-detect | A slow Pi was classed absent → next press was a hard power cut |
+| `reset`/`bootsel` refuse while a Pi is powered | Either command silently drops the latch = hard power cut |
+| `board.h` strobe constants **86/73 → 122/100** | `STROBE_SW_MAX_US` 73 µs was *below* the .md §15 slow-ball requirement |
 
 **Companion docs**
 
@@ -43,7 +57,7 @@ Includes phases 0–2 (`safe_state`, `adc_engine`, `power_fsm`, `panel`, `beam`,
 | Toolchain | **Installed** — VS Code Pico extension, private copies in `%USERPROFILE%\.pico-sdk`. SDK 2.3.0, toolchain 15_2_Rel1, ninja 1.13.2, cmake 4.3.4. |
 | Bench equipment | Scope, logic analyzer, DMM, current-limited PSU, **FLIR thermal camera**. See the thermal section in `BENCH.md` for the four points where the FLIR matters. |
 | Firmware | Phases 0–2 written, **builds clean**, flashed and running |
-| Bench work done | **Phases 0, 0.5, 1, 1b and 1c all complete (2026-07-31).** E9 check passed. All rails verified. All Phase 1 tests pass including fail-safe-through-reset; **the full Phase 1b matrix passes**, covering both timeouts, the RPI5_ON fallback, the escape hatch and the reset invariant. Standby draw **32 mA**. **Phase 2 next.** |
+| Bench work done | **Phases 0, 0.5, 1, 1b, 1c (2026-07-31) and 2 (2026-08-13) all complete.** Phase 2: phase lock to 0.15 ticks, beam ramped to 30 %, U9 clamp 122.68 µs, duty fidelity flat to 250 kHz, thermals characterised. E9 check passed. All rails verified. All Phase 1 tests pass including fail-safe-through-reset; **the full Phase 1b matrix passes**, covering both timeouts, the RPI5_ON fallback, the escape hatch and the reset invariant. Standby draw **32 mA**. **Phase 2 next.** |
 
 **Bug found and fixed on the bench 2026-07-30 — ✅ fix verified (Phase 1 test 5).**
 
@@ -61,8 +75,16 @@ every latched state. On trip it raises `FAULT_SUPPLY_LOST` and drops the latch. 
 is load-bearing — from Phase 6 the rail is *expected* to sag during strobe bursts (the boost
 UVLO is bracketed at 4.74/4.52 V for that), so a bare threshold would trip on every shot.
 
-**Immediate next action:** `BENCH_P2_BEAM.md` — Phase 2, beam carrier and demod phase lock.
-Do 2a on the logic analyzer first, with the LED effectively dark.
+**Immediate next action:** 🔴 **Fix `ARCHITECTURE.md` A1 before starting Phase 3.**
+`adc_read_avg()` tears down the ADC ten times a second; Phase 3 needs ADC5 free-running into
+a DMA ring. Then `BENCH_P3_DETECT.md`.
+
+**Phase 2 closed 2026-08-13.** Both open questions answered:
+- **Q1 — U9 one-shot clamp = 122.68 µs.** Neither the .md's 113 µs nor the calculated 86 µs;
+  K ≈ 1.0, not 0.7. Corrected the strobe constants in `board.h`.
+- **Q2 — no duty-fidelity limit up to 250 kHz.** The premise was wrong: ~CLR resets C57
+  through an internal low-impedance transistor (~0.1–0.2 µs), not through R68's 123 µs
+  *charging* RC. Carrier stays 104.167 kHz.
 
 **Phase 1b closed 2026-07-31.** The full matrix passed against a simulated Pi, including the
 four rows added after the FSM changed (detect window, late-detect promotion, its debounce,
@@ -156,11 +178,12 @@ indication — is now proven on hardware. Everything in `BENCH.md` is done.
 
 | # | Item | Why it matters | Resolve in |
 |---|---|---|---|
-| Q1 | **One-shot clamp is probably ~86 µs, not 113 µs.** SN74LVC1G123 t_w ≈ K·R·C, K ≈ 0.7 at 3.3 V; 56K × 2.2 nF = 86 µs. The .md's 113 µs implies K ≈ 0.92. | `STROBE_SW_MAX_US` (100 µs) may be **above** the real hardware limit → every slow-ball pulse silently truncated | Phase 2 step 4 (U9), Phase 6a (U5) |
-| Q2 | **74LVC1G123 recovery at 104 kHz.** Timing node must reset via ~CLR in the 6.7 µs low phase. | If it can't keep up, the LED won't reproduce 30 % duty and the carrier design shifts | Phase 2b step 3 |
-| Q3 | **Best carrier frequency.** 104.1667 kHz is a starting point, not an answer. Boost fsw tolerance makes paper analysis undefensible. | Detection SNR | Phase 3.6 `scan carrier` |
+| ~~Q1~~ | ✅ **ANSWERED for U9 2026-08-13: 122.68 µs.** Neither estimate was right — K ≈ 1.0, not 0.7. **The concern was inverted:** the clamp is *above* the 100 µs software limit, so firmware controls pulse width and the .md §15 slow-ball rows need no re-derivation. `STROBE_SW_MAX_US` stays 100 µs. **Still open: U5**, same part and RC, expect 109–136 µs — verify in Phase 6a.1 and set the constant from it. *(original text)* One-shot clamp is probably ~86 µs, not 113 µs. SN74LVC1G123 t_w ≈ K·R·C, K ≈ 0.7 at 3.3 V; 56K × 2.2 nF = 86 µs. The .md's 113 µs implies K ≈ 0.92. | `STROBE_SW_MAX_US` (100 µs) may be **above** the real hardware limit → every slow-ball pulse silently truncated | Phase 2 step 4 (U9), Phase 6a (U5) |
+| ~~Q2~~ | ✅ **ANSWERED 2026-08-13: no limit up to 250 kHz.** Exactly 30 % duty reproduced at TP5 at 250 kHz (4.0 µs period, 1.2 µs low). The premise was wrong: ~CLR resets C57 through an internal low-impedance transistor (~0.1–0.2 µs), not through R68's 123 µs charging RC. | — | ✅ Closed. **Carrier stays 104.167 kHz. Q3 may search freely up to 250 kHz** |
+| Q3 | **Best carrier frequency.** 104.1667 kHz is a starting point, not an answer. Boost fsw tolerance makes paper analysis undefensible. **Search space is now known to be unconstrained by hardware to at least 250 kHz** (Q2), so this is purely a detection-performance question. ⚠ **Run it warm** — optical output falls 25–45 % from cold to plateau while every electrical reading says nothing changed. | Detection SNR | Phase 3.6 `scan carrier` |
 | Q4 | **Does the Pi 5's header 3.3 V rail drop at halt?** | If not, `PI_3V3_SENSE` never fires and every shutdown hits the 60 s timeout. RPI5_ON fallback is implemented. Also decides whether `pi_down_unrequested` telemetry (§9) can rest on 3V3 or must use RPI5_ON alone. | **`BENCH_P8_PI.md` §8.2** — `sudo halt`, DMM on J8.1 |
 | ~~Q5~~ | ~~**RP2350 erratum E9**~~ — **CLOSED 2026-07-29.** Empirical `pins` test: GPIO24/0/8/9 all read **0** floating. Silicon is revision **A4**, a later stepping than the A2 the erratum was documented against. | — | ✅ Resolved. No external pull-downs needed; R44's 100 kΩ holds GPIO24 down fine on this silicon. The `pins` reading is the authoritative evidence for this board. |
+| Q12 | **Which component is actually the beam thermal limit — D11 or the ballast R73/R74?** FLIR at 25 % duty read **R73 85.5 °C** vs **D11 53.6 °C**, which would mean the ballast is hotter despite D11 dissipating 4×. **But D11's reading is not trustworthy:** it came off a **domed lens**, a curved specular surface whose effective emissivity falls with angle. **Physics rules it out** — the heatsink measured **68.1 °C**, and D11 cannot be cooler than the sink it is feeding. So D11 is **> 68 °C**, most likely **74–82 °C** (heatsink + ~2 K/W interface × 2.74 W), junction **90–107 °C**. | Decides whether `NEXT_BOARD_REV.md` **CR-12** is a real constraint (🔴, sustained duty capped ~20 %) or a misattribution (🟢, D11 has 38–55 °C of margin). Also decides whether the **24 K/W** figure in §6 describes D11 or R73. | **Put matte tape on D11 and re-read at 25 % after a 5 min plateau.** Also read R73 and R74 separately — they are in series with identical 0.69 W and should match within a few °C. **Sanity rule: D11 must read hotter than its own heatsink; if it does not, the reading is wrong.** |
 | Q6 | **Mira220 digital I/O is 1.8 V?** J4 drives 3.3 V through 220 Ω. | Can damage the sensor | Before Phase 7c |
 | ~~Q7~~ | ~~**RPI5_SHUTDOWN polarity**~~ — **RESOLVED on hardware 2026-07-31.** Active-low is correct and proven: a shutdown request produces a clean **200 ms low pulse at GPIO43**, measured during Phase 1b. | — | ✅ Firmware side closed. Only the Pi-side overlay params remain to be written and verified — `BENCH_P8_PI.md` §8.1. |
 | Q10 | 🟢 **Measured 2026-07-31 — the level fails, but the impact is small. Demoted from blocker.** GPIO43's reset-default pull-down (§2: PDE=1) holds the *asserted* level from the reset edge until `safe_state_init()` runs. Measured with a 20 kΩ emulated pull-up: **2.07 V** at J8.37 against a **3.246 V** rail. `X = V·R/(3V3−V)` = **35.2 kΩ**, i.e. a **~34 kΩ pad pull-down** — stronger than the 50–80 kΩ assumed. A real Pi's ~50 kΩ pull-up would see **`V_pi` = 1.34 V**, below RP1's VIH, and even a typical 60 kΩ pull-down gives 1.81 V — so the *level* fails across the whole plausible range. | ⚠ **Corrects the 2026-07-31 write-up, which called this a blocker.** It is not. **Every reset also opens the +5 V latch** (§2), so the spurious request reaches a Pi that is losing its rail in the same instant. There is no case on this board where GPIO43 goes low but the latch holds — both pads reset together and the Pi has no other power source. The real hazard is the power cut; this is a footnote to it. | 🔧 **Optional defence-in-depth: 10 kΩ from J8.37 to +3V3** (or to **J8.1**, the Pi's own 3V3 — both are header pins, so no PCB work). Gives 2.67 V through reset and 0.35 V when firmware asserts. **Fit it if convenient; it does not gate Phase 8.** The mitigation that actually matters is the `reset`/`bootsel` CLI guard, already implemented. |
@@ -211,7 +234,9 @@ See `tools/openocd_pi5.cfg`.
       limited). Automatic state→pattern mapping **confirmed during 1b** (2026-07-31),
       including POWERING_ON, PI_BOOTING, SHUTTING_DOWN and the FAULT double-blink — all of
       which need a simulated Pi to reach.
-- [ ] **2** Beam carrier + demod phase lock (2a on LA first, then 2b ramped)
+- [x] **2** Beam carrier + demod phase lock — **COMPLETE 2026-08-13.** 2a all 7 checks
+      (scatter 0.15 ticks); 2b ramp + thermals; **2c Q1 = 122.68 µs**; **2d Q2 = no limit
+      to 250 kHz**. Carrier stays 104.167 kHz. `board.h` strobe constants 86/73 → 122/100.
 - [ ] **3** Photodiode: static health → phase cal → threshold → `scan carrier` → ball transit
 - [ ] **4** Trigger source experiment (comparator vs. ADC bias table)
 - [ ] **5** Microphone *(can be pulled forward — runs on USB power alone, no latch needed)*
@@ -252,11 +277,26 @@ See `tools/openocd_pi5.cfg`.
 | | **RUN rising → GPIO43 rising** | | *Optional.* The boot window before `safe_state_init()`. Curiosity now that Q10 is demoted — take it if the scope is already set up |
 | | **Pi 5 +5V → header 3V3 latency** | | **Phase 8.3.** Sets `PI_DETECT_WINDOW_MS` (currently 3000, a guess). Measure to the 2.54 V crossing at J8.1 (Q11) |
 | | **Pi 3V3 at halt** | | **Phase 8.2.** Decides Q4 — whether `PI_3V3_SENSE` is real or `RPI5_ON` does all the work |
-| | **Phase tick scale** (2a) | | measure the `beam phase 720` offset, expect **4.800 µs** → 4800/720 = **6.67 ns/tick**. Do not try to measure one tick |
-| | **Phase-lock scatter** (2a check 7) | | offset spread across ~10 `beam freq` reconfigurations. **Pass: under one tick (6.67 ns).** At 500 MS/s the ±2 ns quantisation floor is well clear of it |
-| | **U9 beam one-shot clamp** | | **expect ~86 µs, not 113 (Q1)** |
-| | **U5 strobe one-shot clamp** | | **expect ~86 µs — sets `STROBE_SW_MAX_US` (Q1)** |
-| | Beam duty fidelity limit | | frequency where TP5 stops tracking commanded duty (Q2) |
+| 7/31/2026 | **`beam freq` rounding bug** | **found and fixed** | `beam freq 104167` gave TOP=**1438** (104239 Hz, +72 Hz) — `150e6/104167` truncated to 1439, then `-1`. Broke the exact-30 %-at-level-432 design point (best was 29.951 %). Now rounds to nearest. **Reflash before Phase 2** |
+| 7/31/2026 | **Phase tick scale** (2a check 5) | **6.6667 ns/tick** | ✅ `beam phase 720` measured **4800.00 ns**; 4800/720 = 6.6667, exactly nominal. The 360 and 1439 captures gave 6.6639 / 6.6661 (0.04 %) |
+| 7/31/2026 | **2a checks 1-3** | **PASS** | Carrier 186.51 ns high (28.0 ticks), demod 4800.78 ns (50.008 %), both 9599.98 ns period = 104167.2 Hz. **Phase at `phase 0`: mean +0.78 ns, spread 2.0 ns = 0.30 ticks** (histogram {0:50, 2:32} = 1 LA sample). Reference offset ~0 ns. Analysed with `tools/la_phase.py` |
+| 7/31/2026 | **Phase-lock scatter** (2a check 7) | **1.02 ns = 0.15 ticks** | ✅ **PASS.** 6 captures with a full `beam freq 104166` reconfiguration between each; spread is half an LA sample. **The atomic enable is proven** — Phase 3 phase calibration has solid ground |
+| 7/31/2026 | **2a checks 4, 5, 6** | **all PASS** | phase 360 → 2399.00 ns (−0.15 ticks); **720 → 4800.00 ns (0.00 ticks)**; 1439 → 9592.50 ns (−0.12); return to 0 → −0.79 ns. Monotonic, exact, wraps cleanly |
+| | *(note)* | **~−0.9 ns constant bias** | Sub-tick, so not a counter effect — PWM edges land only on 6.67 ns boundaries. LA channel skew or pad delay. Absorbed by the Phase 3 optical calibration |
+| 8/13/2026 | **Beam electrical, 25 % duty, COLD** | **3.111 A**, Vf **3.440 V** | TP5 on 0.0320 V (Rds_on 10.3 mΩ). P(LED) **2.72 W**, ballast 0.664 W each |
+| 8/13/2026 | **Beam electrical, 25 % duty, HOT (85 °C, 7 min)** | **3.165 A**, Vf **3.403 V** | TP5 on 0.0470 V (Rds_on **14.8 mΩ, +44 %**). P(LED) **2.74 W**, ballast 0.687 W each |
+| 8/13/2026 | **Cold→hot drift** | **current +1.7 %, power +0.6 %** | ⚠ **Corrects an earlier prediction of +21 %.** At 3 A most of Vf is I·Rs, and Rs rises with temperature, opposing the bandgap term. Measured Vf tempco ≈ **−0.5 mV/K for the stack**, ~7× smaller than the low-current figure. **No meaningful thermal feedback; power is essentially temperature-independent** |
+| 8/13/2026 | **Independent temperature confirmation** | **Q11 Rds_on ×1.44** | ✅ Matches AO3400A's ~+0.7 %/K over ~60 K. Confirms the silicon really reached the FLIR temperature — the small Vf shift is a property of the LED at 3 A, not a measurement artifact |
+| 8/13/2026 | **Beam ramp verification** | **2.92–3.02 A across 8→30 % duty** | ✅ Current is set by rail/Vf/ballast, **not duty** — flat over a 3.6× duty change. Ramp steps 1 %/493 ms, period 9.600 µs throughout. True duty at "30 %" = 30.00 % (the +40 ns measured tail is the TP5 recovery artifact, constant at 2 % and 30 %) |
+| 8/13/2026 | **Beam thermal: R_th (hot spot)→ambient** | **~24 K/W** | ⚠ **Which component this describes is open — see Q12.** If the hot spot is R73 rather than D11 the figure belongs to the ballast, not the LED. **Two duty points agree** for whatever it is measuring: 25 % → plateau **87.5 °C**; 30 % → **~100 °C**. Ambient 23 °C, heatsink fitted, still air. Model predicts both. τ ≈ **70 s**, ~5 min to settle |
+| 8/13/2026 | **Beam thermal: heatsink** | **68.1 °C** | ⚠ **Corrected** — an earlier 81.5 °C reading was the *board top max*, not the heatsink. With the board hot spot at 85.5 °C the sink is 17 °C cooler, so the interface is carrying heat. **But it also rules out the 53.6 °C D11 reading: D11 cannot be cooler than the sink it feeds.** See Q12 |
+| 8/13/2026 | **Beam thermal: heatsink→ambient** | **~22 K/W** | ⚠ **The bottleneck — 90 % of the total.** Better paste buys nothing; airflow buys ~2-3× |
+| 8/13/2026 | **R73 (ballast), 25 % duty** | **85.5 °C** | 0.687 W measured → implies **~90 K/W** to ambient. Bare 2512, no heatsinking. Well inside a 3 W part's rating and ~70 °C under its typical 155 °C limit |
+| 8/13/2026 | **D11 package, 25 % duty** | **53.6 °C — NOT TRUSTED** | ❌ Read off a **domed lens** (curved, specular, emissivity falls with angle). **Physically impossible**: the heatsink it feeds measured 68.1 °C. True value is **> 68 °C, likely 74–82 °C** → junction 90–107 °C. **Re-read with matte tape — Q12** |
+| 8/13/2026 | **Beam-off baseline** | **37.4 °C** | Rails latched, beam off, 23 °C ambient. +14 °C from the boost / R15-D4 shunt alone (see CR-07) |
+| 8/13/2026 | **U9 beam one-shot clamp (Q1)** | **122.68 µs** | ✅ **ANSWERED.** Median over 1291 pulses, spread 0.22 µs (0.18 %). **Neither 86 nor 113 µs** — implied K = **0.996**, not the 0.70 assumed. **Concern inverted, and a second problem found:** `STROBE_SW_MAX_US` was **73 µs**, not the 100 µs I had been quoting — *below* the 100 µs that .md §15 needs at 10 m/s, so slow-ball pulses would have been firmware-truncated 27 %. With a 122.7 µs hardware clamp, raised to **100 µs** (18 % margin). Hardware never truncates. Captured on pre-fix fw (2289 Hz, 218 µs commanded — still 1.8x headroom, valid) |
+| | **U5 strobe one-shot clamp** | | **Phase 6a.1. Expect ~122 µs** (identical part+RC to U9: 74LVC1G123, 56K, 2.2nF, BOM-confirmed). Tolerance band **109–136 µs**. **Set `STROBE_SW_MAX_US` from U5, not U9** |
+| 8/13/2026 | **Beam duty fidelity limit (Q2)** | **none up to 250 kHz** | ✅ **ANSWERED.** At 250 kHz: period 4.0 µs, TP5 low 1.2 µs = **exactly 30 %**. Swept 5→250 kHz at 30 % with no degradation. **The reset is active** — ~CLR discharges C57 through an internal low-impedance transistor in ~0.1–0.2 µs, *not* through R68's 123 µs RC, so there was never a real recovery problem. **Carrier design stands; Q3's search space is unconstrained to 250 kHz** |
 | | Chosen carrier frequency | | from `scan carrier` max-SNR (Q3) |
 | | Pi shutdown duration | | **Phase 8.2.** Set `PI_SHUTDOWN_MIN_HOLDOFF_MS` ≈ 2× this. It is 15 s on an assumption today |
 
@@ -294,6 +334,10 @@ firmware/
   src/cli.[ch]                USB-CDC line CLI, incl. `capture` (the bench instrument)
   src/main.c                  core 0 superloop
   tools/scope.py              plots a `capture` block from the CLI
+  tools/la_phase.py           Phase 2a checks 1-7 from a 2-channel LA CSV. Auto-identifies
+                              carrier vs demod by duty; circular statistics throughout
+                              (sign convention and wrap both matter -- see its docstring);
+                              `--compare` does the check-7 run-to-run spread
   tools/openocd_pi5.cfg       SWD from a Pi 5 via linuxgpiod
   tools/flash_swd.sh
 ```
@@ -306,7 +350,19 @@ firmware/
 
 - **C / Pico SDK 2.x**, not Rust — matches the .md pseudocode, first-class PIO/DMA/dual-core.
 - **Carrier = 104.1667 kHz** (sysclk 150 MHz, TOP=1439, level=432 → exactly 30.000 %),
-  as a *starting point* pending `scan carrier`.
+  as a *starting point* pending `scan carrier`. ✅ **Validated on hardware 2026-08-13:**
+  phase lock reproducible to 0.15 ticks, duty exact to 250 kHz, peak current 3.11 A. The
+  frequency choice is now purely a detection-SNR question (Q3), not a hardware one.
+- **Peak beam current is set by the rail, LED Vf and ballast — not by duty** (measured:
+  2.92–3.02 A flat across an 8→30 % ramp). Duty controls only how often. This is why the
+  ramp is safe by construction rather than by luck, and why `beam duty` is the wrong knob
+  if peak current ever needs changing — that takes a different ballast.
+- **The beam operating point is thermally stable but optically is not.** Cold → 85 °C
+  plateau moves current +1.7 % and power +0.6 %, because at 3 A most of Vf is I·Rs and series
+  resistance rises with temperature, opposing the bandgap term (measured tempco ≈ −0.5 mV/K
+  for the stack, ~7× smaller than the low-current figure). **But radiant efficiency still
+  falls ~0.3–0.6 %/K**, so ~25–45 % of the light is lost over a 76 K junction rise — and
+  none of it is visible electrically. **Phase 3 must calibrate warm.**
 - **ADC while armed = round-robin {ch5, ch7} at 250 ksps each**, resolving the .md's unstated
   conflict between the detect signal and the mic both wanting to free-run.
 - **Trigger = comparator starts the timing, ADC refines during the camera-handshake dead
@@ -439,45 +495,42 @@ firmware/
 
 ## 10. Next session — start here
 
-**`BENCH.md` is finished.** Phases 0, 0.5, 1, 1b and 1c all closed on 2026-07-31. The whole
-power path is proven on hardware and nothing blocks the next phase.
+**Phases 0 through 2 are complete.** `BENCH.md` and `BENCH_P2_BEAM.md` are both finished.
+**Reflash first** — eight firmware fixes landed during Phase 2 bring-up (table at the top).
 
-1. **Phase 2 — `BENCH_P2_BEAM.md`.** Firmware is written and in the build. The beam cannot
-   start at boot; it stays dark until `beam on`. Do **2a on the logic analyzer first**
-   (phase lock, LED effectively dark at 2 % duty) — it is the trickiest code in the project
-   and free to prove before current flows. **Check 7 is the one that matters**: the phase
-   relationship must be identical across repeated `beam freq` calls, because every Phase 3
-   phase calibration is built on it.
-   Then PSU limit **≥ 2.5 A** for 2b; the beam averages ~0.95 A at 30 %.
-2. ⚠ **After `beam clamp` (2c), type `beam duty 2` before anything else.** `beam clamp`
-   leaves the duty at 50 % and `beam freq` does not re-check the 35 % ceiling — see the box
-   below. This is the most likely way to cook D11 during Phase 2.
-3. Fill in §6 as you go. The two measurements that change code once taken: the **U9/U5
-   one-shot clamps** (Q1, expect ~86 µs not 113) and the **chosen carrier** (Q3).
-   **If the duty-fidelity limit (Q2) lands below ~104 kHz, stop** — the carrier design and
-   Phase 3 both need rethinking.
+1. 🔴 **Fix `ARCHITECTURE.md` A1 BEFORE starting Phase 3, not during.**
+   `adc_read_avg()` stops the ADC, drains the FIFO and clears round-robin — and the power
+   FSM's supply monitor calls it every 100 ms. Phase 3 needs ADC5 free-running into a
+   continuous DMA ring so a comparator edge has pre-trigger history. Ten teardowns a second
+   will punch holes in that ring and rotate the round-robin phase, and the symptom is
+   intermittent missing samples that read as an analog fault. **Much cheaper now than later.**
 
-**Optional, not blocking, do if the bench is already set up:** the `RUN → GPIO43` boot-window
-capture, and the Q10 10 kΩ pull-up (J8.37 → J8.1 needs no PCB work). Neither gates anything.
+2. **Take the D11 tape reading (Q12).** Sixty seconds, and it decides whether
+   `NEXT_BOARD_REV.md` CR-12 is a 🔴 design constraint or a 🟢 footnote. Matte tape on the
+   LED, 25 % duty, 5 min plateau. Sanity rule: **D11 must read hotter than its heatsink.**
 
-**Before Phase 3, not during:** fix `adc_read_avg()` tearing down free-running ADC modes
-(`ARCHITECTURE.md` A1). It is harmless today and breaks the detection ring.
+3. **Then Phase 3 — `BENCH_P3_DETECT.md`.** Order matters: static health (3.2) → demod
+   phase calibration (3.4, and use the chopped-beam method — the .md's `cal_demod_phase()`
+   is buggy) → threshold cross-calibration (3.5) → `scan carrier` (3.6) → ball transit (3.7).
+   ⚠ **Let the beam reach thermal plateau (~5 min) before calibrating anything** — optical
+   output falls 25–45 % from cold and it is invisible electrically.
 
-**New in this build (post-1b, 2026-07-31):** Pi detection is now a 3 s window with a
-debounced late-detect promotion from `BENCH_RUNNING` (see §8); `fault clear` fully
-acknowledges `PS_FAULT`; automatic panel patterns are phase-aligned to state entry;
-**`reset` and `bootsel` refuse while a Pi is powered** (`force` overrides) — see §9.
+4. **Watch for Q8 in Phase 3.** The virtual ground tracks the +5 V rail, so a rail step while
+   the HPF is in HOLD (i.e. armed) reaches the comparator amplified ×14.5. Scope +5 V and
+   ADC5 together while armed. Board fix proposed as CR-02.
 
-**New CLI in this build (Phase 2):** `beam` (status), `beam on|off`, `beam freq <hz>`,
-`beam duty <pct>` (refuses >35 %), `beam ramp <pct> [step_ms]` (1 % steps — use this, not
-`duty`, above ~5 %), `beam phase <ticks>`, `beam clamp` (1 kHz/50 % for the Q1 measurement),
-`beam sweep <f0> <f1> <n> <dwell_ms>` (Q2 fidelity sweep).
+**Beam commands, as they now behave:** `beam` (status **+ hardware readback**), `beam on|off`,
+`beam freq <hz>` (rounds to nearest; prints period in counts and the achievable step),
+`beam duty <pct>` (refuses >35 %), `beam ramp <pct> [step_ms]`, `beam phase <ticks>`,
+`beam clamp` (now genuinely 1 kHz / 500 µs via clkdiv=3), `beam sweep <f0> <f1> <n> <dwell>`.
 
-> ⚠ **The 35 % ceiling only guards `beam duty`.** `beam freq`, `beam clamp` and `beam sweep`
-> bypass it. Because `beam clamp` leaves the duty at **50 %**, a bare `beam freq 104167`
-> after it runs the carrier at 104 kHz / 50 % — roughly 1.6 A and ~5.25 W in D11, and U9's
-> width clamp does not intervene. **Type `beam duty 2` immediately after every `beam clamp`.**
-> See §9 for the one-line fix that closes all three paths.
+> ⚠ **The 35 % duty ceiling still only guards `beam duty`.** `beam freq`, `beam clamp` and
+> `beam sweep` reach `beam_configure()` directly and skip it. `beam clamp` leaves the duty at
+> **50 %**, so type `beam duty 2` immediately after. See §9 for the one-line fix.
+
+**Analysis tooling:** `tools/la_phase.py` for 2a-style LA captures (and Phase 3 phase work) —
+handles multi-GB CSVs by windowed sampling, and uses circular statistics because the naive
+nearest-edge approach fails at exactly phase 0, TOP/2 and TOP.
 
 **Rebuilding from the command line** (faster than the IDE button):
 ```

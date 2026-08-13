@@ -26,6 +26,8 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 | **CR-07** | 12 V shunt regulator burns ~40 mA at idle | 🟢 Low | Redesign | ~31 % of idle power, forever |
 | **CR-08** | No PGOOD or VIR sense | 🟢 Low | Needs a free ADC | Boost readiness stays open-loop timed |
 | **CR-09** | Mira220 1.8 V I/O translation | ⏸ Blocked | TBD | **Conditional on Q6** — may damage the sensor |
+| **CR-11** | Net `Strobe_GND` is not ground — rename it | 🟢 Low | Rename | A name that invites clipping a scope ground to Q11's drain |
+| **CR-12** | Beam LED thermal path caps sustained duty at ~20 % | 🔴 High | Airflow / bigger sink | Beam runs at 2/3 optical power while armed → worse Phase 3 SNR |
 
 ---
 
@@ -399,6 +401,100 @@ is 2.0–2.31 V on a 3.3 V rail, so a 1.8 V sensor output will not register with
 translation.** See `BENCH_P5_P7_MIC_CAMERA.md` §7.0.
 
 Carried here so it is not forgotten at layout time.
+
+---
+
+## CR-11 — 🟢 Rename the net `Strobe_GND`
+
+It is **not ground.** `Strobe_GND` (netlist code from the beam chain) is Q11's **drain** — the
+switched node between the ballast pair and the low-side FET, swinging 0.15 V to 5.2 V. TP5
+sits on it.
+
+The name actively invites someone to clip a scope ground lead there, which shorts the drain to
+earth and puts ~3.3 A DC through the probe lead while bypassing U9's pulse clamp. It is the
+one net on this board whose name could cause damage.
+
+**Rename to something like `BEAM_LED_K` or `Q11_DRAIN`.** Costs nothing, prevents a class of
+mistake that no amount of documentation reliably fixes. Same review pass should check for any
+other net named `*_GND` that is not actually at ground potential.
+
+---
+
+## CR-12 — 🔴 The beam LED's thermal path limits sustained duty, and therefore SNR
+
+### Why — measured 2026-08-13, not estimated
+
+With the heatsink fitted, still air, 23 °C ambient:
+
+| Duty | Package plateau | Junction (+6…9 K/W) |
+|---|---|---|
+| 25 % | **87.5 °C** | 104–112 °C |
+| 30 % | **~100 °C** | 122–132 °C (T_j max is **145 °C**) |
+
+**R_th package→ambient ≈ 24 K/W**, confirmed at two independent duty points. It does plateau
+(τ ≈ 70 s), so the path works — it is simply not good enough for the design operating point.
+
+**The bottleneck is located.** Splitting the 24 K/W:
+
+| Stage | R_th | |
+|---|---|---|
+| Junction → solder point | 6–9 K/W | datasheet, fixed |
+| Solder point → heatsink | **~2 K/W** | ✅ measured. **The TIM is fine** |
+| **Heatsink → ambient** | **~22 K/W** | ⚠ **90 % of the total** |
+
+So **better thermal compound or a better interface buys nothing.** The heat gets out of the
+part and into the sink easily; it then sits there because the sink cannot shed it into still
+air.
+
+### Why it matters beyond thermals
+
+The beam is the *detection* beam — it must be on the entire time the system is armed waiting
+for a ball, which is minutes, not milliseconds. So this is a **continuous** rating, not a
+burst one. At 40 °C enclosure ambient every figure above shifts **+17 °C**, capping sustained
+duty at **~18–20 %** against a 30 % design point.
+
+**That is a ~⅓ reduction in optical power, which lands directly on Phase 3 detection SNR.**
+It is a system-level constraint discovered thermally, and it should be resolved before the
+carrier and threshold work in Phase 3 is tuned against an optical power the product cannot
+sustain.
+
+### Options, best value first
+
+1. **Airflow.** Forced convection typically improves a heatsink 2–3×; 22 → ~9 K/W takes the
+   total to ~12 K/W and makes **30 % viable even at 40 °C ambient**. Cheapest fix by far,
+   but it adds a fan (noise, power, a moving part, an air path through the enclosure).
+2. **A larger heatsink / more board copper.** No moving parts. Needs layout area and an
+   honest airflow assumption for the enclosure.
+3. **Accept ~20 % and re-plan the optical budget.** Legitimate, but decide it deliberately
+   and feed it into Phase 3 rather than discovering it during `scan carrier`.
+4. **Re-examine the operating point.** LED efficiency droops at high current density, so
+   *lower peak current at higher duty* may give more optical output for the same heat. Same
+   average current, better photons per watt. Whether the demodulator tolerates the duty
+   change is a Phase 3 question — worth testing during `scan carrier` rather than assuming
+   30 % / 3.1 A is optimal.
+5. **Replace the resistive ballast with a current regulator.** R73/R74 burn **1.38 W at 25 %
+   duty** — a third of D11's own 2.74 W, measured. It does *not* reduce D11's junction
+   temperature (different parts), so it is not a fix for the core problem, but it removes a
+   third of the beam's total thermal load from the board. Weigh against losing the ballast's
+   simplicity and its role in making the current inherently stable.
+
+### Measured temperature behaviour — better than assumed
+
+Cold → hot (85 °C plateau) at 25 % duty: **current +1.7 %, power +0.6 %.** The LED's Vf
+tempco at 3 A is only ~−0.5 mV/K for the stack, because most of Vf is I·Rs and series
+resistance rises with temperature, opposing the bandgap term. **So there is no meaningful
+thermal feedback and the operating point is very stable.**
+
+⚠ **But optical output is not.** Radiant efficiency falls ~0.3–0.6 %/K, so the same ~76 K
+junction rise costs roughly **25–45 % of the light** — invisible in every electrical
+measurement. That is the real cost of running hot, and it is what makes this a Phase 3 SNR
+issue rather than a reliability one.
+
+### Verify
+
+Repeat the plateau test (`beam duty 30`, FLIR every minute until it stops rising, ~5 min) at
+the **worst-case enclosure ambient**, not on an open bench. Pass: junction, computed as
+package + 9 K/W × P, stays under **110 °C** for lifetime margin against the 145 °C limit.
 
 ---
 

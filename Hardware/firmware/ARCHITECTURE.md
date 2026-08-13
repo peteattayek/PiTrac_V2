@@ -20,7 +20,7 @@ economise by doing things in software:
 | Resource | Total | Committed | Free |
 |---|---|---|---|
 | **PIO blocks** | **3** (PIO0/1/2), 4 SMs each = 12 SMs | 4 planned | **8 SMs** |
-| PWM slices | 12 | 6 | 6 |
+| PWM slices | 12 | **5** (5, 6, 7, 10, 11 — and 6 is double-booked, see **A7**) | **7** |
 | DMA channels | 16 | ~6 planned | 10 |
 | ADC | 1 SAR, 500 ksps, round-robin + DMA | shared, see A1 | — |
 | Cores | 2 | core 0 slow path, core 1 hot path | — |
@@ -54,6 +54,17 @@ could simply have their own state machine. We are not short of state machines.
 The carrier/demod phase lock is worth calling out as the model for the rest: two
 counters preloaded while disabled, then enabled in a **single register write**, so
 the relationship is exact and needs no CPU maintenance ever again.
+
+> ✅ **Measured on hardware 2026-08-13, and it works exactly as designed.** Across **six**
+> full `beam_configure()` teardown-and-reload cycles the carrier↔demod offset moved by
+> **1.02 ns = 0.15 ticks** — half a logic-analyser sample at 500 MS/s. Commanded phase
+> offsets of 0, 360, 720 and 1439 ticks all reproduced within 0.15 ticks, wrapped cleanly,
+> and returned to the reference.
+>
+> The read-modify-write in `beam_slices_enable()` was confirmed too: with the beam running,
+> `PWM_EN` read **0x8e0** — bits 7 and 11 (beam) set *alongside* bits 5 and 6 (panel LEDs),
+> which the SDK's `pwm_set_mask_enabled()` would have cleared. **This is the pattern to copy
+> for any future multi-peripheral start that must be simultaneous.**
 
 ---
 
@@ -154,6 +165,12 @@ latency and the patterns will visibly stutter.
 **Fix:** drive `panel_update()` from a `repeating_timer` at 50 Hz. Bounded, off the
 superloop, immune to loop jitter. Ten-line change; do it whenever convenient.
 
+> **Partly addressed 2026-07-31.** Automatic patterns now run on `power_state_elapsed_ms()`
+> rather than free-running time, so every state starts its waveform at the beginning. That
+> fixed a real symptom — `POWERING_ON` was catching an arbitrary slice of its breath cycle
+> and could land near zero brightness, looking as though the state never happened. **The
+> call rate is still superloop, so the A4 fix itself is still outstanding.**
+
 ---
 
 ### 🔴 A7 — The ready LED and the strobe current DAC are on the same PWM channel
@@ -210,6 +227,29 @@ channel*, hence its own compare register and independent duty. One trace.
 
 ---
 
+### 🟢 A8 — Status commands should read hardware, not firmware's opinion of it
+
+**Added 2026-08-13 after it cost a bench session.**
+
+`beam` originally reported `s_on`, `s_top`, `s_duty`, `s_phase` — all **software** state. When
+the beam appeared dead on the logic analyser, that output said "ON, 104166 Hz, 2 % duty" and
+proved nothing: it could not distinguish *firmware is not driving the pin* from *the probe is
+wrong*. (It was the probe — a missing ground.)
+
+`beam` now also dumps the silicon: `PWM_EN`, both slices' `CSR`/`TOP`/`CC`/`DIV`, the GPIO
+`funcsel`, the **pad ISO bit** (RP2350-specific — pads reset isolated, and a set ISO bit means
+no output regardless of what the peripheral is doing), and the **live counter sampled three
+times** so a frozen slice is obvious at a glance.
+
+**The general rule for anything driving hardware we then measure externally:** the status
+command should read back registers, not mirror the variables that were written. Everything
+offloaded to PWM/PIO/DMA has this property — the CPU sets it up and then has no idea whether
+it is still working. Worth applying to the strobe burst engine (Phase 6) and the camera
+handshake (Phase 7), where a silently-stopped state machine would otherwise look identical to
+a wiring fault.
+
+---
+
 ### 🟢 A5 — UART to the Pi must be DMA on both directions
 
 Not yet written, so this is a specification rather than a fix. At 921600 baud with
@@ -223,7 +263,8 @@ exist on the core also running the power FSM.
 
 ### 🟢 A6 — Blocking bench commands are fine, and should stay labelled
 
-`beam ramp`, `beam sweep`, `panel demo` and `capture` all block for seconds.
+`beam ramp`, `beam sweep`, `panel demo` and `capture` all block for seconds. So does the
+hardware-readback block in `beam`, which busy-waits ~4 µs to sample the PWM counter twice.
 
 **That is correct for bench tooling** — they are interactive commands where the
 operator is watching a scope, and non-blocking versions would add state machines
@@ -238,8 +279,8 @@ are allowed to; production paths are not.
 
 | Function | Where it goes | Status |
 |---|---|---|
-| Beam carrier | PWM 3B | ✅ done |
-| Demod clock | PWM 7B, phase-locked | ✅ done |
+| Beam carrier | PWM **7B** | ✅ done — **validated on hardware**, see above |
+| Demod clock | PWM **11B**, phase-locked | ✅ done — **0.15 ticks across 6 reconfigurations** |
 | Gate DAC | PWM 2A | ✅ done |
 | Threshold DAC | PWM 10A | ✅ done |
 | Panel LEDs | PWR 5B + 50 Hz timer; **RDY off PWM entirely** | 🟢 A4, 🔴 **A7** |

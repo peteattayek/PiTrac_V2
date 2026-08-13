@@ -15,6 +15,7 @@ static uint     s_slice_dem, s_chan_dem;
 static uint32_t s_top    = CARRIER_TOP_DEFAULT;
 static float    s_duty   = 0.02f;          // start low; ramp up deliberately
 static int32_t  s_phase  = 0;
+static uint32_t s_div    = 1;      // PWM clkdiv; >1 only below ~2289 Hz
 static bool     s_on     = false;
 
 // ---------------------------------------------------------------------------
@@ -55,10 +56,36 @@ void beam_configure(uint32_t freq_hz, float duty, int32_t phase_ticks) {
     if (duty < 0.0f) duty = 0.0f;
     if (duty > 1.0f) duty = 1.0f;
 
-    uint32_t top = (SYSCLK_HZ / freq_hz);
-    if (top < 2)     top = 2;
-    if (top > 65536) top = 65536;      // PWM counter is 16-bit
-    top -= 1;
+    // Round to the NEAREST period, not down.
+    //
+    // Plain truncation here used to cost a whole count. 150e6/104167 = 1439.995
+    // truncates to 1439, then -1 gives TOP=1438: a 1439-count period, 104239 Hz,
+    // 72 Hz ABOVE the requested frequency. It also broke the documented design
+    // point -- TOP=1439 (period 1440) is what makes level 432 exactly 30.000%;
+    // at TOP=1438 the closest is 431/1439 = 29.951%. And it made the CLI's
+    // "nearest achievable" message false, since 104166.67 Hz was available.
+    //
+    // 64-bit intermediate so the +freq_hz/2 rounding term cannot overflow.
+    uint64_t n = ((uint64_t)SYSCLK_HZ + freq_hz / 2u) / freq_hz;  // counts per period
+    if (n < 2) n = 2;
+
+    // The counter is 16-bit, so below ~2289 Hz one period will not fit at
+    // clkdiv=1 and we must divide the clock. `beam clamp` asks for 1 kHz and
+    // used to be silently clamped to TOP=65535 -- i.e. 2289 Hz with a 218 us
+    // commanded high phase, not the 1 kHz / 500 us it printed. The measurement
+    // still worked (218 us > the ~86 us clamp) but the LED ran at ~20 % duty
+    // instead of the ~9 % the procedure assumes.
+    //
+    // NOTE: with div > 1 a phase tick is div * 6.67 ns, not 6.67 ns. Only the
+    // clamp command goes there; 2a runs at 104 kHz where div is always 1.
+    uint32_t div = 1;
+    while (n > 65536 && div < 256) {
+        div++;
+        n = ((uint64_t)SYSCLK_HZ / div + freq_hz / 2u) / freq_hz;
+    }
+    if (n > 65536) n = 65536;          // still too slow even at div=255
+    s_div = div;
+    uint32_t top = (uint32_t)(n - 1);
 
     s_top   = top;
     s_duty  = duty;
@@ -69,7 +96,7 @@ void beam_configure(uint32_t freq_hz, float duty, int32_t phase_ticks) {
 
     pwm_config c = pwm_get_default_config();
     pwm_config_set_wrap(&c, (uint16_t)top);
-    pwm_config_set_clkdiv_int(&c, 1);  // div=1: full 6.67 ns phase resolution
+    pwm_config_set_clkdiv_int(&c, (uint8_t)s_div);  // 1 = full 6.67 ns phase resolution
     pwm_init(s_slice_car, &c, false);
     pwm_init(s_slice_dem, &c, false);
 
@@ -157,8 +184,9 @@ void beam_ramp_duty(float target, uint32_t step_ms) {
     beam_set_duty(target);
 }
 
-uint32_t beam_freq_hz(void)        { return SYSCLK_HZ / (s_top + 1); }
-uint32_t beam_actual_freq_hz(void) { return SYSCLK_HZ / (s_top + 1); }
+uint32_t beam_freq_hz(void)        { return SYSCLK_HZ / s_div / (s_top + 1); }
+uint32_t beam_actual_freq_hz(void) { return SYSCLK_HZ / s_div / (s_top + 1); }
+uint32_t beam_clkdiv(void)         { return s_div; }
 float    beam_duty(void)           { return s_duty; }
 int32_t  beam_phase_ticks(void)    { return s_phase; }
 uint32_t beam_top(void)            { return s_top; }

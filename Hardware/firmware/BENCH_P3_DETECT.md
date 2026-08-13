@@ -164,6 +164,25 @@ move. If it does, change the DAC frequency (TOP 2047 → 73 kHz, or 511 → 293 
 
 ---
 
+> ### ⚠ Warm the beam up before calibrating anything
+>
+> **Measured 2026-08-13:** from cold to thermal plateau the LED's junction rises ~76 K, and
+> radiant efficiency for 850 nm AlGaAs falls roughly **0.3–0.6 %/K** — so optical output drops
+> on the order of **25–45 %** between switch-on and steady state.
+>
+> **None of that is visible electrically.** Over the same interval current moved +1.7 % and
+> power +0.6 %, so voltage, current and duty all report "nothing happened." Only the light
+> changes.
+>
+> **Consequence: let the beam reach thermal plateau (~5 min, τ ≈ 70 s) before running
+> `scan carrier`, the threshold sweep, or the phase calibration.** A carrier and threshold
+> chosen against a cold LED will be working with substantially less signal a few minutes into
+> an armed session — and the discrepancy will look like drift or a detection fault rather than
+> a calibration error.
+>
+> Record whether the chosen SNR figures were taken warm. See `PROGRESS.md` §6 and
+> `NEXT_BOARD_REV.md` CR-12.
+
 ## 3.6 `scan carrier` — the real answer to the frequency question
 
 104.1667 kHz is a **starting point**, not an answer. The LM5157 boost runs at a nominal

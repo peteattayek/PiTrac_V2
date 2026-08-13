@@ -57,7 +57,11 @@ Command 200 µs and 1 ms pulses and record where U5 truncates.
 
 - .md claims **113 µs**
 - 0.7 · R56 · C51 = 0.7 · 56 kΩ · 2.2 nF = **~86 µs**
-- Phase 2c already measured the identical U9 circuit — this should agree
+- **Phase 2c measured U9 — the identical circuit — at 122.68 µs (2026-08-13).** Both estimates
+  above were low; the real coefficient is K ≈ **1.0**, not 0.7. U5 is the same part
+  (74LVC1G123) with the same 56K/2.2nF, BOM-confirmed, so **expect ~122 µs**. With 1 %
+  resistors and ±10 % capacitors the band is **109–136 µs**. Measure it; do not assume U9's
+  exact value.
 
 **Set from the measurement, not from the .md:**
 ```c
@@ -65,14 +69,19 @@ Command 200 µs and 1 ms pulses and record where U5 truncates.
 #define STROBE_SW_MAX_US            <0.85 × measured>
 ```
 
-**Why this is first:** the current 100 µs software limit may be *above* the real hardware
-limit. If so, every slow-ball pulse is silently truncated by hardware rather than
-controlled by firmware, and the blur budget you think you have is fiction.
+**Why this is first:** if the 100 µs software limit were *above* the hardware limit, every
+slow-ball pulse would be silently truncated by hardware rather than controlled by firmware,
+and the blur budget you think you have would be fiction.
 
-**Then re-derive the .md §15 slow-ball rows.** At 10 m/s the 1 mm blur budget already
-wants 100 µs. If the clamp is 86 µs, that case is clamp-limited: either the blur budget
-grows or the pulse count shrinks. **Decide it explicitly rather than letting hardware
-decide silently.**
+> ✅ **Phase 2c resolved this favourably — and found a second problem.** U9 measured
+> **122.68 µs**, well above the software limit. But `STROBE_SW_MAX_US` was **73 µs**, not the
+> 100 µs often quoted: *below* the 100 µs that §15 needs at 10 m/s, so slow-ball pulses would
+> have been firmware-truncated by 27 %. It has been raised to **100 µs**, which meets §15 and
+> sits 18 % under the measured clamp. **The §15 slow-ball rows need no re-derivation.**
+>
+> This still has to be confirmed on **U5**, since that is the part the constant actually
+> governs. If U5 comes in below ~118 µs the margin tightens; below 100 µs the original
+> concern returns and the §15 rows *do* need re-deriving.
 
 ### 6a.2 Pulse fidelity and the PIO burst engine
 
@@ -91,7 +100,7 @@ Unit-test `compute_schedule()` against the .md §15 table:
 | 90 m/s | 508 µs | 11 µs | 474 µs | 4.3 ms | 1.0 mC |
 | 50 m/s | 914 µs | 20 µs | 853 µs | 7.7 ms | 1.8 mC |
 | 20 m/s | 2.29 ms | 50 µs | 2.13 ms | 19 ms | 4.5 mC |
-| 10 m/s | 4.57 ms | 100 µs → **clamped** | 4.27 ms | 38 ms | 9 mC → **shed pulses** |
+| 10 m/s | 4.57 ms | 100 µs — **NOT clamped** ✅ | 4.27 ms | 38 ms | 9 mC → **shed pulses** |
 
 > **Two assumptions are baked into that table and neither is stated in the .md.** Without
 > them the rows cannot be checked, so make them explicit before you unit-test against it:

@@ -13,6 +13,8 @@
 #include "hardware/gpio.h"
 #include "hardware/watchdog.h"
 #include "hardware/clocks.h"   // clock_get_hz / clk_sys, for the `id` command
+#include "hardware/pwm.h"                 // beam hardware readback
+#include "hardware/structs/padsbank0.h"   // pad ISO bit (RP2350-specific)
 #include "pico/bootrom.h"
 
 #include <stdio.h>
@@ -415,6 +417,60 @@ static void dispatch(int argc, char **argv) {
                    (unsigned long)(beam_duty() * (beam_top() + 1)));
             printf("phase    : %ld ticks  (%.2f deg)\n", (long)beam_phase_ticks(),
                    (double)(360.0f * beam_phase_ticks() / (beam_top() + 1)));
+
+            // ---- hardware readback -------------------------------------------
+            // Everything above is SOFTWARE state and proves nothing about the
+            // silicon. These read the actual registers, so "firmware is not
+            // driving the pin" and "my probe is wrong" stop looking alike.
+            {
+                uint sc = pwm_gpio_to_slice_num(PIN_MOD_PWM);
+                uint sd = pwm_gpio_to_slice_num(PIN_DEMOD_PWM);
+                uint32_t en = pwm_hw->en;
+
+                printf("-- hardware readback --\n");
+                printf("PWM_EN   : 0x%03lx  slice %u(car) %s   slice %u(dem) %s\n",
+                       (unsigned long)en,
+                       sc, ((en >> sc) & 1u) ? "ENABLED" : "*** OFF ***",
+                       sd, ((en >> sd) & 1u) ? "ENABLED" : "*** OFF ***");
+
+                printf("funcsel  : GPIO%u=%d %s   GPIO%u=%d %s   (4 = PWM)\n",
+                       PIN_MOD_PWM,   (int)gpio_get_function(PIN_MOD_PWM),
+                       gpio_get_function(PIN_MOD_PWM) == GPIO_FUNC_PWM ? "ok" : "*** NOT PWM ***",
+                       PIN_DEMOD_PWM, (int)gpio_get_function(PIN_DEMOD_PWM),
+                       gpio_get_function(PIN_DEMOD_PWM) == GPIO_FUNC_PWM ? "ok" : "*** NOT PWM ***");
+
+                // RP2350 pads reset ISOLATED. gpio_set_function() clears it; if
+                // this ever reads 1 the pad is disconnected no matter what the
+                // peripheral is doing.
+                printf("pad ISO  : GPIO%u=%lu  GPIO%u=%lu   (1 = pad ISOLATED, no output)\n",
+                       PIN_MOD_PWM,
+                       (unsigned long)((pads_bank0_hw->io[PIN_MOD_PWM]
+                                        & PADS_BANK0_GPIO0_ISO_BITS) ? 1u : 0u),
+                       PIN_DEMOD_PWM,
+                       (unsigned long)((pads_bank0_hw->io[PIN_DEMOD_PWM]
+                                        & PADS_BANK0_GPIO0_ISO_BITS) ? 1u : 0u));
+
+                printf("slice %-2u : top %lu  cc 0x%08lx  div 0x%04lx  csr 0x%02lx\n",
+                       sc, (unsigned long)pwm_hw->slice[sc].top,
+                       (unsigned long)pwm_hw->slice[sc].cc,
+                       (unsigned long)pwm_hw->slice[sc].div,
+                       (unsigned long)pwm_hw->slice[sc].csr);
+                printf("slice %-2u : top %lu  cc 0x%08lx  div 0x%04lx  csr 0x%02lx\n",
+                       sd, (unsigned long)pwm_hw->slice[sd].top,
+                       (unsigned long)pwm_hw->slice[sd].cc,
+                       (unsigned long)pwm_hw->slice[sd].div,
+                       (unsigned long)pwm_hw->slice[sd].csr);
+
+                // The decisive test: is the counter actually advancing? At div=1
+                // and 150 MHz it moves ~300 counts in 2 us, well inside one
+                // 1440-count period, so the samples must differ if it is running.
+                unsigned a = pwm_hw->slice[sc].ctr; busy_wait_us(2);
+                unsigned b = pwm_hw->slice[sc].ctr; busy_wait_us(2);
+                unsigned c = pwm_hw->slice[sc].ctr;
+                printf("ctr(car) : %u -> %u -> %u   %s\n", a, b, c,
+                       (a == b && b == c) ? "*** FROZEN - slice is not running ***"
+                                          : "counting (slice is live)");
+            }
             printf("rails    : %s\n", power_rails_ready() ? "up" : "DOWN â€” beam cannot run");
             return;
         }
@@ -440,12 +496,15 @@ static void dispatch(int argc, char **argv) {
             if (argc < 3) { printf("usage: beam freq <hz>\n"); return; }
             uint32_t f = (uint32_t)strtoul(argv[2], NULL, 0);
             beam_configure(f, beam_duty(), beam_phase_ticks());
-            printf("freq <- %lu Hz requested, %lu Hz actual (TOP=%lu)\n",
+            printf("freq <- %lu Hz requested, %lu Hz actual (TOP=%lu, period %lu counts)\n",
                    (unsigned long)f, (unsigned long)beam_actual_freq_hz(),
-                   (unsigned long)beam_top());
+                   (unsigned long)beam_top(), (unsigned long)(beam_top() + 1));
             if (beam_actual_freq_hz() != f)
-                printf("      (SYSCLK/%lu is not an integer â€” nearest achievable shown)\n",
-                       (unsigned long)f);
+                printf("      (SYSCLK/%lu is not an integer. Rounded to the NEAREST\n"
+                       "       achievable period; frequency step here is ~%lu Hz.)\n",
+                       (unsigned long)f,
+                       (unsigned long)(SYSCLK_HZ / (beam_top() + 1)
+                                     - SYSCLK_HZ / (beam_top() + 2)));
             return;
         }
 
@@ -490,13 +549,28 @@ static void dispatch(int argc, char **argv) {
         // Q1: how wide is the U9 one-shot clamp really? Command a high phase far
         // longer than the clamp and scope TP5 â€” the LED pulse is the answer.
         if (!strcmp(argv[1], "clamp")) {
-            printf("Setting 1 kHz / 50%% â€” a 500 us commanded high phase.\n");
-            printf("Scope TP5. The pulse you see IS the U9 clamp width.\n");
-            printf("  .md claims 113 us;  0.7*R68*C57 = 0.7*56k*2.2n = ~86 us.\n");
-            printf("  Record the real number â€” it sets STROBE_SW_MAX_US for Phase 6.\n");
-            printf("Safe: even 113 us at 1 kHz is only 11%% duty.\n");
             beam_configure(1000, 0.50f, beam_phase_ticks());
-            if (!beam_enable(true)) printf("ERR: rails down â€” use 'on' first.\n");
+            {
+                // Commanded high phase in microseconds, computed from what the
+                // hardware actually ended up at rather than from the request --
+                // below ~2289 Hz beam_configure() has to engage a clock divider.
+                unsigned long lvl = (unsigned long)(beam_duty() * (beam_top() + 1));
+                unsigned long hi_us = (unsigned long)((uint64_t)lvl * beam_clkdiv()
+                                                      * 1000000u / SYSCLK_HZ);
+                printf("Set %lu Hz / %.0f %% -> commanded high phase %lu us"
+                       "  (TOP=%lu, clkdiv=%lu)\n",
+                       (unsigned long)beam_actual_freq_hz(),
+                       (double)(beam_duty() * 100.0f), hi_us,
+                       (unsigned long)beam_top(), (unsigned long)beam_clkdiv());
+                printf("Scope TP5 and measure the LOW width -- that IS the U9 clamp.\n");
+                printf("  .md claims 113 us;  0.7*R68*C57 = 0.7*56k*2.2n = ~86 us.\n");
+                printf("  Record it -- it sets STROBE_SW_MAX_US for Phase 6.\n");
+                printf("WARNING: if the LOW width equals the %lu us commanded above, the\n"
+                       "         one-shot is NOT clamping and that is not t_w.\n", hi_us);
+                printf("LED duty is clamp/period, NOT the %% commanded -- ~%lu %% if t_w=86us.\n",
+                       (unsigned long)(86ul * beam_actual_freq_hz() / 10000ul));
+            }
+            if (!beam_enable(true)) printf("ERR: rails down -- use 'on' first.\n");
             return;
         }
 
