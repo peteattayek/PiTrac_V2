@@ -21,8 +21,8 @@ economise by doing things in software:
 |---|---|---|---|
 | **PIO blocks** | **3** (PIO0/1/2), 4 SMs each = 12 SMs | 4 planned | **8 SMs** |
 | PWM slices | 12 | **5** (5, 6, 7, 10, 11 — and 6 is double-booked, see **A7**) | **7** |
-| DMA channels | 16 | ~6 planned | 10 |
-| ADC | 1 SAR, 500 ksps, round-robin + DMA | shared, see A1 | — |
+| DMA channels | 16 | 2 in use (capture + ring), ~6 planned | 10 |
+| ADC | 1 SAR, 500 ksps, round-robin + DMA | **continuous 32 KB ring** (A1 ✅) | — |
 | Cores | 2 | core 0 slow path, core 1 hot path | — |
 
 **Three PIO blocks is the headline number.** The .md's pseudocode assumes two
@@ -70,33 +70,60 @@ the relationship is exact and needs no CPU maintenance ever again.
 
 ## Findings
 
-### 🔴 A1 — The ADC monitor tears down free-running modes 10× per second
+### ✅ A1 — FIXED 2026-08-14. Continuous DMA ring; nothing stops the ADC.
 
-**This is a real bug that will surface in Phase 3.**
+**Was:** `adc_read_avg()` called `adc_quiesce()` — stopping the ADC, draining the FIFO and
+clearing round-robin — then polled 256 conversions in a blocking loop and restarted the
+previous mode. The power FSM's supply monitor called it every 100 ms. Harmless while nothing
+else used the ADC; it would have punched holes in the Phase 3 pre-trigger history and rotated
+the round-robin channel phase ten times a second.
 
-`adc_read_avg()` calls `adc_quiesce()` — which stops the ADC, drains the FIFO and
-clears round-robin — then polls 256 conversions in a **blocking loop**, then
-restarts the previous mode. The power FSM's supply monitor calls it every 100 ms.
+**Now:** IDLE, ARMED and BURST all free-run into a **32 KB DMA ring** that never stops.
 
-Two consequences:
+| | |
+|---|---|
+| Ring | `ADC_RING_SAMPLES` = 16384 samples = 32 KB, aligned to its own size |
+| DMA | **one** channel, RP2350 **ENDLESS** transfer mode (`TRANS_COUNT MODE = 0xf`) + hardware write-address ring wrap |
+| History | **32.8 ms per channel in every mode** — covers a ball transit down to ~1.4 m/s (production `v_min` is 2.0 m/s) |
+| CPU cost | **zero** |
 
-1. **~0.5 ms of spinning CPU, 10× per second.** Minor on its own.
-2. **It destroys whatever free-running acquisition was in progress.** In Phase 3,
-   ADC5 must free-run continuously into a DMA ring so that a comparator edge has
-   pre-trigger history to look back at. A monitor that stops and restarts the ADC
-   ten times a second will punch holes in that ring and rotate the round-robin
-   channel phase.
+**New API:**
+- `adc_ring_avg(chan, n, &code)` — average the newest `n` samples of a channel already in the
+  ring. Commands no conversions.
+- `adc_ring_history(chan, dst, n)` — copy the newest `n` samples out, newest first. **This is
+  the Phase 3 pre-trigger read**: after a comparator edge, pull the bump back out and find its
+  own 50 % crossings.
+- `adc_5vin_age_ms()` — staleness of the last +5V reading; `stat` displays it.
 
-**Fix:** make IDLE and ARMED modes free-run into a **continuous DMA ring buffer**,
-and have the monitor *read from the ring* instead of commanding its own
-conversions. `adc_read_5vin_volts()` becomes "average the ch1 samples already in
-the ring" — zero ADC disruption, near-zero CPU, and it can never disturb detection.
+`adc_read_5vin_volts()` now averages ch1 out of the ring and disturbs nothing.
 
-Keep the stop-and-poll path only for the CLI's one-shot `adc <ch>` command, and
-document that it is disruptive.
+#### Two constraints that are load-bearing, not stylistic
 
-**Do this before Phase 3**, not during. It is much easier to fix now than to debug
-as intermittent missing samples later.
+**1. The round-robin channel count must be 1, 2 or 4.** The ring size has to be a whole
+multiple of the channel count, or the channel phase rotates on every wrap and every
+de-interleaved sample after that is mislabelled. A power-of-two ring can never be a multiple
+of 3, so a 3-channel mode would need a self-chaining DMA and software phase tracking. This is
+why ARMED stayed `{5,7}` rather than gaining ch1.
+
+**2. Do not "fix" this with an A↔B DMA chain.** That was the first attempt and it is wrong: a
+channel's transfer count does not reload itself, so after each channel has run its one lap
+both counts sit at zero and the pair stalls silently. ENDLESS mode is the correct mechanism
+and is RP2350-only — the RP2040 equivalent needs a control channel rewriting the count.
+
+#### The one gap, accepted deliberately
+
+**ch1 is not in the ARMED set**, so while armed `adc_read_5vin_volts()` **holds its last good
+value** rather than stopping the ADC to fetch a fresh one. `adc_5vin_age_ms()` makes that
+visible instead of silent, and `stat` prints `HELD` with the age.
+
+This is safe because of the state flow: **`ARMED` → `BURST` (during the shot) → `IDLE`**, and
+`IDLE` is `{1,2,5,7}` — so the supply is re-checked automatically after every shot without a
+dedicated mode. The residual exposure is a PSU pulled *during* an armed window, which is a
+deliberate trade against sampling the detect channel at half rate.
+
+`adc_read_avg()` still exists and still stops the ring — it is now documented as disruptive
+and belongs to the CLI's one-shot `adc <ch>` only. `adc_capture()` likewise; it is a bench
+instrument and restores IDLE (and therefore the ring) when it finishes.
 
 ---
 
@@ -288,7 +315,7 @@ are allowed to; production paths are not.
 | **Comparator transit timing** | **PIO0 SM1** | 🟡 A2 — new |
 | **Camera trigger/strobe handshake** | **PIO0 SM2** | 🟡 A3 — new |
 | I²S mic | **PIO1 SM0** + DMA | planned |
-| Detect + mic acquisition | ADC round-robin → **continuous DMA ring** | 🔴 A1 |
+| Detect + mic acquisition | ADC round-robin → **continuous DMA ring** | ✅ **A1 done** |
 | Strobe current capture | ADC ch0 → DMA, burst window | planned |
 | Pi UART | DMA both directions | 🟢 A5 |
 | Power FSM, CLI, calibration, reporting | **CPU — correctly** | ✅ |

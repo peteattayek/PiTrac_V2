@@ -321,13 +321,26 @@ if the ballast resistors run away. `beam duty` refuses above 35 % as a backstop.
 
 ### ✅ Thermal result, 2026-08-13 — measured, with heatsink, still air, 23 °C ambient
 
-| Duty | Plateau (package) | Junction (pkg + 6…9 K/W) | Verdict |
+| Duty | LED base | Junction (base + 6…9 K/W) | Verdict |
 |---|---|---|---|
 | off (rails latched) | 37.4 °C | — | boost / R15-D4 floor, +14 °C over ambient |
-| 15 % | ~62 °C *(predicted)* | 72–77 °C | comfortable |
-| 20 % | ~75 °C *(predicted)* | 88–94 °C | good |
+| 15 % | ~60 °C *(predicted)* | 70–75 °C | comfortable |
+| 20 % | ~72 °C *(predicted)* | 85–91 °C | good |
 | **25 %** | **87.5 °C (measured)** | **104–112 °C** | **OK for bench** |
-| **30 %** | **~100 °C (measured)** | 122–132 °C | **too hot to sit at** |
+| **30 %** | **104 °C (measured, 10 min)** | **123–133 °C** | ❌ **only 12–22 °C from T_j max 145** |
+
+> 🔬 **Measure the LED at its BASE, from the side — never through the lens.** A reading taken
+> off D11's domed top gave **53.6 °C** while the true base temperature was ~104 °C. A curved
+> specular surface loses effective emissivity with viewing angle, and the error was over 50 °C.
+> **Sanity rule that catches it instantly: D11 must read hotter than the heatsink it feeds.**
+>
+> **D11 and the ballast resistors run at the same temperature.** Not a contradiction — D11
+> carries 4× the power (3.23 W vs 0.81 W) through a ~4× better path (25 vs 100 K/W), and they
+> are millimetres apart on shared copper.
+>
+> ⚠ **The 30 % figure was still rising at 10 min** (+4 °C over the second five). There is a
+> slow board/heatsink time constant well beyond the ~70 s local one, so treat 104 °C as a
+> **lower bound**; a true plateau needs 20–30 min.
 
 **It plateaus** — τ ≈ **70 s**, settled within ~5 min. The thermal path works; heat leaves as
 fast as it arrives. **R_th package→ambient ≈ 24 K/W**, and that single number predicts both
@@ -336,14 +349,21 @@ measured duty points, so use it to plan any other duty/ambient combination:
 
 **Where the resistance lives:**
 
-| Stage | R_th | |
+| Stage | R_th | Share |
 |---|---|---|
-| Junction → solder point | 6–9 K/W | datasheet |
-| Solder point → heatsink | **~2 K/W** | ✅ measured (87.0 → 81.5 °C at 2.7 W). TIM couples well |
-| **Heatsink → ambient** | **~22 K/W** | ⚠ **the bottleneck, 90 % of the total** |
+| Junction → solder point | 6–9 K/W | datasheet, fixed |
+| **Base → heatsink** | **~8.7 K/W** | **35 %** — 104 → 76 °C at 3.23 W |
+| **Heatsink → ambient** | **~16.4 K/W** | **65 %** |
 
-**Better thermal compound buys nothing. Airflow buys ~2–3×** — with a fan, total drops to
-~12 K/W and the full 30 % design point becomes viable even at 40 °C ambient.
+**Airflow is the bigger lever, but the interface is no longer negligible** — an earlier
+estimate of ~2 K/W came from the bad lens reading and was wrong by 4×.
+
+| Fix | Total R_th | Sustainable duty @ 23 °C |
+|---|---|---|
+| As-is | 24.5 K/W | ~24 % |
+| **Airflow only** | ~14.7 | **~34 %** ✅ |
+| Interface only | ~19.6 | ~28 % |
+| Both | ~9 | ~45 % |
 
 ⚠ **Ambient does a lot of work in this table.** It was taken at 23 °C in open air. An
 enclosure at 40 °C shifts every figure **+17 °C**, which drops the sustainable duty to

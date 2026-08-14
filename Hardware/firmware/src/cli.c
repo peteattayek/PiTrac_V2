@@ -7,6 +7,7 @@
 #include "power_fsm.h"
 #include "panel.h"
 #include "beam.h"
+#include "detect.h"
 
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
@@ -69,6 +70,17 @@ static const char *k_help =
     "  beam clamp                 1 kHz / 50%% â€” scope TP5 to measure the U9 clamp (Q1)\n"
     "  beam sweep <f0> <f1> <n> <dwell_ms>   duty-fidelity sweep (Q2)\n"
     "\n"
+    "\n"
+    "  -- Phase 3: detection (needs the +5V rail up) --\n"
+    "  threshold                  show threshold DAC + comparator state\n"
+    "  threshold duty <pct>       set Threshold_DC via GPIO44 (TP8 = 3.3V x duty)\n"
+    "  threshold volts <v>\n"
+    "  threshold sweep [lo] [hi] [steps]   find the comparator flip point (3.5)\n"
+    "  hpf                        show baseline mode (TRACK / HOLD)\n"
+    "  hpf track | hpf hold\n"
+    "  hpf test [ms]              establish the GPIO33 polarity EMPIRICALLY.\n"
+    "                             *** RUN THIS FIRST -- the sense is unverified ***\n"
+    "\n"
     "  fault                      show / 'fault clear' (also acks FAULT -> STANDBY)\n"
     "  reset [force]              soft reset. REFUSED while a Pi is powered:\n"
     "                             a reset drops the latch = hard power cut\n"
@@ -129,7 +141,17 @@ static void cmd_stat(void) {
            power_pi_present(), gpio_get(PIN_PI_3V3_SENSE),
            gpio_get(PIN_RPI5_ON), power_pi_is_down());
     printf("button   : %s\n", gpio_get(PIN_PWR_TOGGLE) ? "released" : "PRESSED");
-    printf("adcmode  : %d\n", (int)adc_engine_mode());
+    {
+        uint32_t age = adc_5vin_age_ms();
+        printf("adc      : mode %d   ring %s   5V_IN %s\n",
+               (int)adc_engine_mode(),
+               adc_ring_running() ? "RUNNING" : "*** STOPPED ***",
+               age == UINT32_MAX ? "never read" : (age == 0 ? "fresh" : "HELD"));
+        // ch1 is not in the ARMED {5,7} or BURST {0} round-robin, so the reading
+        // is held rather than the ADC being stopped to go and fetch one (A1).
+        if (age && age != UINT32_MAX)
+            printf("           +5V_IN last sampled %lu ms ago\n", (unsigned long)age);
+    }
 }
 
 static void cmd_pins(void) {
@@ -401,6 +423,103 @@ static void dispatch(int argc, char **argv) {
                pct < 0 ? "auto" : argv[2]);
     }
 
+    else if (!strcmp(c, "threshold")) {
+        if (argc >= 3 && !strcmp(argv[1], "duty")) {
+            detect_threshold_set_duty(strtof(argv[2], NULL) / 100.0f);
+        } else if (argc >= 3 && !strcmp(argv[1], "volts")) {
+            detect_threshold_set_volts(strtof(argv[2], NULL));
+        } else if (argc >= 2 && !strcmp(argv[1], "sweep")) {
+            float lo   = (argc > 2) ? strtof(argv[2], NULL) / 100.0f : 0.0f;
+            float hi   = (argc > 3) ? strtof(argv[3], NULL) / 100.0f : 1.0f;
+            uint16_t n = (argc > 4) ? (uint16_t)strtoul(argv[4], NULL, 0) : 64u;
+            printf("sweeping threshold %.1f%% -> %.1f%% in %u steps "
+                   "(%u ms settle each, ~%lu ms total) ...\n",
+                   (double)(lo * 100.0f), (double)(hi * 100.0f), n,
+                   (unsigned)DAC_SETTLE_MS, (unsigned long)((n + 1) * DAC_SETTLE_MS));
+            threshold_sweep_t r;
+            detect_threshold_sweep(&r, lo, hi, n);
+            if (r.found)
+                printf("FLIP at duty %.2f%%  = %.4f V nominal at TP8\n"
+                       "  ADC5 there: code %u = %.4f V\n",
+                       (double)(r.flip_duty * 100.0f), (double)r.flip_volts,
+                       r.adc5_at_flip, (double)r.adc5_at_flip_v);
+            else
+                printf("NO FLIP across the sweep. Either the signal never crosses this\n"
+                       "  range, or D_Comparator is stuck. Check 'threshold' and GPIO46.\n");
+            printf("ADC5 movement across the sweep: %.4f V\n", (double)r.adc5_span_v);
+            printf("  That is GPIO44 crosstalk into the detect node (146.5 kHz DAC vs\n"
+                   "  104.17 kHz optical carrier, only 42 kHz apart). Expect ~0 -- two RC\n"
+                   "  poles give ~120 dB. If it moves, change DAC_TOP: 2047 -> 73 kHz,\n"
+                   "  or 511 -> 293 kHz.\n");
+            return;
+        }
+        printf("threshold: level %u of %lu  duty %.2f %%  -> TP8 %.4f V nominal\n",
+               detect_threshold_level(), (unsigned long)(DAC_TOP + 1u),
+               (double)(detect_threshold_duty() * 100.0f),
+               (double)detect_threshold_volts());
+        printf("           vref %.3f V (nominal 3.3; measured +3V3 was 3.246 -- TP8 is the truth)\n",
+               (double)detect_threshold_vref());
+        printf("D_Comparator(46) = %d   (%s -- active HIGH, R103 10K pull-up)\n",
+               gpio_get(PIN_D_COMPARATOR),
+               detect_comparator() ? "ABOVE threshold" : "below threshold");
+        printf("settle %u ms per change (dominant pole 2.62 ms; the 10 ms in the .md is ~4 tau)\n",
+               (unsigned)DAC_SETTLE_MS);
+    }
+
+    else if (!strcmp(c, "hpf")) {
+        if (argc >= 2 && !strcmp(argv[1], "test")) {
+            uint32_t w = (argc > 2) ? (uint32_t)strtoul(argv[2], NULL, 0) : 3000u;
+            if (!power_rails_ready()) {
+                printf("REFUSED: +5V rail is open (state %s). U14 runs from +5VA.\n"
+                       "         Use 'on' first.\n", power_state_name(power_fsm_state()));
+                return;
+            }
+            printf("measuring ADC5 baseline drift in each mux state, %lu ms each ...\n",
+                   (unsigned long)w);
+            printf("  TRACK pins the node to 0 V through R96 2M -- it should not move.\n"
+                   "  HOLD floats it; ~1 nA of switch leakage into C81 330 nF is\n"
+                   "  ~44 mV/s at ADC5, so it should visibly walk.\n");
+            hpf_test_t r;
+            detect_hpf_test(&r, w);
+            printf("\n  as-compiled TRACK (GPIO33=%d): drift %.4f V, mean %.4f V\n",
+                   HPF_SEL_TRACK, (double)r.track_drift_v, (double)r.track_mean_v);
+            printf("  as-compiled HOLD  (GPIO33=%d): drift %.4f V, mean %.4f V\n",
+                   HPF_SEL_HOLD, (double)r.hold_drift_v, (double)r.hold_mean_v);
+            printf("  ratio hold/track = %.1f\n", (double)r.ratio);
+            if (!r.conclusive) {
+                printf("\n  INCONCLUSIVE. The two states did not separate. That is a\n"
+                       "  HARDWARE finding, not a firmware result -- do not guess a\n"
+                       "  polarity from it. Try a longer window, or scope TP9 and the\n"
+                       "  U14 pins directly.\n");
+            } else if (r.polarity_ok) {
+                printf("\n  CONFIRMED: HPF_SEL_TRACK = %d is correct. No change needed.\n",
+                       HPF_SEL_TRACK);
+            } else {
+                printf("\n  *** INVERTED *** The state this firmware calls TRACK is the one\n"
+                       "  that drifts, so SEL=%d actually selects the FLOATING throw.\n"
+                       "  FIX: set HPF_SEL_TRACK to %d in board.h and reflash.\n"
+                       "  Everything measured before this point in TRACK/HOLD is suspect.\n",
+                       HPF_SEL_TRACK, !HPF_SEL_TRACK);
+            }
+            return;
+        }
+        if (argc >= 2 && (!strcmp(argv[1], "track") || !strcmp(argv[1], "hold"))) {
+            hpf_mode_t m = (argv[1][0] == 't') ? HPF_TRACK : HPF_HOLD;
+            if (!detect_hpf_set(m)) {
+                printf("REFUSED: +5V rail is open (state %s). U14 runs from +5VA, and\n"
+                       "         SEL high into an unpowered mux back-feeds the analog rail.\n",
+                       power_state_name(power_fsm_state()));
+                return;
+            }
+        }
+        printf("HPF baseline: %s   (GPIO33 = %d)\n",
+               detect_hpf_name(detect_hpf_mode()), gpio_get_out_level(PIN_HPF_TOGGLE));
+        printf("  TRACK = S1 -> R96 2M -> GND, tau 0.66 s with C81 330 nF\n"
+               "  HOLD  = S2, NOT CONNECTED -- the node floats and C81 holds charge.\n"
+               "          Armed means HOLD, so the baseline is frozen AND drifting.\n");
+        printf("  *** polarity is a compiled HYPOTHESIS until 'hpf test' has run ***\n");
+    }
+
     else if (!strcmp(c, "led")) {
         if (argc < 3) { printf("usage: led r|y <0|1>\n"); return; }
         uint p = (argv[1][0] == 'r') ? PIN_LED_RED : PIN_LED_YELLOW;
@@ -415,6 +534,14 @@ static void dispatch(int argc, char **argv) {
                    (unsigned long)beam_actual_freq_hz(), (unsigned long)beam_top());
             printf("duty     : %.2f %%  (level %lu)\n", (double)(beam_duty() * 100.0f),
                    (unsigned long)(beam_duty() * (beam_top() + 1)));
+            // The number that actually sets LED current and junction temperature.
+            // Differs from the commanded duty whenever U9's one-shot truncates
+            // the high phase -- notably during `beam clamp`.
+            printf("effective: %.2f %%  at the LED, after the U9 %u us clamp"
+                   "   (ceiling %.0f %%)\n",
+                   (double)(beam_effective_duty() * 100.0f),
+                   (unsigned)BEAM_ONESHOT_CLAMP_US,
+                   (double)(beam_duty_ceiling() * 100.0f));
             printf("phase    : %ld ticks  (%.2f deg)\n", (long)beam_phase_ticks(),
                    (double)(360.0f * beam_phase_ticks() / (beam_top() + 1)));
 
@@ -511,15 +638,24 @@ static void dispatch(int argc, char **argv) {
         if (!strcmp(argv[1], "duty")) {
             if (argc < 3) { printf("usage: beam duty <pct>\n"); return; }
             float d = strtof(argv[2], NULL) / 100.0f;
-            if (d > 0.35f) {
-                printf("REFUSED: %.1f%% exceeds the 35%% design ceiling.\n"
-                       "         30%% is the intended operating point (~3.15 W in D11).\n",
-                       (double)(d * 100.0f));
+            float eff;
+            if (beam_would_exceed_ceiling(beam_actual_freq_hz(), d, &eff)) {
+                printf("REFUSED: %.1f%% commanded -> %.1f%% EFFECTIVE at the LED,\n"
+                       "         over the %.0f%% ceiling. (U9's %u us one-shot does not\n"
+                       "         truncate a %.1f%% high phase at %lu Hz.)\n",
+                       (double)(d * 100.0f), (double)(eff * 100.0f),
+                       (double)(beam_duty_ceiling() * 100.0f),
+                       (unsigned)BEAM_ONESHOT_CLAMP_US, (double)(d * 100.0f),
+                       (unsigned long)beam_actual_freq_hz());
+                printf("         %.0f%% is the intended operating point (CR-12).\n",
+                       (double)(BEAM_DUTY_OPERATING * 100.0f));
                 return;
             }
             beam_set_duty(d);      // preserves TOP; no round-trip through freq
-            printf("duty <- %.2f %%  (level %lu of %lu)\n", (double)(d * 100.0f),
-                   (unsigned long)(d * (beam_top() + 1)), (unsigned long)(beam_top() + 1));
+            printf("duty <- %.2f %%  (level %lu of %lu, effective %.2f %% at the LED)\n",
+                   (double)(d * 100.0f),
+                   (unsigned long)(d * (beam_top() + 1)), (unsigned long)(beam_top() + 1),
+                   (double)(beam_effective_duty() * 100.0f));
             return;
         }
 
@@ -527,7 +663,13 @@ static void dispatch(int argc, char **argv) {
             if (argc < 3) { printf("usage: beam ramp <pct> [step_ms]\n"); return; }
             float d = strtof(argv[2], NULL) / 100.0f;
             uint32_t ms = (argc > 3) ? (uint32_t)strtoul(argv[3], NULL, 0) : 250;
-            if (d > 0.35f) { printf("REFUSED: >35%% duty\n"); return; }
+            float eff;
+            if (beam_would_exceed_ceiling(beam_actual_freq_hz(), d, &eff)) {
+                printf("REFUSED: %.1f%% -> %.1f%% effective, over the %.0f%% ceiling.\n",
+                       (double)(d * 100.0f), (double)(eff * 100.0f),
+                       (double)(beam_duty_ceiling() * 100.0f));
+                return;
+            }
             printf("ramping %.1f%% -> %.1f%% in 1%% steps every %lu ms ...\n",
                    (double)(beam_duty() * 100.0f), (double)(d * 100.0f), (unsigned long)ms);
             printf("WATCH R73/R74 and D11. Ctrl the PSU if current climbs unexpectedly.\n");

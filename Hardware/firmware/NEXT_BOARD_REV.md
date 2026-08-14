@@ -27,7 +27,7 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 | **CR-08** | No PGOOD or VIR sense | 🟢 Low | Needs a free ADC | Boost readiness stays open-loop timed |
 | **CR-09** | Mira220 1.8 V I/O translation | ⏸ Blocked | TBD | **Conditional on Q6** — may damage the sensor |
 | **CR-11** | Net `Strobe_GND` is not ground — rename it | 🟢 Low | Rename | A name that invites clipping a scope ground to Q11's drain |
-| **CR-12** | Beam LED thermal path caps sustained duty at ~20 % | 🔴 High | Airflow / bigger sink | Beam runs at 2/3 optical power while armed → worse Phase 3 SNR |
+| **CR-12** | Beam LED thermal path caps sustained duty at ~20 % | 🔴 High | **Vias + bigger sink** (fanless target) | Beam runs at 2/3 optical power while armed → worse Phase 3 SNR |
 
 ---
 
@@ -426,25 +426,43 @@ other net named `*_GND` that is not actually at ground potential.
 
 With the heatsink fitted, still air, 23 °C ambient:
 
-| Duty | Package plateau | Junction (+6…9 K/W) |
-|---|---|---|
-| 25 % | **87.5 °C** | 104–112 °C |
-| 30 % | **~100 °C** | 122–132 °C (T_j max is **145 °C**) |
+| Duty | LED base | Junction (+6…9 K/W) | Margin to 145 °C |
+|---|---|---|---|
+| 25 % | 87.5 °C | 104–112 °C | 33–41 °C |
+| **30 %** | **104 °C** (measured at the base, 10 min) | **123–133 °C** | **12–22 °C** ❌ |
 
-**R_th package→ambient ≈ 24 K/W**, confirmed at two independent duty points. It does plateau
-(τ ≈ 70 s), so the path works — it is simply not good enough for the design operating point.
+**R_th LED→ambient ≈ 24.5 K/W**, confirmed at two independent duty points — it predicts 25 %
+→ 89 °C and 30 % → 102 °C against measurements of 87.5 and 104.
 
-**The bottleneck is located.** Splitting the 24 K/W:
+⚠ **The 30 % figure is a lower bound.** It was still climbing at 10 minutes (+4 °C over the
+second five), so there is a slow board/heatsink time constant far beyond the ~70 s local one.
+A true plateau needs 20–30 minutes. It does not change the verdict — 12–22 °C of margin to an
+absolute-maximum rating is already not an operating point.
 
-| Stage | R_th | |
+**D11 and the ballast resistors run at the same temperature**, which is not the contradiction
+it looks like: D11 carries 4× the power through a ~4× better path, and they sit millimetres
+apart on shared copper.
+
+**Where the resistance lives — remeasured 2026-08-14 with the IR camera pointed sideways at
+the LED base** (an earlier reading off the domed lens was a 50 °C emissivity artifact and gave
+a misleading split):
+
+| Stage | R_th | Share |
 |---|---|---|
 | Junction → solder point | 6–9 K/W | datasheet, fixed |
-| Solder point → heatsink | **~2 K/W** | ✅ measured. **The TIM is fine** |
-| **Heatsink → ambient** | **~22 K/W** | ⚠ **90 % of the total** |
+| **Base → heatsink** | **~8.7 K/W** | **35 %** — 28 °C gradient at 3.23 W |
+| **Heatsink → ambient** | **~16.4 K/W** | **65 %** |
 
-So **better thermal compound or a better interface buys nothing.** The heat gets out of the
-part and into the sink easily; it then sits there because the sink cannot shed it into still
-air.
+⚠ **This corrects an earlier claim in this document that the interface was ~2 K/W and that
+"better thermal compound buys nothing."** It is 35 % of the total, so the mounting path is
+worth attention alongside airflow — though airflow is still the bigger single lever.
+
+| Fix | Total R_th | Sustainable duty @ 23 °C |
+|---|---|---|
+| As-is | 24.5 K/W | ~24 % |
+| **Airflow only** (2–3× on the sink) | ~14.7 | **~34 %** ✅ |
+| Interface only (8.7 → 3) | ~19.6 | ~28 % |
+| Both | ~9 | ~45 % |
 
 ### Why it matters beyond thermals
 
@@ -490,11 +508,96 @@ junction rise costs roughly **25–45 % of the light** — invisible in every el
 measurement. That is the real cost of running hot, and it is what makes this a Phase 3 SNR
 issue rather than a reliability one.
 
+### How to actually run 30 % indefinitely — the options, costed
+
+**The target.** For a junction of **110 °C** (35 °C below the 145 °C absolute max, a normal
+lifetime derating) at a **40 °C enclosure ambient**, with D11 dissipating 3.23 W:
+
+```
+required junction->ambient = (110 - 40) / 3.23 = 21.7 K/W
+minus R_thJSP (6-9 K/W, fixed by the part)
+=> required BASE->AMBIENT <= ~12.7 K/W        (currently 24.5)
+```
+
+**So roughly halve it.** No single easy change quite does that alone, which is why the table
+below is about combinations.
+
+#### A — Get heat out of the board (base→heatsink, currently 8.7 K/W, 35 %)
+
+| Option | Est. effect | Notes |
+|---|---|---|
+| **Thermal vias under D11's pad** | 8.7 → **4–5 K/W** | The standard fix, and the cheapest. **Check whether the current layout has any** — if the heatsink is on the opposite side, every watt crosses the PCB through whatever vias exist. |
+| **Copper coin / embedded slug** | 8.7 → **2–3 K/W** | Best-in-class, meaningful fab cost. Worth it only if vias prove insufficient. |
+| **2 oz copper, larger pour** | ~15–25 % better | Cheap if the stackup is being revised anyway. |
+| **Heatsink on D11's own side** | bypasses the board entirely | ⚠ D11 emits from the top, so a sink cannot cover it — would need a clamp onto the package sides/base. Mechanically awkward. |
+
+#### B — Get heat out of the heatsink (→ambient, currently 16.4 K/W, 65 %)
+
+| Option | Est. effect | Notes |
+|---|---|---|
+| **Fan / forced air** | 16.4 → **5.5–8 K/W** | 2–3× is typical. Biggest single lever. Costs a moving part, noise, power, and an enclosure air path. |
+| **Larger heatsink** | roughly ∝ area; 2× fins ≈ 16.4 → **8 K/W** | No moving parts. Needs volume and layout area. |
+| **Enclosure airflow path** | varies, can be large | Free if designed in; worthless if bolted on later. **Whatever the enclosure does is what actually sets ambient** — the bench figure of 23 °C will not hold. |
+
+#### C — Make less heat in the first place ⭐ the option not usually considered
+
+| Option | Est. effect | Notes |
+|---|---|---|
+| **Lower peak current, higher duty** | ~10 % less heat **and more light** | LED efficiency droops at high current density, and 3.1 A is 2× the part's 1.5 A DC rating. E.g. **1.55 A at 60 % duty** is the same average current but lower Vf (~3.1 V) → **2.88 W instead of 3.23 W**, with better photons per watt. **Needs a new ballast (0.54 → ~1.32 Ω) and Phase 3 must confirm the demodulator tolerates the duty change.** |
+| **Two LEDs at half current each** | halves per-package heat, better efficiency | Same total optical output spread over two packages, each at lower current density. Costs board area, alignment work and a second part. |
+| **Replace the resistive ballast with a current regulator** | removes **1.62 W** from the immediate area | It does *not* lower D11's junction directly — but R73/R74 sit millimetres away at the **same 104 °C**, so they raise D11's local ambient. The measured 24.5 K/W **includes that mutual heating**. |
+
+#### D — Layout
+
+**Separate the ballast resistors from D11's copper island.** Costs nothing but routing. Today
+they share a thermal environment and heat each other; the whole beam section dissipates
+**4.85 W** (3.23 LED + 1.62 ballast) into one small region.
+
+#### Combinations that hit the target
+
+| Combination | Base→ambient | 30 % @ 40 °C ambient |
+|---|---|---|
+| As-is | 24.5 | ❌ junction 133–162 °C |
+| Fan only | ~14.7 | ⚠ ~115–124 °C — marginal |
+| **Better TIM + larger heatsink (no fan)** | **~12–14** | ✅ **~104–118 °C — fanless, tight** |
+| **Better TIM + ENIG + larger sink** | **~12** | ✅ **~104–113 °C — fanless** |
+| **Better TIM + fan** | **~10–12** | ✅ **~98–110 °C, comfortable** |
+| Better TIM + fan + lower peak current | ~10 @ 2.88 W | ✅ ~93–101 °C, with *more* light |
+
+**Recommendation, revised after inspecting the layout: start with the TIM, not the board.**
+The vias are already there and the board is thin, so the interface is where the 8.7 K/W lives.
+A thinner, higher-conductivity insulating pad is a **materials change needing no board
+revision at all**, worth 2–2.5 K/W on its own. **Try it on the existing hardware first** — it
+also measures how much of that stage really is the TIM, which nothing else will tell you.
+
+Then **ENIG + a larger bottom-side pour** on the next spin, plus a **larger heatsink**. That
+combination reaches the target **fanless**, which keeps a moving part out of a device that
+otherwise has none. Add the fan only if the enclosure proves worse than assumed.
+
+**Measure after each change.** The base→heatsink gradient is directly observable: LED base
+minus heatsink temperature, divided by 3.23 W. That is the number to watch, and it is the one
+this document previously had wrong by 4×.
+
 ### Verify
 
-Repeat the plateau test (`beam duty 30`, FLIR every minute until it stops rising, ~5 min) at
-the **worst-case enclosure ambient**, not on an open bench. Pass: junction, computed as
-package + 9 K/W × P, stays under **110 °C** for lifetime margin against the 145 °C limit.
+Repeat the plateau test at the **worst-case enclosure ambient**, not on an open bench:
+
+```
+beam duty 30
+# FLIR every minute until it stops rising -- allow 20-30 min, not 5
+```
+
+⚠ **Allow 20–30 minutes.** The 2026-08-14 run was still climbing at 10 min (+4 °C over the
+second five), so there is a slow board/heatsink time constant well beyond the ~70 s local one.
+A 5-minute reading will flatter the result.
+
+**Measure the LED at its base, from the side.** A reading through the domed lens gave 53.6 °C
+against a true ~104 °C. **Sanity rule: D11 must read hotter than the heatsink it feeds.**
+
+**Pass:** junction, computed as `base + 9 K/W × P`, stays under **110 °C**.
+
+Also record the **base → heatsink gradient** — that is the number that tells you whether the
+vias/interface work paid off, and it is the stage this document previously got wrong by 4×.
 
 ---
 

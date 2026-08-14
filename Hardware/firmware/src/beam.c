@@ -51,41 +51,98 @@ void beam_init(void) {
     beam_configure(SYSCLK_HZ / (CARRIER_TOP_DEFAULT + 1), s_duty, 0);
 }
 
-void beam_configure(uint32_t freq_hz, float duty, int32_t phase_ticks) {
-    if (freq_hz == 0) return;
-    if (duty < 0.0f) duty = 0.0f;
-    if (duty > 1.0f) duty = 1.0f;
+// Effective duty at the LED, i.e. after U9's one-shot truncates the high phase.
+//
+// This is the quantity that sets average current and therefore junction
+// temperature -- the COMMANDED duty does not, and the difference is the whole
+// reason `beam clamp` is safe:
+//
+//   1 kHz  @ 50 %  -> high 500.0 us, clamped to 122.68 -> effective 12.3 %  SAFE
+//   104kHz @ 50 %  -> high   4.8 us, under the clamp   -> effective 50.0 %  NOT
+//
+// A ceiling applied to the commanded duty would have to refuse `beam clamp`,
+// which is a legitimate and safe measurement; a ceiling applied here catches
+// exactly the dangerous combination and nothing else.
+float beam_effective_duty_at(uint32_t top, uint32_t div, float duty) {
+    if (top == 0) return duty;
+    // Period and commanded high phase, in microseconds.
+    float period_us = (float)((uint64_t)(top + 1) * div) * (1.0e6f / (float)SYSCLK_HZ);
+    float high_us   = duty * period_us;
+    float clamp_us  = (float)BEAM_ONESHOT_CLAMP_US;
+    if (high_us > clamp_us) high_us = clamp_us;
+    return (period_us > 0.0f) ? (high_us / period_us) : duty;
+}
 
-    // Round to the NEAREST period, not down.
-    //
-    // Plain truncation here used to cost a whole count. 150e6/104167 = 1439.995
-    // truncates to 1439, then -1 gives TOP=1438: a 1439-count period, 104239 Hz,
-    // 72 Hz ABOVE the requested frequency. It also broke the documented design
-    // point -- TOP=1439 (period 1440) is what makes level 432 exactly 30.000%;
-    // at TOP=1438 the closest is 431/1439 = 29.951%. And it made the CLI's
-    // "nearest achievable" message false, since 104166.67 Hz was available.
-    //
-    // 64-bit intermediate so the +freq_hz/2 rounding term cannot overflow.
-    uint64_t n = ((uint64_t)SYSCLK_HZ + freq_hz / 2u) / freq_hz;  // counts per period
+float beam_effective_duty(void) {
+    return beam_effective_duty_at(s_top, s_div, s_duty);
+}
+
+// Compute what TOP/div beam_configure() would land on, WITHOUT applying them.
+// Needed so the ceiling can be checked against the real effective duty before
+// anything is written to the PWM block.
+static void beam_plan(uint32_t freq_hz, uint32_t *out_top, uint32_t *out_div) {
+    uint64_t n = ((uint64_t)SYSCLK_HZ + freq_hz / 2u) / freq_hz;
     if (n < 2) n = 2;
-
-    // The counter is 16-bit, so below ~2289 Hz one period will not fit at
-    // clkdiv=1 and we must divide the clock. `beam clamp` asks for 1 kHz and
-    // used to be silently clamped to TOP=65535 -- i.e. 2289 Hz with a 218 us
-    // commanded high phase, not the 1 kHz / 500 us it printed. The measurement
-    // still worked (218 us > the ~86 us clamp) but the LED ran at ~20 % duty
-    // instead of the ~9 % the procedure assumes.
-    //
-    // NOTE: with div > 1 a phase tick is div * 6.67 ns, not 6.67 ns. Only the
-    // clamp command goes there; 2a runs at 104 kHz where div is always 1.
     uint32_t div = 1;
     while (n > 65536 && div < 256) {
         div++;
         n = ((uint64_t)SYSCLK_HZ / div + freq_hz / 2u) / freq_hz;
     }
-    if (n > 65536) n = 65536;          // still too slow even at div=255
-    s_div = div;
-    uint32_t top = (uint32_t)(n - 1);
+    if (n > 65536) n = 65536;
+    *out_div = div;
+    *out_top = (uint32_t)(n - 1);
+}
+
+static float s_ceiling = BEAM_DUTY_CEILING;
+
+void  beam_set_duty_ceiling(float c) { s_ceiling = (c < 0.0f) ? 0.0f : (c > 1.0f ? 1.0f : c); }
+float beam_duty_ceiling(void)        { return s_ceiling; }
+
+bool beam_would_exceed_ceiling(uint32_t freq_hz, float duty, float *out_effective) {
+    if (freq_hz == 0) return false;
+    uint32_t top, div;
+    beam_plan(freq_hz, &top, &div);
+    float eff = beam_effective_duty_at(top, div, duty);
+    if (out_effective) *out_effective = eff;
+    return eff > s_ceiling;
+}
+
+void beam_configure(uint32_t freq_hz, float duty, int32_t phase_ticks) {
+    if (freq_hz == 0) return;
+    if (duty < 0.0f) duty = 0.0f;
+    if (duty > 1.0f) duty = 1.0f;
+
+    // THE ceiling check, in the one place every path goes through.
+    //
+    // It used to live only in the `beam duty` CLI branch, so `beam freq`,
+    // `beam clamp` and `beam sweep` all skipped it. The concrete trap: clamp
+    // writes s_duty = 0.50 persistently, so a bare `beam freq 104167` afterwards
+    // ran the carrier at 104 kHz / 50 % -- ~1.6 A against a 0.95 A design point,
+    // ~5.25 W in a D11 that already sits at 104 C on 3.23 W. U9 does not save you
+    // there: a 50 % high phase at 104 kHz is 4.8 us, nowhere near the 122.7 us
+    // clamp. See PROGRESS.md section 9.
+    uint32_t p_top, p_div;
+    beam_plan(freq_hz, &p_top, &p_div);
+    {
+        float eff = beam_effective_duty_at(p_top, p_div, duty);
+        if (eff > s_ceiling) {
+            // Back the commanded duty off until the EFFECTIVE duty is legal.
+            // Clamping rather than refusing, because this is the last line of
+            // defence and a silently dark beam is harder to debug than a beam
+            // running at the ceiling. Callers that care print the difference.
+            float period_us = (float)((uint64_t)(p_top + 1) * p_div)
+                              * (1.0e6f / (float)SYSCLK_HZ);
+            float allowed_high_us = s_ceiling * period_us;
+            if (allowed_high_us > (float)BEAM_ONESHOT_CLAMP_US)
+                allowed_high_us = (float)BEAM_ONESHOT_CLAMP_US;
+            duty = (period_us > 0.0f) ? (allowed_high_us / period_us) : 0.0f;
+        }
+    }
+
+    // Same numbers the ceiling check just used -- beam_plan() is the single
+    // definition of "what TOP and clkdiv does this frequency land on".
+    uint32_t top = p_top;
+    s_div = p_div;
 
     s_top   = top;
     s_duty  = duty;
@@ -115,6 +172,20 @@ void beam_configure(uint32_t freq_hz, float duty, int32_t phase_ticks) {
 void beam_set_duty(float duty) {
     if (duty < 0.0f) duty = 0.0f;
     if (duty > 1.0f) duty = 1.0f;
+
+    // Same ceiling as beam_configure(), on the same effective-duty basis. This
+    // path does not go through beam_configure() -- it deliberately preserves TOP
+    // rather than round-tripping through an integer division -- so the check has
+    // to be repeated here rather than delegated.
+    if (beam_effective_duty_at(s_top, s_div, duty) > s_ceiling) {
+        float period_us = (float)((uint64_t)(s_top + 1) * s_div)
+                          * (1.0e6f / (float)SYSCLK_HZ);
+        float allowed_high_us = s_ceiling * period_us;
+        if (allowed_high_us > (float)BEAM_ONESHOT_CLAMP_US)
+            allowed_high_us = (float)BEAM_ONESHOT_CLAMP_US;
+        duty = (period_us > 0.0f) ? (allowed_high_us / period_us) : 0.0f;
+    }
+
     s_duty = duty;
     // Live update â€” the compare register can change while the slice runs.
     pwm_set_chan_level(s_slice_car, s_chan_car, (uint16_t)(duty * (s_top + 1)));

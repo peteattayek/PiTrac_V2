@@ -99,10 +99,33 @@
 #define PIN_MOD_PWM         31   // out (PWM 7B) : beam carrier. R69 1K pulldown.
                                  //   *** shares slice 7B with PIN_LATCH_CONTROL (GPIO15).
                                  //   *** GPIO15 MUST STAY SIO. See the PWM SLICE MAP below.
-#define PIN_HPF_TOGGLE      33   // out : 1 = baseline tracking, 0 = hold (U14 TMUX1219 SEL)
+#define PIN_HPF_TOGGLE      33   // out : U14 TMUX1219 SEL. Polarity UNVERIFIED -- see below.
 #define PIN_DEMOD_PWM       39   // out (PWM 11B): demod clock, phase-locked to slice 7
 #define PIN_THRESHOLD_PWM   44   // out (PWM 10A): comparator threshold DAC (also ADC4 â€” never sample)
 #define PIN_D_COMPARATOR    46   // in  : ball-detect comparator. EXTERNAL 10K pull-up (R103).
+
+// --- U14 gated HPF: which SEL level selects which path -----------------------
+//
+// !! UNVERIFIED -- ESTABLISH WITH `hpf test` BEFORE TRUSTING ANY MEASUREMENT !!
+//
+// U14 is a TMUX1219 SPDT. Only ONE throw is connected:
+//   S1 -> R96 2M -> GND    with C81 330 nF this is the 0.66 s HPF  ("TRACK")
+//   S2 -> NOT CONNECTED    the node floats, C81 holds its charge   ("HOLD")
+//
+// So HOLD is a genuine open, not a second filter corner. In HOLD the U12B input
+// DC level is undefined and drifts on op-amp bias current and switch leakage --
+// that is a real, unbounded effect, and it is the state the detector runs in
+// while armed.
+//
+// The netlist encodes only the pin name "SEL"; it does NOT say whether SEL=1
+// picks S1 or S2, and BENCH_P3_DETECT.md's assumption that `gpio 33 1` = TRACK
+// was never checked against hardware. `hpf test` settles it empirically: TRACK
+// pulls the ADC5 baseline back toward 0 and holds it there, HOLD lets it walk.
+//
+// If the test comes back inverted, flip THIS ONE LINE. Nothing else in the
+// firmware may compare against PIN_HPF_TOGGLE's raw level.
+#define HPF_SEL_TRACK        1    // level that selects S1 (the 2M/GND leg)
+#define HPF_SEL_HOLD         (!HPF_SEL_TRACK)
 
 // --- Misc -------------------------------------------------------------------
 #define PIN_USB_ENABLE      32   // out : USB-A accessory VBUS switch (Q6 -> Q7)
@@ -279,14 +302,71 @@
 #define CARRIER_LEVEL_30PCT   432u   // 432/1440 = exactly 30.000 %
 #define DEMOD_LEVEL_50PCT     720u
 
-#define PWM_SLICE_CARRIER      3     // GPIO31 = 3B
-#define PWM_SLICE_DEMOD        7     // GPIO39 = 7B
-#define PWM_SLICE_GATE         2     // GPIO28 = 2A
-#define PWM_SLICE_THRESHOLD   10     // GPIO44 = 10A
+// ---------------------------------------------------------------------------
+// HIGH-BANK PWM COLLISIONS -- the "16 apart" rule above is WRONG above GPIO32.
+//
+// The slice map earlier in this file says "any two GPIOs 16 apart collide",
+// which is true for GPIO < 32 where slice = (gpio>>1)&7. Above 32 the SDK uses
+// slice = 8 + ((gpio>>1)&3), so the index has period 8, NOT 16 -- and the
+// collision pairs in the high bank are EIGHT apart. Verified against SDK 2.3.0
+// PWM_GPIO_SLICE_NUM().
+//
+//   GPIO36 UART_TX      vs GPIO44 THRESHOLD_PWM  -> slice 10A  *** SEE BELOW ***
+//   GPIO37 UART_RX      vs GPIO45 ADC_CH_DETECT  -> slice 10B  safe (ADC in)
+//   GPIO39 DEMOD_PWM    vs GPIO47 ADC_CH_MIC     -> slice 11B  safe (ADC in)
+//   GPIO33 HPF_TOGGLE   vs GPIO41 ADC_CH_5VIN    -> slice  8B  safe (ADC in)
+//   GPIO35 (unassigned) vs GPIO43 RPI5_SHUTDOWN  -> slice  9B  safe (both SIO)
+//   GPIO38 (unassigned) vs GPIO46 D_COMPARATOR   -> slice 11A  safe (input)
+//
+// *** GPIO36 / GPIO44 IS A LIVE PAIR. *** Threshold_PWM is a real PWM output as
+// of Phase 3. UART_TX coexists ONLY because it stays SIO / GPIO_FUNC_UART.
+// If GPIO36 is ever put on GPIO_FUNC_PWM, the UART to the Pi and the comparator
+// threshold become one compare register: the threshold would move with the
+// serial data, and the Pi link would carry the threshold duty. NEVER PUT GPIO36
+// ON PWM. This is the same failure as CR-01, found the same way, one bank up.
+//
+// Design rule for the next board spin, corrected: below GPIO32 keep PWM
+// functions off pins 16 apart; at or above GPIO32, off pins 8 apart.
+// ---------------------------------------------------------------------------
 
-// DAC PWM: TOP+1 = 1024 -> 146.5 kHz, 3.2 mV steps, filtered by two 1 ms RC
-// poles (10K/0.1uF each) so essentially nothing escapes the node.
+// NOTE: there are deliberately no PWM_SLICE_* constants here.
+//
+// There used to be four, and THREE OF THEM WERE WRONG -- they carried the same
+// 3B/7B/2A numbering that the PWM SLICE MAP above was corrected for on
+// 2026-07-31, and were simply missed in that pass. Nothing referenced them, so
+// the error was invisible. Every slice in this firmware is resolved at runtime
+// with pwm_gpio_to_slice_num() / pwm_gpio_to_channel(), which cannot go stale
+// when a pin moves. Keep it that way: if you need a slice number, ask the SDK.
+//
+// U9 BEAM ONE-SHOT CLAMP.
+//
+// Modulation_PWM feeds a 74LVC1G123 monostable wired A=GND, B=~CLR. A rising
+// edge triggers it; the LED high phase is min(commanded, t_w) and NOTHING can
+// defeat it. Measured on this board 2026-08-13: t_w = 122.68 us, spread 0.22 us
+// over 1291 pulses.
+//
+// This is SEPARATE from STROBE_HW_LIMIT_US_ASSUMED below even though both are
+// the same part and RC today. That one describes U5 and is a placeholder until
+// Phase 6a.1 measures it; this one describes U9 and IS measured. When U5's real
+// number lands the two will diverge, and a shared constant would silently move
+// the beam's safety check with it.
+#define BEAM_ONESHOT_CLAMP_US    122u    // U9, MEASURED 2026-08-13 (122.68 us)
+
+// Average-current ceiling for the beam LED, as an EFFECTIVE duty after the U9
+// clamp -- see beam_effective_duty(). 35 % is the design ceiling; CR-12 lowered
+// the intended sustained operating point to 25 % (junction ~87.5 C) because 30 %
+// puts it at 123-133 C against a 145 C max.
+#define BEAM_DUTY_CEILING      0.35f
+#define BEAM_DUTY_OPERATING    0.25f   // Phase 3 onward; see NEXT_BOARD_REV CR-12
+
+// DAC PWM: TOP+1 = 1024 -> 146.5 kHz, 3.2 mV steps.
+//
+// Filtered by R86/C74 then R89/C76 (10K/0.1uF each). Those are NOT two
+// independent 1 ms poles -- the second section loads the first, so the real
+// poles of the cascaded ladder are at RC/0.382 = 2.62 ms and RC/2.618 = 0.382 ms.
+// Settle to 5 tau of the DOMINANT pole, not of the isolated 1 ms product.
 #define DAC_TOP              1023u
+#define DAC_SETTLE_MS          20u    // 5 x 2.62 ms dominant pole, rounded up
 
 // ---------------------------------------------------------------------------
 // !! UNVERIFIED â€” MEASURE BEFORE RELYING ON THESE !!

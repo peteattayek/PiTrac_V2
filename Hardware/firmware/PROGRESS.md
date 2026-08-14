@@ -3,10 +3,10 @@
 **Read this first when resuming work.** It records what is done, what is next, and the
 decisions/measurements that must not be lost between sessions.
 
-Last updated: 2026-08-13 · **Phases 0, 0.5, 1, 1b, 1c and 2 are all complete and closed.**
+Last updated: 2026-08-14 · **Phases 0, 0.5, 1, 1b, 1c and 2 are all complete and closed.**
 `BENCH.md` and `BENCH_P2_BEAM.md` are finished end to end. The power path and the optical
-transmit chain are both proven on hardware. **Q1 and Q2 are answered; Q5, Q7, Q9 closed.**
-**Phase 3 (`BENCH_P3_DETECT.md`) is next — but fix `ARCHITECTURE.md` A1 first, not during.**
+transmit chain are both proven on hardware. **Q1, Q2 and Q12 answered; Q5, Q7, Q9 closed. Open: Q3, Q4, Q6, Q8, Q10, Q11.**
+**Phase 3 (`BENCH_P3_DETECT.md`) is next. A1 is fixed, so nothing blocks it.**
 
 ⚠ **The property that actually matters for a real Pi: an RP2354 reset is a hard power cut.**
 Not a reboot. See §2 and §9. Q10 (the GPIO43 pull-down) is a *consequence* of this, and a
@@ -14,8 +14,9 @@ minor one — it was written up as a blocker on 2026-07-31 and that was an overs
 corrected below.
 
 **Verified build (SDK 2.3.0, toolchain 15_2_Rel1):** UF2 family `rp2350-arm-s` (ARM, not
-RISC-V), target chip RP2350, ARM Secure image, USB stdin/stdout. ~**72 KB flash of 2 MB;
-35 KB RAM of 520 KB** — mostly the 32 KB capture buffer. No warnings.
+RISC-V), target chip RP2350, ARM Secure image, USB stdin/stdout. **78 KB flash of 2 MB;
+67 KB RAM of 520 KB (12.9 %)** — the 32 KB capture buffer plus the 32 KB A1 DMA ring.
+No warnings.
 Includes phases 0–2 (`safe_state`, `adc_engine`, `power_fsm`, `panel`, `beam`, `cli`).
 
 **Firmware fixes made during Phase 2 bring-up (2026-08-13)** — reflash before any bench work:
@@ -30,13 +31,14 @@ Includes phases 0–2 (`safe_state`, `adc_engine`, `power_fsm`, `panel`, `beam`,
 | Pi detection is a **3 s window** + debounced late-detect | A slow Pi was classed absent → next press was a hard power cut |
 | `reset`/`bootsel` refuse while a Pi is powered | Either command silently drops the latch = hard power cut |
 | `board.h` strobe constants **86/73 → 122/100** | `STROBE_SW_MAX_US` 73 µs was *below* the .md §15 slow-ball requirement |
+| **A1: continuous 32 KB DMA ring** (2026-08-14) | The ADC was torn down 10×/s by the supply monitor — would have holed the Phase 3 pre-trigger history |
 
 **Companion docs**
 
 | File | Covers |
 |---|---|
 | `START_HERE.md` | Beginner walkthrough — build, flash, first commands |
-| **`ARCHITECTURE.md`** | **Hardware-offload audit — what runs on PIO/PWM/DMA vs the CPU. Contains one 🔴 finding (A1) that must be fixed before Phase 3.** |
+| **`ARCHITECTURE.md`** | **Hardware-offload audit — what runs on PIO/PWM/DMA vs the CPU. A1 ✅ fixed 2026-08-14. Open: A2 (comparator timing → PIO, Phase 4) and 🔴 A7 (PWM slice collision, Phase 6b).** |
 | `SETUP.md` | Toolchain detail + manual install path |
 | `BENCH.md` | **Phases 0 → 1c** (toolchain, rails, latch, Pi shutdown, panel) — ✅ **all done** |
 | `BENCH_P2_BEAM.md` | **Phase 2** — carrier, phase lock, clamp (Q1), duty fidelity (Q2) |
@@ -183,7 +185,7 @@ indication — is now proven on hardware. Everything in `BENCH.md` is done.
 | Q3 | **Best carrier frequency.** 104.1667 kHz is a starting point, not an answer. Boost fsw tolerance makes paper analysis undefensible. **Search space is now known to be unconstrained by hardware to at least 250 kHz** (Q2), so this is purely a detection-performance question. ⚠ **Run it warm** — optical output falls 25–45 % from cold to plateau while every electrical reading says nothing changed. | Detection SNR | Phase 3.6 `scan carrier` |
 | Q4 | **Does the Pi 5's header 3.3 V rail drop at halt?** | If not, `PI_3V3_SENSE` never fires and every shutdown hits the 60 s timeout. RPI5_ON fallback is implemented. Also decides whether `pi_down_unrequested` telemetry (§9) can rest on 3V3 or must use RPI5_ON alone. | **`BENCH_P8_PI.md` §8.2** — `sudo halt`, DMM on J8.1 |
 | ~~Q5~~ | ~~**RP2350 erratum E9**~~ — **CLOSED 2026-07-29.** Empirical `pins` test: GPIO24/0/8/9 all read **0** floating. Silicon is revision **A4**, a later stepping than the A2 the erratum was documented against. | — | ✅ Resolved. No external pull-downs needed; R44's 100 kΩ holds GPIO24 down fine on this silicon. The `pins` reading is the authoritative evidence for this board. |
-| Q12 | **Which component is actually the beam thermal limit — D11 or the ballast R73/R74?** FLIR at 25 % duty read **R73 85.5 °C** vs **D11 53.6 °C**, which would mean the ballast is hotter despite D11 dissipating 4×. **But D11's reading is not trustworthy:** it came off a **domed lens**, a curved specular surface whose effective emissivity falls with angle. **Physics rules it out** — the heatsink measured **68.1 °C**, and D11 cannot be cooler than the sink it is feeding. So D11 is **> 68 °C**, most likely **74–82 °C** (heatsink + ~2 K/W interface × 2.74 W), junction **90–107 °C**. | Decides whether `NEXT_BOARD_REV.md` **CR-12** is a real constraint (🔴, sustained duty capped ~20 %) or a misattribution (🟢, D11 has 38–55 °C of margin). Also decides whether the **24 K/W** figure in §6 describes D11 or R73. | **Put matte tape on D11 and re-read at 25 % after a 5 min plateau.** Also read R73 and R74 separately — they are in series with identical 0.69 W and should match within a few °C. **Sanity rule: D11 must read hotter than its own heatsink; if it does not, the reading is wrong.** |
+| ~~Q12~~ | ✅ **RESOLVED 2026-08-14.** The 53.6 °C D11 reading was an emissivity artifact off the **domed lens**, exactly as the physics predicted (it cannot be cooler than the 68 °C heatsink it feeds). Re-measured with the IR camera pointed **sideways at the LED base**, avoiding the lens: **104 °C at 30 % duty**. **D11 and the ballast resistors sit at the same temperature** — D11 carries 4× the power (3.23 W vs 0.81 W) through a ~4× better path (25 vs 100 K/W), and they are millimetres apart on shared copper. | — | ✅ **The 24 K/W figure in §6 is validated and does describe the LED**: it predicts 25 % → 89 °C (measured 87.5) and 30 % → 102 °C (measured 104) from one constant. **CR-12 confirmed 🔴** — junction at 30 % is **123–133 °C** against a 145 °C max. |
 | Q6 | **Mira220 digital I/O is 1.8 V?** J4 drives 3.3 V through 220 Ω. | Can damage the sensor | Before Phase 7c |
 | ~~Q7~~ | ~~**RPI5_SHUTDOWN polarity**~~ — **RESOLVED on hardware 2026-07-31.** Active-low is correct and proven: a shutdown request produces a clean **200 ms low pulse at GPIO43**, measured during Phase 1b. | — | ✅ Firmware side closed. Only the Pi-side overlay params remain to be written and verified — `BENCH_P8_PI.md` §8.1. |
 | Q10 | 🟢 **Measured 2026-07-31 — the level fails, but the impact is small. Demoted from blocker.** GPIO43's reset-default pull-down (§2: PDE=1) holds the *asserted* level from the reset edge until `safe_state_init()` runs. Measured with a 20 kΩ emulated pull-up: **2.07 V** at J8.37 against a **3.246 V** rail. `X = V·R/(3V3−V)` = **35.2 kΩ**, i.e. a **~34 kΩ pad pull-down** — stronger than the 50–80 kΩ assumed. A real Pi's ~50 kΩ pull-up would see **`V_pi` = 1.34 V**, below RP1's VIH, and even a typical 60 kΩ pull-down gives 1.81 V — so the *level* fails across the whole plausible range. | ⚠ **Corrects the 2026-07-31 write-up, which called this a blocker.** It is not. **Every reset also opens the +5 V latch** (§2), so the spurious request reaches a Pi that is losing its rail in the same instant. There is no case on this board where GPIO43 goes low but the latch holds — both pads reset together and the Pi has no other power source. The real hazard is the power cut; this is a footnote to it. | 🔧 **Optional defence-in-depth: 10 kΩ from J8.37 to +3V3** (or to **J8.1**, the Pi's own 3V3 — both are header pins, so no PCB work). Gives 2.67 V through reset and 0.35 V when firmware asserts. **Fit it if convenient; it does not gate Phase 8.** The mitigation that actually matters is the `reset`/`bootsel` CLI guard, already implemented. |
@@ -288,11 +290,15 @@ See `tools/openocd_pi5.cfg`.
 | 8/13/2026 | **Cold→hot drift** | **current +1.7 %, power +0.6 %** | ⚠ **Corrects an earlier prediction of +21 %.** At 3 A most of Vf is I·Rs, and Rs rises with temperature, opposing the bandgap term. Measured Vf tempco ≈ **−0.5 mV/K for the stack**, ~7× smaller than the low-current figure. **No meaningful thermal feedback; power is essentially temperature-independent** |
 | 8/13/2026 | **Independent temperature confirmation** | **Q11 Rds_on ×1.44** | ✅ Matches AO3400A's ~+0.7 %/K over ~60 K. Confirms the silicon really reached the FLIR temperature — the small Vf shift is a property of the LED at 3 A, not a measurement artifact |
 | 8/13/2026 | **Beam ramp verification** | **2.92–3.02 A across 8→30 % duty** | ✅ Current is set by rail/Vf/ballast, **not duty** — flat over a 3.6× duty change. Ramp steps 1 %/493 ms, period 9.600 µs throughout. True duty at "30 %" = 30.00 % (the +40 ns measured tail is the TP5 recovery artifact, constant at 2 % and 30 %) |
-| 8/13/2026 | **Beam thermal: R_th (hot spot)→ambient** | **~24 K/W** | ⚠ **Which component this describes is open — see Q12.** If the hot spot is R73 rather than D11 the figure belongs to the ballast, not the LED. **Two duty points agree** for whatever it is measuring: 25 % → plateau **87.5 °C**; 30 % → **~100 °C**. Ambient 23 °C, heatsink fitted, still air. Model predicts both. τ ≈ **70 s**, ~5 min to settle |
-| 8/13/2026 | **Beam thermal: heatsink** | **68.1 °C** | ⚠ **Corrected** — an earlier 81.5 °C reading was the *board top max*, not the heatsink. With the board hot spot at 85.5 °C the sink is 17 °C cooler, so the interface is carrying heat. **But it also rules out the 53.6 °C D11 reading: D11 cannot be cooler than the sink it feeds.** See Q12 |
+| 8/13/2026 | **Beam thermal: R_th D11→ambient** | **~24.5 K/W** | ✅ **Validated 2026-08-14 — it does describe the LED** (Q12 closed). Predicts 25 % → 89 °C and 30 % → 102 °C from one constant; measured 87.5 and 104. **Two duty points agree:** 25 % → plateau **87.5 °C**; 30 % → **~100 °C**. Ambient 23 °C, heatsink fitted, still air. Model predicts both. τ ≈ **70 s**, ~5 min to settle |
+| 8/14/2026 | **A1 DMA ring — on hardware** | ✅ `ring RUNNING`, `5V_IN fresh` | Confirmed via `stat` in IDLE. One DMA channel, RP2350 ENDLESS mode, 32 KB, **32.8 ms history/channel**. The supply monitor now reads ch1 out of the ring and stops the ADC never |
+| 8/14/2026 | **D11 base, 30 % duty, 10 min** | **104 °C** (100 °C at 5 min) | ✅ **The trustworthy reading** — IR pointed **sideways at the LED base**, avoiding the domed lens. **Junction = 104 + 3.23 W × (6…9) = 123–133 °C** vs T_j max 145 → only **12–22 °C margin. 30 % is not a sustainable operating point.** ⚠ **Still rising at 10 min** (+4 °C over the second 5 min), so 104 °C is a **lower bound** — there is a slow board/heatsink time constant well beyond the 70 s local one |
+| 8/14/2026 | **Heatsink, 30 % duty, 10 min** | **76 °C** | Base→heatsink gradient **28 °C at 3.23 W = 8.7 K/W**; heatsink→ambient **16.4 K/W**. ⚠ **Corrects an earlier ~2 K/W interface estimate** derived from misattributed readings — the interface is **35 % of the total**, not 8 %, so it is worth improving alongside airflow |
+| 8/14/2026 | **D11 vs ballast at 30 %** | **same temperature** | ✅ Not a contradiction: D11 has 4× the power (3.23 W vs 0.81 W) through a ~4× better path (25 vs 100 K/W), and they are millimetres apart on shared copper. **Closes Q12** |
+| 8/13/2026 | **Beam thermal: heatsink (superseded)** | **68.1 °C** | ⚠ **Corrected** — an earlier 81.5 °C reading was the *board top max*, not the heatsink. With the board hot spot at 85.5 °C the sink is 17 °C cooler, so the interface is carrying heat. **But it also rules out the 53.6 °C D11 reading: D11 cannot be cooler than the sink it feeds.** See Q12 |
 | 8/13/2026 | **Beam thermal: heatsink→ambient** | **~22 K/W** | ⚠ **The bottleneck — 90 % of the total.** Better paste buys nothing; airflow buys ~2-3× |
 | 8/13/2026 | **R73 (ballast), 25 % duty** | **85.5 °C** | 0.687 W measured → implies **~90 K/W** to ambient. Bare 2512, no heatsinking. Well inside a 3 W part's rating and ~70 °C under its typical 155 °C limit |
-| 8/13/2026 | **D11 package, 25 % duty** | **53.6 °C — NOT TRUSTED** | ❌ Read off a **domed lens** (curved, specular, emissivity falls with angle). **Physically impossible**: the heatsink it feeds measured 68.1 °C. True value is **> 68 °C, likely 74–82 °C** → junction 90–107 °C. **Re-read with matte tape — Q12** |
+| 8/13/2026 | **D11 package, 25 % duty (lens)** | **53.6 °C — ARTIFACT, superseded** | ❌ Read off a **domed lens** (curved, specular, emissivity falls with angle). **Physically impossible**: the heatsink it feeds measured 68.1 °C. True value is **> 68 °C, likely 74–82 °C** → junction 90–107 °C. **Re-read with matte tape — Q12** |
 | 8/13/2026 | **Beam-off baseline** | **37.4 °C** | Rails latched, beam off, 23 °C ambient. +14 °C from the boost / R15-D4 shunt alone (see CR-07) |
 | 8/13/2026 | **U9 beam one-shot clamp (Q1)** | **122.68 µs** | ✅ **ANSWERED.** Median over 1291 pulses, spread 0.22 µs (0.18 %). **Neither 86 nor 113 µs** — implied K = **0.996**, not the 0.70 assumed. **Concern inverted, and a second problem found:** `STROBE_SW_MAX_US` was **73 µs**, not the 100 µs I had been quoting — *below* the 100 µs that .md §15 needs at 10 m/s, so slow-ball pulses would have been firmware-truncated 27 %. With a 122.7 µs hardware clamp, raised to **100 µs** (18 % margin). Hardware never truncates. Captured on pre-fix fw (2289 Hz, 218 µs commanded — still 1.8x headroom, valid) |
 | | **U5 strobe one-shot clamp** | | **Phase 6a.1. Expect ~122 µs** (identical part+RC to U9: 74LVC1G123, 56K, 2.2nF, BOM-confirmed). Tolerance band **109–136 µs**. **Set `STROBE_SW_MAX_US` from U5, not U9** |
@@ -459,9 +465,14 @@ firmware/
   bench use; it is not a streaming telemetry path. Same for `beam ramp`, `beam sweep`,
   `panel demo` — all correctly blocking, because they are interactive bench tools. The rule
   that matters: **nothing in the armed or firing path may block.**
-- 🔴 **`adc_read_avg()` stops and restarts the ADC** (see `ARCHITECTURE.md` A1). Harmless now;
-  **breaks Phase 3**, where ADC5 must free-run into a DMA ring. The supply monitor calls it
-  every 100 ms. **Fix before starting Phase 3**, not during.
+- ~~🔴 `adc_read_avg()` stops and restarts the ADC.~~ ✅ **FIXED 2026-08-14** — see
+  `ARCHITECTURE.md` A1. A 32 KB DMA ring (one channel, RP2350 ENDLESS mode) runs continuously
+  in every mode; `adc_read_5vin_volts()` averages ch1 out of it and disturbs nothing.
+  `adc_read_avg()` survives for the CLI's `adc <ch>` and is documented as disruptive.
+  **Two constraints worth not breaking:** the round-robin channel count must stay 1, 2 or 4
+  (the ring size must divide by it or the channel phase rotates on wrap), and an A↔B DMA
+  chain does **not** work as a substitute — transfer counts do not reload, so the pair
+  stalls silently after one lap each.
 - 🟡 **The 35 % beam duty ceiling is enforced in exactly one CLI path, and it is not the
   dangerous one.** `beam duty` checks it (`cli.c`, the `REFUSED` branch), but `beam freq`,
   `beam clamp` and `beam sweep` all reach `beam_configure()` directly and skip the check.
@@ -495,19 +506,95 @@ firmware/
 
 ## 10. Next session — start here
 
+> ### 🔵 RESUME POINT — Phase 3 firmware, 2026-08-14
+>
+> **Approved plan:** `C:\Users\ATTAYEKP\.claude\plans\great-questions-1-let-s-refactored-kahan.md`
+> — read it first. It carries the full work order, the schematic findings table (F1–F10)
+> and the bench verification sequence.
+>
+> **Build command** (cmake/ninja/gcc are private to the Pico extension, not on PATH):
+> ```bash
+> export PATH="$USERPROFILE/.pico-sdk/cmake/v4.3.4/bin:$USERPROFILE/.pico-sdk/ninja/v1.13.2:$USERPROFILE/.pico-sdk/toolchain/15_2_Rel1/bin:$PATH"
+> cmake --build build
+> ```
+>
+> #### ✅ Step 1 COMPLETE and building clean
+>
+> - **Beam duty ceiling moved into `beam.c`**, and it is now enforced on **effective duty**
+>   — what reaches the LED after U9's 122.68 µs one-shot truncates the high phase — not on
+>   commanded duty. That distinction is load-bearing: `beam clamp` (1 kHz / 50 %) gives an
+>   effective 12.3 % and must stay legal, while 104 kHz / 50 % gives an effective 50 % and
+>   must not. Both `beam_configure()` and `beam_set_duty()` check; `beam_would_exceed_ceiling()`
+>   lets the CLI warn before calling. New in `board.h`: `BEAM_ONESHOT_CLAMP_US` (122, U9,
+>   measured — deliberately separate from the U5 strobe constants), `BEAM_DUTY_CEILING` 0.35,
+>   `BEAM_DUTY_OPERATING` 0.25.
+> - **Stale `PWM_SLICE_*` defines deleted** from `board.h`. Three of four were wrong (the
+>   2026-07-31 slice-map correction missed them). Replaced with a comment saying why there
+>   are none: slices are resolved at runtime via `pwm_gpio_to_slice_num()`.
+> - **`adc_ring_history()` hardened against the DMA lap.** A full-depth read walks backwards
+>   while the DMA writes forwards; they meet, and the tail came back as fresh data wearing an
+>   old timestamp. It now measures how far the writer advanced during the copy and returns
+>   only the provably-intact prefix. **A short return means "the ring lapped me", not an error.**
+>   Callers must ask for the depth they need, not the maximum.
+> - **`HPF_SEL_TRACK` / `HPF_SEL_HOLD` added to `board.h`** — the U14 SEL polarity is
+>   **unverified** (the netlist encodes only the pin name) and is now wrapped in one constant.
+>   `hpf test` establishes it empirically. Nothing else may compare GPIO33's raw level.
+>
+> #### ✅ Step 2 COMPLETE and building clean — `src/detect.c` / `detect.h`
+>
+> New module owning GPIO44, GPIO33 and GPIO46. New CLI: `threshold`, `threshold duty|volts`,
+> `threshold sweep`, `hpf`, `hpf track|hold`, `hpf test`. Wired into `CMakeLists.txt`,
+> `main.c` (`detect_init()` after `beam_init()`) and `cli.c`.
+>
+> - **`DAC_SETTLE_MS` = 20 ms**, not the bench doc's 10. The two RC sections load each
+>   other, so the real poles are 2.62 ms and 0.382 ms — 10 ms is only ~4τ, leaving ~2 %
+>   of a step ≈ 66 mV ≈ 20 threshold codes.
+> - **`hpf test`** decides the GPIO33 polarity from drift: TRACK is pinned to 0 V through
+>   R96 2 M and should not move; HOLD floats and walks at ~44 mV/s at ADC5 (≈1 nA leakage
+>   into C81 330 nF, ×14.5). Reports CONFIRMED / INVERTED / INCONCLUSIVE, and refuses to
+>   guess a polarity from an inconclusive result.
+> - **`threshold sweep`** also reports total ADC5 movement across the sweep = GPIO44
+>   crosstalk, and prints the `DAC_TOP` alternatives (2047 → 73 kHz, 511 → 293 kHz).
+>
+> ##### 🔴 Two hardware findings made during Step 2
+>
+> 1. **GPIO36 (UART_TX) and GPIO44 (Threshold_PWM) are BOTH PWM slice 10A** — same slice
+>    *and* same channel, a fourth collision pair of the CR-01 kind. `board.h`'s "never put
+>    two PWM functions on GPIOs 16 apart" rule is **wrong above GPIO32**: there
+>    `slice = 8 + ((gpio>>1)&3)`, so the period is **8**, not 16. Full corrected table now
+>    in `board.h`. Safe today only because GPIO36 stays SIO/UART — **never put GPIO36 on
+>    PWM**, or the Pi link and the comparator threshold become one compare register.
+> 2. **Nothing returned GPIO33 low when the rail dropped.** `safe_state.c` drives it low at
+>    boot precisely because SEL high into an unpowered U14 back-feeds +5VA, but an ordinary
+>    `hpf track` then `off` walked straight back into it. Fixed: `power_fsm.c` `PS_FORCE_OFF`
+>    now calls `detect_hpf_safe_off()`, and `detect_hpf_set()` refuses unless the rail is up.
+>
+> #### ▶ NEXT: Step 3 — `src/detect.pio` + `src/pio_alloc.[ch]`
+>
+> PIO comparator edge timing (ARCHITECTURE.md A2). **The block allocation is forced, not
+> chosen:** `pio_set_gpio_base()` is per-PIO-instance and takes only 0 or 16, so GPIO46
+> (needs base 16) and the strobe/camera pins GPIO8/9/10/25 (need base 0) **cannot share a
+> block**. Plan: PIO0 base 0 (strobe + camera), PIO1 base 0 (I²S mic), PIO2 base 16 (detect).
+> `pio_set_gpio_base()` **fails once any program is loaded into that block**, so a single
+> `pio_alloc_init()` must run from `main()` before every other init that touches PIO.
+> Glitch reject implemented but **default OFF** — the first bench run should show raw
+> comparator behaviour, since U15 has no hysteresis and chatter is what Phase 4 characterises.
+>
+> ⚠ **`hpf test` must run before any measurement that depends on TRACK vs HOLD**, including
+> §3.6b's Q8 rail-step test. If the polarity is inverted, that test measures the wrong state.
+
 **Phases 0 through 2 are complete.** `BENCH.md` and `BENCH_P2_BEAM.md` are both finished.
 **Reflash first** — eight firmware fixes landed during Phase 2 bring-up (table at the top).
 
-1. 🔴 **Fix `ARCHITECTURE.md` A1 BEFORE starting Phase 3, not during.**
-   `adc_read_avg()` stops the ADC, drains the FIFO and clears round-robin — and the power
-   FSM's supply monitor calls it every 100 ms. Phase 3 needs ADC5 free-running into a
-   continuous DMA ring so a comparator edge has pre-trigger history. Ten teardowns a second
-   will punch holes in that ring and rotate the round-robin phase, and the symptom is
-   intermittent missing samples that read as an analog fault. **Much cheaper now than later.**
+1. ✅ **A1 is done (2026-08-14).** IDLE/ARMED/BURST free-run into a 32 KB DMA ring that never
+   stops — one channel in RP2350 ENDLESS mode, zero CPU, **32.8 ms of history per channel**.
+   `adc_ring_history()` is the Phase 3 pre-trigger read. Nothing else is blocking.
 
-2. **Take the D11 tape reading (Q12).** Sixty seconds, and it decides whether
-   `NEXT_BOARD_REV.md` CR-12 is a 🔴 design constraint or a 🟢 footnote. Matte tape on the
-   LED, 25 % duty, 5 min plateau. Sanity rule: **D11 must read hotter than its heatsink.**
+2. **Optional, whenever convenient — try a better insulating TIM** under the heatsink.
+   `NEXT_BOARD_REV.md` CR-12: the vias and the thin 1.04 mm board are already good, so the
+   interface carries most of the 8.7 K/W. A thinner, higher-k pad is a **materials change with
+   no board revision** worth ~2–2.5 K/W, and fitting it *measures* how much of that stage is
+   really the TIM. Not blocking anything.
 
 3. **Then Phase 3 — `BENCH_P3_DETECT.md`.** Order matters: static health (3.2) → demod
    phase calibration (3.4, and use the chopped-beam method — the .md's `cal_demod_phase()`

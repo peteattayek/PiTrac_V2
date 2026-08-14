@@ -52,6 +52,7 @@ add_executable(pitrac
     src/power_fsm.c
     src/panel.c
     src/beam.c
+    src/detect.c
     src/cli.c
 )
 

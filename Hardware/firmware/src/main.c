@@ -18,6 +18,7 @@
 #include "power_fsm.h"
 #include "panel.h"
 #include "beam.h"
+#include "detect.h"
 #include "cli.h"
 
 #include "pico/stdlib.h"
@@ -80,6 +81,9 @@ int main(void) {
     // Configures the PWM slices but leaves GPIO31/39 as SIO outputs driven low.
     // The beam stays dark until 'beam on' is typed, and cannot start at boot.
     beam_init();
+    // Takes GPIO44 from SIO to PWM at duty 0. Leaves GPIO33 low and GPIO46 as
+    // the input safe_state() already configured.
+    detect_init();
 
     // Give the USB host a moment to enumerate before the CLI banner, otherwise
     // the first thing you see after a reflash is a truncated help text.

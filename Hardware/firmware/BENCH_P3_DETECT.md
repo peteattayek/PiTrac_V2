@@ -45,25 +45,37 @@ One SAR, 500 ksps aggregate. `adcmode` switches:
 Never sample ch3 (GPIO43, RPI5_SHUTDOWN) or ch4 (GPIO44, Threshold_PWM) — both are
 digital outputs on this board. The firmware rejects them.
 
-> ### 🔴 Do this before starting Phase 3 — finding A1
+> ### ✅ A1 is fixed (2026-08-14) — the ring is already running
 >
-> **The supply monitor currently tears down the ADC ten times a second.**
-> `adc_read_avg()` stops the ADC, drains the FIFO, clears round-robin, polls 256
-> conversions in a blocking loop, then restarts the previous mode — and the power
-> FSM calls it every 100 ms.
+> `adc_read_avg()` used to stop the ADC on every call, and the power FSM called it 10× a
+> second. That would have punched holes in the pre-trigger history this phase depends on.
 >
-> That is survivable today. It is **not** survivable in Phase 3, where ADC5 must
-> free-run continuously into a DMA ring so a comparator edge has pre-trigger
-> history to look back at. A monitor that restarts the ADC ten times a second will
-> punch holes in that ring and rotate the round-robin channel phase, and the
-> symptom will be intermittent missing samples that look like an analog fault.
+> **Now:** IDLE, ARMED and BURST all free-run into a **32 KB DMA ring** that never stops —
+> one channel in RP2350 ENDLESS mode with a hardware write-address wrap, zero CPU.
 >
-> **Fix first:** make IDLE and ARMED free-run into a continuous DMA ring, and have
-> the monitor average ch1 samples already in the ring rather than commanding its
-> own conversions. Zero disruption, near-zero CPU. Keep stop-and-poll only for the
-> CLI's one-shot `adc <ch>`.
+> | | |
+> |---|---|
+> | Pre-trigger history | **32.8 ms per channel**, every mode |
+> | Covers a transit down to | **~1.4 m/s** (production `v_min` is 2.0 m/s) |
+> | Slower bench balls | use `capture` instead — see 3.7 |
 >
-> See `ARCHITECTURE.md` A1. Much cheaper to fix now than to debug later.
+> **The API this phase wants:**
+>
+> ```c
+> size_t adc_ring_history(unsigned chan, uint16_t *dst, size_t n);  // newest first
+> bool   adc_ring_avg(unsigned chan, unsigned n, uint16_t *out);
+> ```
+>
+> `adc_ring_history(ADC_CH_DETECT, ...)` after a comparator edge is how §4's
+> amplitude-independent refinement gets its data — pull the bump back out of the ring and
+> find its own 50 %-of-peak crossings.
+>
+> ⚠ **`adc <ch>` and `capture` still stop the ring** — they are bench commands and are
+> documented as disruptive. Never call `adc_read_avg()` from the armed or firing path.
+>
+> ⚠ **ch1 (+5V_IN) is not in the ARMED set**, so while armed the supply reading is *held*,
+> not refreshed. `stat` shows it as `HELD` with an age. This is deliberate: the flow
+> ARMED → BURST → IDLE re-checks it after every shot, since IDLE is `{1,2,5,7}`.
 
 ---
 
@@ -204,6 +216,80 @@ put it in `board.h`.
 
 ---
 
+## 3.6b Q8 — prove a rail step cannot look like a ball
+
+**Do this before you trust a single transit.** If the answer is bad, every measurement in
+3.7 is contaminated by an artifact you have not yet characterised.
+
+### The mechanism
+
+`+2V5` is **not** a regulated reference — R75/R76 (10K/10K) buffered by U11C make it literally
+**+5VA ÷ 2**, measured at 2.59 V on the 5.2 V rail. So the whole chain's reference **moves with
+the rail**:
+
+```
+ΔV on +5V  →  ΔV/2 at virtual ground  →  through C81  →  U12B x14.5  →  ADC5
+```
+
+**Predicted coupling: ΔADC5 = ΔV_rail × 7.25.** A **100 mV** rail step becomes **725 mV** at
+ADC5 — comfortably over a typical 0.1–0.5 V threshold, i.e. **a false trigger caused by a
+power event.**
+
+In **TRACK** mode the 0.66 s HPF removes it. In **HOLD** it does not. **Armed means HOLD**,
+so the vulnerable state is exactly the operating state.
+
+### The test
+
+Use the beam as the load step — at 30 % duty it is ~0.95 A, the largest thing you can switch.
+**No target present**, so the only optical change is crosstalk.
+
+```
+on
+beam freq 104166
+beam duty 30
+adcmode idle
+gpio 33 1          # HPF TRACK
+```
+
+Scope **+5 V** and **ADC5** together, then toggle `beam on` / `beam off` and capture both.
+
+| Step | HPF | What to record |
+|---|---|---|
+| 1 | `gpio 33 1` (**TRACK**) | ΔV at +5 V, and the ADC5 excursion. The HPF should remove most of it. |
+| 2 | `gpio 33 0` (**HOLD**) | Same step. **This is the armed case.** |
+| 3 | — | Coupling ratio = ΔADC5 / ΔV_rail. **Compare against the predicted 7.25.** |
+
+**The TRACK-vs-HOLD difference is the Q8 effect isolated** — same stimulus, same optical
+conditions, only the baseline freeze changes.
+
+### Pass criteria
+
+- Coupling in **TRACK** is small — the HPF is doing its job.
+- Coupling in **HOLD** is close to the predicted **×7.25**. If it is far off, the mechanism is
+  not what the analysis says and that is worth understanding before proceeding.
+- **The ADC5 excursion from a realistic rail step stays well under the comparator threshold**
+  you set in 3.5. A useful bar: under **20 %** of the threshold.
+
+### If it fails
+
+Record the coupling ratio and the rail step that causes a trigger, then pick a mitigation:
+
+| Mitigation | Cost |
+|---|---|
+| Keep the rail stiff while armed — no load switching during an armed window | Constrains what the firmware may do while armed |
+| Shorten the armed window | Fewer opportunities, does not remove the mechanism |
+| Do not freeze the baseline (stay in TRACK) | Loses the frozen reference the detector wants |
+| **Board fix — `NEXT_BOARD_REV.md` CR-02** | Regulate +2V5, or a unity diff amp taking TP9 − TP6 |
+
+⚠ **This gets worse in Phase 6, not better.** The strobe bursts sag the rail *deliberately* —
+that is why the supply monitor carries a 500 ms debounce. A detector that false-triggers on a
+100 mV step will false-trigger on its own strobe.
+
+Record the coupling ratio in `PROGRESS.md` §6 either way. It is the number that decides
+whether CR-02 is required or optional.
+
+---
+
 ## 3.7 Ball transit — use a ramp, not your hand
 
 ```
@@ -261,6 +347,12 @@ a core spent polling.
 4. *During that wait*, post-process the ADC5 ring: find the bump peak, compute the
    50 %-of-own-peak crossings on both edges, recompute v. Amplitude-independent. Commit
    the burst schedule from the refined value.
+   ```c
+   uint16_t hist[4096];
+   size_t n = adc_ring_history(ADC_CH_DETECT, hist, 4096);  // newest first
+   ```
+   The ring holds **32.8 ms per channel** (A1), so the whole bump is already there for any
+   transit down to ~1.4 m/s — no extra acquisition, and nothing to arm in advance.
 
 > **Implement steps 1–2 as a PIO state machine, not a GPIO ISR** (`ARCHITECTURE.md` A2).
 > One SM that waits for the rising edge, counts at 1 MHz to the falling edge, and pushes

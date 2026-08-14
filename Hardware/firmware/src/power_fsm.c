@@ -4,6 +4,7 @@
 #include "board.h"
 #include "safe_state.h"
 #include "adc_engine.h"
+#include "detect.h"
 
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
@@ -381,6 +382,13 @@ void power_fsm_step(void) {
     case PS_FORCE_OFF:
         gpio_put(PIN_LATCH_CONTROL, 0);
         gpio_put(PIN_SYSTEM_READY, 0);
+        // GPIO33 must go low with the rail. U14 (the gated-HPF mux) runs from
+        // +5VA, and SEL held high into an unpowered mux back-feeds the analog
+        // rail through its protection structures -- the same condition
+        // safe_state.c drives GPIO33 low at boot to prevent. Without this, an
+        // ordinary `hpf track` followed by `off` walks straight into it, because
+        // nothing else ever puts the pin back.
+        detect_hpf_safe_off();
         pi_shutdown_assert(false);
         s_pi_present = false;
         // Drop back to standby. We stay alive on +3V3 the whole time.
