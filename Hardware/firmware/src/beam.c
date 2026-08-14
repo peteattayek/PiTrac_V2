@@ -20,6 +20,8 @@ static bool     s_on     = false;
 
 // ---------------------------------------------------------------------------
 
+static void beam_note_duty(float d);   // fwd; defined with the chop helpers
+
 static inline uint32_t wrap_mod(int64_t v, int64_t m) {
     int64_t r = v % m;
     return (uint32_t)(r < 0 ? r + m : r);
@@ -146,6 +148,7 @@ void beam_configure(uint32_t freq_hz, float duty, int32_t phase_ticks) {
 
     s_top   = top;
     s_duty  = duty;
+    beam_note_duty(duty);
     s_phase = (int32_t)wrap_mod(phase_ticks, (int64_t)top + 1);
 
     bool was_on = s_on;
@@ -187,8 +190,59 @@ void beam_set_duty(float duty) {
     }
 
     s_duty = duty;
+    beam_note_duty(duty);
     // Live update â€” the compare register can change while the slice runs.
     pwm_set_chan_level(s_slice_car, s_chan_car, (uint16_t)(duty * (s_top + 1)));
+}
+
+// --- chopping and the warm-up tracker ---------------------------------------
+
+static float    s_chop_on_duty;
+static bool     s_chop_active;
+static uint32_t s_warm_since_ms;
+static bool     s_warm_running;
+
+#define BEAM_WARM_DUTY_MIN  0.20f   // below this the LED is not heating usefully
+
+// Called from every path that changes the compare level, so the warm-up clock
+// cannot be fooled by a route that bypasses beam_set_duty().
+static void beam_note_duty(float d) {
+    if (d >= BEAM_WARM_DUTY_MIN) {
+        if (!s_warm_running) {
+            s_warm_running  = true;
+            s_warm_since_ms = to_ms_since_boot(get_absolute_time());
+        }
+    } else {
+        // A chop's "off" half must NOT reset the warm-up clock: a 25 ms dark
+        // interval does not cool a 70 s thermal mass, and resetting here would
+        // make every chopped measurement look permanently cold.
+        if (!s_chop_active) s_warm_running = false;
+    }
+}
+
+uint32_t beam_duty_stable_ms(void) {
+    if (!s_warm_running || !s_on) return 0;
+    return to_ms_since_boot(get_absolute_time()) - s_warm_since_ms;
+}
+
+void beam_chop_begin(float on_duty) {
+    s_chop_on_duty = on_duty;
+    s_chop_active  = true;
+    beam_set_duty(on_duty);
+}
+
+void beam_chop(bool on) {
+    // Compare level 0 -> the carrier pin never rises -> U9 never triggers -> the
+    // LED is dark. The DEMOD slice is untouched and keeps running, which is the
+    // whole point: beam_enable(false) would stop it and make the dark half a
+    // different circuit rather than a reference.
+    pwm_set_chan_level(s_slice_car, s_chan_car,
+                       on ? (uint16_t)(s_chop_on_duty * (s_top + 1)) : 0u);
+}
+
+void beam_chop_end(void) {
+    s_chop_active = false;
+    beam_set_duty(s_chop_on_duty);
 }
 
 void beam_set_phase(int32_t phase_ticks) {

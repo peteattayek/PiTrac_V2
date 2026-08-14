@@ -54,6 +54,7 @@ add_executable(pitrac
     src/beam.c
     src/pio_alloc.c
     src/detect.c
+    src/cal.c
     src/cli.c
 )
 

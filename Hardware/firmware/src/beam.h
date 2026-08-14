@@ -80,6 +80,41 @@ bool beam_would_exceed_ceiling(uint32_t freq_hz, float duty, float *out_effectiv
 void  beam_set_duty_ceiling(float c);
 float beam_duty_ceiling(void);
 
+// ---------------------------------------------------------------------------
+// CHOPPING, for the differential measurements in Phase 3.4 and 3.6
+//
+// *** CHOP WITH THESE, NOT WITH beam_enable(false). ***
+//
+// beam_enable() disables BOTH PWM slices, which stops the DEMODULATOR CLOCK as
+// well as the carrier. U13's mux then sits at one fixed sign, so the "off" half
+// of the cycle is not a dark reference -- it is a different circuit, with a
+// different DC operating point, and the difference you measure is dominated by
+// that rather than by the light.
+//
+// Setting the carrier's compare level to 0 instead means the carrier pin never
+// goes high, so U9 (a rising-edge one-shot) never fires and the LED is dark --
+// while the demod slice keeps running with its phase lock untouched. Only the
+// light changes, which is what a differential measurement assumes.
+//
+// BENCH-VERIFY ONCE: scope TP5 to confirm it stays low at compare 0, and that
+// GPIO39 keeps toggling across a chop.
+// ---------------------------------------------------------------------------
+void beam_chop_begin(float on_duty);   // remember the "on" level
+void beam_chop(bool on);               // 0 <-> the remembered level
+void beam_chop_end(void);              // restore the remembered level
+
+// Milliseconds the beam has been continuously at a duty high enough to be
+// thermally significant. Resets whenever it drops below the threshold.
+//
+// This exists because the LED loses 25-45 % of its optical output between cold
+// and thermal plateau while EVERY ELECTRICAL READING SAYS NOTHING HAPPENED
+// (measured: current +1.7 %, power +0.6 %). A carrier or threshold chosen cold
+// is wrong warm, and the discrepancy looks like drift or a detection fault
+// rather than a calibration error. tau is about 70 s.
+uint32_t beam_duty_stable_ms(void);
+
+#define BEAM_WARMUP_MS   300000u   // 5 min, ~4.3 tau
+
 // Change duty or phase WITHOUT recomputing TOP.
 //
 // Prefer these over beam_configure() when the frequency is not changing. Going

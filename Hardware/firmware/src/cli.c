@@ -9,6 +9,7 @@
 #include "beam.h"
 #include "detect.h"
 #include "pio_alloc.h"
+#include "cal.h"
 
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
@@ -25,6 +26,10 @@
 
 #define CLI_MAX_LINE 96
 #define CLI_MAX_ARGS 8
+
+// Fitted by `cal model`; consumed by `scan carrier`. RAM only until the flash
+// config block lands -- re-run `cal model` after a reset.
+static cal_phase_model_t s_phase_model;
 
 static char   s_line[CLI_MAX_LINE];
 static size_t s_len;
@@ -472,6 +477,122 @@ static void dispatch(int argc, char **argv) {
                detect_comparator() ? "ABOVE threshold" : "below threshold");
         printf("settle %u ms per change (dominant pole 2.62 ms; the 10 ms in the .md is ~4 tau)\n",
                (unsigned)DAC_SETTLE_MS);
+    }
+
+    else if (!strcmp(c, "cal")) {
+        if (argc >= 2 && !strcmp(argv[1], "demod")) {
+            if (!beam_enabled()) { printf("REFUSED: beam is off.\n"); return; }
+            if (detect_hpf_mode() != HPF_TRACK)
+                printf("WARNING: HPF is in HOLD. Method A needs TRACK -- 'hpf track'.\n");
+            if (beam_duty_stable_ms() < BEAM_WARMUP_MS)
+                printf("WARNING: beam warm for only %lu s of %lu. Optical output is still\n"
+                       "  falling and nothing electrical shows it. Results will be cold.\n",
+                       (unsigned long)(beam_duty_stable_ms() / 1000u),
+                       (unsigned long)(BEAM_WARMUP_MS / 1000u));
+            adc_engine_set_mode(ADC_MODE_ARMED);
+            cal_demod_t r;
+            printf("sweeping demod phase, static reflector required, ~26 s ...\n");
+            bool ok = cal_demod_phase(beam_actual_freq_hz(), CAL_PHASE_POINTS,
+                                      CAL_CHOP_CYCLES, CAL_CHOP_HZ_DEFAULT, &r);
+            adc_engine_set_mode(ADC_MODE_IDLE);
+            printf("\nfit      : %ld ticks   (grid argmax %ld)\n",
+                   (long)r.best_ticks, (long)r.argmax_ticks);
+            printf("amplitude: %.1f codes\n", (double)r.amplitude);
+            printf("quad null: %.1f codes  (should be ~0 at 90 deg from the peak)\n",
+                   (double)r.quad_null);
+            printf("h2/h1    : %.3f  (cosine purity; >0.25 is not a lock-in response)\n",
+                   (double)r.h2_ratio);
+            printf("warm     : %s\n", r.warm ? "yes" : "NO -- see above");
+            if (ok) {
+                beam_set_phase(r.best_ticks);
+                printf("phase <- %ld ticks. Record it in PROGRESS.md section 6.\n",
+                       (long)r.best_ticks);
+            } else {
+                printf("NOT COMMITTED: the response is not a clean cosine, so this is an\n"
+                       "  artifact rather than a lock-in peak. Check the reflector, the\n"
+                       "  HPF mode and that the beam is actually on.\n");
+            }
+            return;
+        }
+        if (argc >= 2 && !strcmp(argv[1], "model")) {
+            uint32_t f0 = (argc > 2) ? (uint32_t)strtoul(argv[2], NULL, 0) : 80000u;
+            uint32_t f1 = (argc > 3) ? (uint32_t)strtoul(argv[3], NULL, 0) : 200000u;
+            uint32_t n  = (argc > 4) ? (uint32_t)strtoul(argv[4], NULL, 0) : 5u;
+            printf("fitting the phase model over %lu..%lu Hz at %lu points (~%lu s)\n",
+                   (unsigned long)f0, (unsigned long)f1, (unsigned long)n,
+                   (unsigned long)(n * 20u));
+            adc_engine_set_mode(ADC_MODE_ARMED);
+            bool ok = cal_demod_model(f0, f1, n, &s_phase_model);
+            adc_engine_set_mode(ADC_MODE_IDLE);
+            if (!ok) { printf("model fit FAILED\n"); return; }
+            printf("\ntheta(f) = %.4f + %.4g*f + %.4g*f^2   rad, f in Hz\n",
+                   (double)s_phase_model.a0, (double)s_phase_model.a1,
+                   (double)s_phase_model.a2);
+            printf("range %lu..%lu Hz, %u points, residual %.4f rad\n",
+                   (unsigned long)s_phase_model.f_lo, (unsigned long)s_phase_model.f_hi,
+                   s_phase_model.n_points, (double)s_phase_model.resid_rms_rad);
+            if (s_phase_model.pure_delay)
+                printf("PURE DELAY: no constant term, no curvature. One phase_ticks value\n"
+                       "  covers every carrier -- a tick is a fixed 6.67 ns and the offset\n"
+                       "  is a fixed time, so it does not scale with frequency.\n");
+            else
+                printf("NOT a pure delay -- the filter poles contribute. The model is\n"
+                       "  required; do NOT hold one tick count across a frequency sweep.\n");
+            printf("*** DO NOT EXTRAPOLATE outside %lu..%lu Hz. ***\n",
+                   (unsigned long)s_phase_model.f_lo, (unsigned long)s_phase_model.f_hi);
+            return;
+        }
+        if (argc >= 3 && !strcmp(argv[1], "gain")) {
+            float peak = strtof(argv[2], NULL);
+            float frac = (argc > 3) ? strtof(argv[3], NULL) : 0.67f;
+            cal_gain_t g;
+            cal_gain_recommend(peak, frac, &g);
+            printf("measured peak %.0f codes at the as-built gain %.1f\n",
+                   (double)peak, (double)g.gain_now);
+            printf("target %.0f%% of ADC full scale\n", (double)(frac * 100.0f));
+            if (g.r98_e24 <= 0.0f) {
+                printf("\nRECOMMENDATION: leave R98 UNPOPULATED. The signal already fills\n"
+                       "  enough of the range; more gain would only cost headroom.\n");
+            } else {
+                printf("\nRECOMMENDATION: fit R98 = %.0f ohm (E24 nearest to %.0f)\n",
+                       (double)g.r98_e24, (double)g.r98_ideal);
+                printf("  gain %.1f -> %.1f\n", (double)g.gain_now, (double)g.gain_target);
+                printf("  ADC5 saturates at dTP9 %.0f mV -> %.0f mV\n",
+                       (double)g.clip_mv_now, (double)g.clip_mv_new);
+            }
+            printf("\nSet the gain from the WEAKEST target that must still trigger, and the\n"
+                   "ceiling from the strongest. Usable full scale is min(ADC 3.3 V, LM393\n"
+                   "common mode ~3.5 V) -- U12B is rail-to-rail on +5VA and can drive 5.2 V\n"
+                   "into a comparator that stops being valid at 3.5.\n");
+            return;
+        }
+        printf("usage: cal demod | cal model [f0] [f1] [n] | cal gain <peak> [frac]\n");
+        printf("phase model: %s", s_phase_model.valid ? "" : "NOT FITTED\n");
+        if (s_phase_model.valid)
+            printf("%lu..%lu Hz, residual %.4f rad, %s\n",
+                   (unsigned long)s_phase_model.f_lo, (unsigned long)s_phase_model.f_hi,
+                   (double)s_phase_model.resid_rms_rad,
+                   s_phase_model.pure_delay ? "pure delay" : "dispersive");
+    }
+
+    else if (!strcmp(c, "scan")) {
+        if (argc < 2 || strcmp(argv[1], "carrier")) {
+            printf("usage: scan carrier [f0] [f1] [n] [force]\n"); return;
+        }
+        uint32_t f0 = (argc > 2) ? (uint32_t)strtoul(argv[2], NULL, 0) : 80000u;
+        uint32_t f1 = (argc > 3) ? (uint32_t)strtoul(argv[3], NULL, 0) : 200000u;
+        uint32_t n  = (argc > 4) ? (uint32_t)strtoul(argv[4], NULL, 0) : 16u;
+        bool force  = (argc > 5) && !strcmp(argv[5], "force");
+        if (!beam_enabled()) { printf("REFUSED: beam is off.\n"); return; }
+        if (!s_phase_model.valid)
+            printf("WARNING: no phase model. Every candidate will be measured at phase 0,\n"
+                   "  i.e. at a DIFFERENT phase error each, and the SNR ranking will be\n"
+                   "  meaningless. Run 'cal model' first.\n");
+        adc_engine_set_mode(ADC_MODE_ARMED);
+        cal_scan_point_t best;
+        bool ok = cal_scan_carrier(f0, f1, n, &s_phase_model, force, &best);
+        adc_engine_set_mode(ADC_MODE_IDLE);
+        if (ok) printf("\nPut the winner in board.h and record it in PROGRESS.md section 6.\n");
     }
 
     else if (!strcmp(c, "detect")) {
