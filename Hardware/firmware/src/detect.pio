@@ -1,0 +1,51 @@
+; SPDX-License-Identifier: GPL-3.0-or-later
+; Copyright (C) 2026 PiTrac contributors
+;
+; detect_transit -- time one HIGH pulse on D_Comparator (GPIO46) and push its
+; width as a single FIFO word. ARCHITECTURE.md A2.
+;
+; Why this is a state machine and not a GPIO interrupt: a ball transit is the
+; interval between two edges, and an ISR measures it as two timestamps taken by
+; a CPU that might be servicing USB when either one lands. Here the interval is
+; measured by the same counter that never does anything else, and arrives as one
+; word that is already the answer. No handler, no jitter, no flash-XIP stall.
+;
+; THE COUNT LOOP IS EXACTLY 2 CYCLES PER TICK. That is load-bearing: it makes
+; the SM clock exactly twice the tick rate, so at 2 MHz one count is one
+; microsecond with no conversion beyond a scale factor.
+;
+;   count:  jmp pin still_high   1 cycle   (taken while the pin is high)
+;   still_high: jmp x-- count    1 cycle
+;
+; NOTE ON PIN NUMBERING: this program is loaded into a PIO block whose GPIOBASE
+; is 16 (see pio_alloc.h), because GPIO46 is unreachable at base 0. Both `wait
+; ... pin 0` and `jmp pin` resolve through config fields that the SDK translates
+; from ABSOLUTE gpio numbers -- so detect.c passes PIN_D_COMPARATOR (46)
+; unmodified and must NOT pre-subtract the base.
+;
+; NO GLITCH FILTER HERE, DELIBERATELY. U15 has no hysteresis -- there is no
+; resistor from its output back to pin 3 anywhere on the board -- so a slow edge
+; can chatter and produce several pulses per ball. Filtering that in PIO would
+; bake a policy into hardware before the chatter has ever been measured, and
+; would hide the very behaviour Phase 4 exists to characterise. Instead every
+; fragment is pushed, and detect.c coalesces fragments that arrive close
+; together, counting them. The fragment count IS the chatter measurement.
+
+.program detect_transit
+
+.wrap_target
+    wait 0 pin 0          ; start from below threshold, so we cannot latch onto
+                          ; a pulse that was already in progress when we armed
+    wait 1 pin 0          ; rising edge: signal crossed the threshold
+    mov  x, ~null         ; x = 0xffffffff; it counts DOWN
+count:
+    jmp  pin still_high   ; pin still high -> keep counting
+    jmp  done             ; pin low -> the pulse is over
+still_high:
+    jmp  x-- count        ; 2 cycles per iteration with the jmp above
+done:
+    mov  isr, ~x          ; ~(0xffffffff - n) = n, the tick count
+    push noblock          ; noblock: a slow consumer must never stall the timer.
+                          ; A dropped word is a lost pass; a stalled SM would
+                          ; mistime every pass after it.
+.wrap

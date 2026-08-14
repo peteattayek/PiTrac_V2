@@ -19,6 +19,7 @@
 #include "panel.h"
 #include "beam.h"
 #include "detect.h"
+#include "pio_alloc.h"
 #include "cli.h"
 
 #include "pico/stdlib.h"
@@ -71,6 +72,10 @@ int main(void) {
     // that could energise something lands at its safe level here.
     safe_state_init();
 
+    // Before ANY pio_add_program() anywhere: pio_set_gpio_base() refuses once
+    // a block has instructions loaded, and GPIO46 is unreachable at base 0.
+    pio_alloc_init();
+
     stdio_init_all();
 
     adc_engine_init();
@@ -101,6 +106,7 @@ int main(void) {
     for (;;) {
         power_fsm_step();
         cli_service();
+        detect_service();  // drain the PIO transit FIFO and coalesce chatter
         leds_update();     // on-board D5/D6, always-on +3V3
         panel_update();    // off-board J7 indicators, switched +5V
         tight_loop_contents();

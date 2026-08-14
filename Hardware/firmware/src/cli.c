@@ -8,6 +8,7 @@
 #include "panel.h"
 #include "beam.h"
 #include "detect.h"
+#include "pio_alloc.h"
 
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
@@ -80,6 +81,9 @@ static const char *k_help =
     "  hpf track | hpf hold\n"
     "  hpf test [ms]              establish the GPIO33 polarity EMPIRICALLY.\n"
     "                             *** RUN THIS FIRST -- the sense is unverified ***\n"
+    "  detect                     comparator + PIO transit timer status\n"
+    "  detect arm | disarm        start/stop the PIO edge timer (resets counters)\n"
+    "  detect coalesce <us>       chatter-merge window (U15 has no hysteresis)\n"
     "\n"
     "  fault                      show / 'fault clear' (also acks FAULT -> STANDBY)\n"
     "  reset [force]              soft reset. REFUSED while a Pi is powered:\n"
@@ -464,6 +468,46 @@ static void dispatch(int argc, char **argv) {
                detect_comparator() ? "ABOVE threshold" : "below threshold");
         printf("settle %u ms per change (dominant pole 2.62 ms; the 10 ms in the .md is ~4 tau)\n",
                (unsigned)DAC_SETTLE_MS);
+    }
+
+    else if (!strcmp(c, "detect")) {
+        if (argc >= 2 && (!strcmp(argv[1], "arm") || !strcmp(argv[1], "disarm"))) {
+            bool on = (argv[1][0] == 'a');
+            if (!detect_arm(on)) {
+                printf("REFUSED: +5V rail is open (state %s). Use 'on' first.\n",
+                       power_state_name(power_fsm_state()));
+                return;
+            }
+            printf("detect %s\n", on ? "ARMED (counters reset)" : "disarmed");
+            return;
+        }
+        if (argc >= 3 && !strcmp(argv[1], "coalesce")) {
+            detect_set_coalesce_us((uint32_t)strtoul(argv[2], NULL, 0));
+        }
+        printf("detect   : %s   PIO block 2 (GPIOBASE %u) SM %u\n",
+               detect_armed() ? "ARMED" : "disarmed",
+               pio_get_gpio_base(PIO_BLK_HIGH), (unsigned)PIO_SM_DETECT);
+        printf("D_Comparator(46) = %d  (%s)\n", gpio_get(PIN_D_COMPARATOR),
+               detect_comparator() ? "ABOVE threshold" : "below threshold");
+        printf("passes   : %lu     raw FIFO words: %lu\n",
+               (unsigned long)detect_events(), (unsigned long)detect_fragments());
+        printf("coalesce : %lu us  (fragments closer than this are one ball)\n",
+               (unsigned long)detect_coalesce_us());
+        {
+            detect_pass_t p;
+            if (detect_last_pass(&p)) {
+                printf("last     : #%lu at %lu ms  transit %lu us  fragments %u\n",
+                       (unsigned long)p.seq, (unsigned long)p.t_ms,
+                       (unsigned long)p.transit_us, p.fragments);
+                if (p.fragments > 1)
+                    printf("           *** %u fragments -- U15 has no hysteresis, so this\n"
+                           "           transit is a LOWER BOUND (notches excluded), not a\n"
+                           "           measurement. Use the ADC-derived value for this pass.\n",
+                           p.fragments);
+            } else {
+                printf("last     : (none yet)\n");
+            }
+        }
     }
 
     else if (!strcmp(c, "hpf")) {

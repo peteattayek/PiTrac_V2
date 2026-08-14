@@ -127,6 +127,83 @@ void detect_hpf_test(hpf_test_t *out, uint32_t window_ms);
 bool detect_comparator(void);      // true = above threshold (active high)
 
 // ---------------------------------------------------------------------------
+// PIO TRANSIT TIMER  (ARCHITECTURE.md A2)
+//
+// One state machine on the high-bank PIO block (pio_alloc.h) times each HIGH
+// pulse on GPIO46 and pushes its width as one FIFO word. The count loop is
+// exactly 2 cycles per tick, so the SM runs at 2 x DETECT_TICK_HZ.
+//
+// CHATTER AND COALESCING. U15 has no hysteresis, so one ball can produce
+// several pulses as a slow edge crosses the threshold. The PIO pushes every
+// one; detect_service() merges fragments separated by less than
+// DETECT_COALESCE_US into a single pass, spanning from the first rise to the
+// last fall, and records how many fragments it merged.
+//
+// That fragment count is not bookkeeping -- it is the chatter measurement the
+// bench doc's "one clean pulse pair per pass" criterion actually needs, and it
+// is why no filtering happens in the PIO program. Coalescing is a software
+// policy that can be retuned from the CLI after seeing real data; a PIO filter
+// would have to be guessed at before any data existed.
+// ---------------------------------------------------------------------------
+
+#define DETECT_TICK_HZ        1000000u   // 1 tick = 1 us
+#define DETECT_COALESCE_US       2000u   // default; retune from bench data
+
+typedef struct {
+    uint32_t seq;
+    uint32_t t_ms;             // ms since boot, when the pass was closed
+    uint32_t transit_us;       // SUM of the fragments' widths -- see below
+    uint32_t raw_ticks;        // same, in raw PIO ticks, uncorrected
+    uint16_t fragments;        // 1 = clean. >1 = comparator chatter.
+    uint16_t threshold_level;  // DAC level in force at the time
+} detect_pass_t;
+
+// WHAT transit_us MEANS, AND WHEN TO TRUST IT.
+//
+//   fragments == 1  -> transit_us is the PIO's own measurement of the pulse.
+//                      Exact to one tick plus DETECT_PIO_OVERHEAD_TICKS.
+//   fragments > 1   -> transit_us is the SUM of the fragment widths, which
+//                      EXCLUDES the notches between them. It is a LOWER BOUND
+//                      on the true transit, not an estimate of it.
+//
+// The notches cannot be recovered from the arrival times: the RX FIFO is 4 deep
+// and the superloop drains it in one pass, so all fragments of one ball are
+// typically read within microseconds of each other no matter when the edges
+// happened. Reconstructing a span from those timestamps would be fake precision.
+//
+// So a chattered pass has no trustworthy comparator transit, and the honest
+// response is to say so rather than to average through it. Use the ADC-derived
+// transit for those passes -- it works from the bump's own shape and does not
+// care how many times the comparator crossed. Quantifying that disagreement is
+// exactly what the Phase 4 experiment is for.
+//
+// If chatter turns out to be common enough that comparator timing needs to
+// survive it, the fix is in the PIO program, not here: push the LOW interval as
+// a second word so the gaps are measured rather than inferred. That is a real
+// option, deliberately not taken before any chatter has been observed.
+
+// Enable/disable the SM. Refuses to enable unless the +5V rail is up.
+bool     detect_arm(bool on);
+bool     detect_armed(void);
+
+// Drain the PIO FIFO and coalesce. Call from the superloop; cheap when idle.
+void     detect_service(void);
+
+uint32_t detect_events(void);        // completed passes since arm
+uint32_t detect_fragments(void);     // raw FIFO words since arm
+bool     detect_last_pass(detect_pass_t *out);
+
+void     detect_set_coalesce_us(uint32_t us);
+uint32_t detect_coalesce_us(void);
+
+// Fixed overhead of the PIO program in ticks: the prologue between the rising
+// edge being sampled and the first count, plus the epilogue after the fall.
+// Derived from the instruction listing; VERIFY ON THE BENCH against known
+// bit-banged pulse widths before trusting absolute transit numbers. It is a
+// constant offset, so it cancels out of any comparison between two methods.
+#define DETECT_PIO_OVERHEAD_TICKS  2u
+
+// ---------------------------------------------------------------------------
 // THRESHOLD / COMPARATOR CROSS-CALIBRATION  (BENCH_P3_DETECT.md 3.5)
 //
 // Sweep the threshold and find the duty at which D_Comparator flips. That single

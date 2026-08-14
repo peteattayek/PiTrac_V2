@@ -52,11 +52,16 @@ add_executable(pitrac
     src/power_fsm.c
     src/panel.c
     src/beam.c
+    src/pio_alloc.c
     src/detect.c
     src/cli.c
 )
 
 target_include_directories(pitrac PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
+
+# Generated PIO headers land in the build dir, which is already on the include
+# path for this target -> #include "detect.pio.h"
+pico_generate_pio_header(pitrac ${CMAKE_CURRENT_LIST_DIR}/src/detect.pio)
 
 target_link_libraries(pitrac
     pico_stdlib
@@ -66,6 +71,7 @@ target_link_libraries(pitrac
     hardware_pwm
     hardware_gpio
     hardware_watchdog
+    hardware_pio
 )
 
 # stdio on USB only. UART1 goes to the Pi and will carry a framed binary protocol â€”
