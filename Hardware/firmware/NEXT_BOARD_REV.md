@@ -645,3 +645,104 @@ Update `PROGRESS.md` — close Q8 (CR-02), Q9 (CR-03), Q10 (CR-04) and A7 (CR-01
 their measurement rows in §6 to reference the revision they were fixed in. Several bench
 procedures change too; the ones that name specific voltages (2.59 V virtual ground, the 1.063
 ADC scale) are written against **this** board and will be wrong on the next one.
+
+---
+
+## CR-13 — 🔴 U15 has no hysteresis, so the comparator chatters on every slow edge
+
+### Why
+
+`D_Comparator` (U15 pin 1) goes to R103 and GPIO46 and **nowhere else**. There is no
+resistor from the output back to pin 3 anywhere on the board — I enumerated every net that
+touches U15: `D_Comparator`, `Threshold_DC`, `Net-(U12B-OUT2)`, `+5V`, `GND`.
+
+An open-loop comparator with no hysteresis reproduces its input noise as output chatter
+whenever the input crosses the threshold slowly. A ball transit is *milliseconds* wide and
+the signal is band-limited to 15.39 kHz by the LPF, so the edges are about as slow as edges
+get — this is the worst case, not an edge case.
+
+The consequence is not a missed ball. It is that **one ball produces several rising/falling
+pairs**, and the transit between the first rise and the last fall is no longer measurable
+from the edges alone: the notches between fragments are real time that the counter did not
+count, and their widths are not recoverable after the fact.
+
+### Firmware mitigation, already in place
+
+`detect.c` coalesces fragments arriving within a tunable window and reports the **fragment
+count** per pass. A chattered pass reports its comparator transit as an explicit **lower
+bound** rather than pretending to a number it does not have, and the ADC-derived transit —
+which works from the bump's own shape — carries that pass instead.
+
+That is a correct answer, not a workaround: Phase 4 shows the ADC path is the more accurate
+one anyway. But it costs the comparator path's whole reason for existing on those passes,
+which is a ~1 µs deterministic answer with zero CPU.
+
+### The fix
+
+**One resistor from `D_Comparator` back to U15 pin 3.** With `Net-(U12B-OUT2)` driven from
+U12B's output through R101's feedback network, positive feedback of a few tens of mV is
+plenty:
+
+```
+V_hyst ≈ (V_OH − V_OL) × R_src / R_fb
+```
+
+R102 is already 1 k in series to ADC5; sizing R_fb around 1 M against U12B's output
+impedance gives tens of millivolts of hysteresis, comfortably above the noise and far below
+the smallest bump worth detecting. **Size it from the σ that `threshold sweep` measures** —
+the 10–90 % width of the comparator's S-curve is exactly the input-referred noise this has
+to exceed.
+
+⚠ Note U15's output is **open collector** pulled to +3V3 by R103, while pin 3 swings toward
++5VA. The feedback network sees a 3.3 V swing, not 5 V — size against that.
+
+### Priority
+
+🔴 for a board respin. The firmware answer works and Phase 4 may well show the ADC path
+should be primary regardless — but a detector whose fast path is unusable on slow targets is
+carrying a defect, and this is one resistor.
+
+---
+
+## CR-14 — 🟡 U15's input common-mode ceiling is below what U12B can drive
+
+### Why
+
+**U15 (LM393) is powered from `+5V`, the digital rail** — not `+5VA`. Its input common-mode
+range on a 5 V supply reaches only about **V+ − 1.5 V ≈ 3.5 V**.
+
+**U12B (OPA4323) is rail-to-rail on +5VA** and will drive U15 pin 3 to ~5.2 V on a large
+signal. Above ~3.5 V the comparator's inputs are outside their valid range, where LM393
+behaviour is undefined and some parts **invert**.
+
+An inverting comparator mid-transit produces a spurious falling edge, which the firmware
+would see as the ball leaving the beam early — a short transit and an over-estimated speed,
+on exactly the brightest, closest targets where confidence would otherwise be highest.
+
+### What bounds it today
+
+ADC5 saturates at code 4095 (3.3 V) before D14 conducts at ~3.6 V, so **ADC saturation is a
+conservative early warning** that the comparator is approaching its limit — it fires below
+the CM ceiling, from the same sample. `detect_refine()` flags it as `DQ_SATURATED`.
+
+That is a detector, not a fix. It says the measurement is suspect; it does not keep the
+comparator in range.
+
+### The fix, in preference order
+
+1. **Run U15 from +5VA and add a divider or clamp on pin 3** so the input cannot exceed
+   V+ − 1.5 V. Also removes a digital-rail-to-analog-input coupling path that nothing else
+   in the chain has.
+2. **Swap U15 for a rail-to-rail-input comparator** (e.g. TLV3201/TLV7011 class). Cleaner,
+   and would let CR-13's hysteresis resistor be sized without worrying about the input range
+   at the same time.
+3. **Keep the signal small.** Choose the U12B gain so the largest expected return stays under
+   ~3.3 V — which the `cal gain` command already recommends, but it makes the gain choice a
+   safety constraint rather than an SNR optimisation.
+
+### Priority
+
+🟡 — real, but it only bites on large signals, and option 3 avoids it at the cost of
+dynamic range. **Measure the actual ceiling first:** sweep the threshold against signal
+amplitude and find where GPIO46 stops tracking ADC5. That number decides whether this is
+urgent or academic.

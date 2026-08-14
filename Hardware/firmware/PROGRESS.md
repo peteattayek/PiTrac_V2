@@ -239,8 +239,12 @@ See `tools/openocd_pi5.cfg`.
 - [x] **2** Beam carrier + demod phase lock — **COMPLETE 2026-08-13.** 2a all 7 checks
       (scatter 0.15 ticks); 2b ramp + thermals; **2c Q1 = 122.68 µs**; **2d Q2 = no limit
       to 250 kHz**. Carrier stays 104.167 kHz. `board.h` strobe constants 86/73 → 122/100.
-- [ ] **3** Photodiode: static health → phase cal → threshold → `scan carrier` → ball transit
-- [ ] **4** Trigger source experiment (comparator vs. ADC bias table)
+- [~] **3** Photodiode: **FIRMWARE COMPLETE 2026-08-14, builds clean, NOT YET RUN ON HARDWARE.**
+      All of steps 1-7 written: threshold DAC, HPF control + polarity self-test, PIO transit
+      timer, ADC refinement, `cal demod` + phase model, `scan carrier`, flash config.
+      **Bench work not started.** Run `hpf test` first — the GPIO33 polarity is unverified.
+- [~] **4** Trigger source experiment — **firmware complete** (`detect log` / `detect stats`,
+      including the bias-vs-1/peak regression). Bench work not started.
 - [ ] **5** Microphone *(can be pulled forward — runs on USB power alone, no latch needed)*
 - [ ] **6** Strobe: 6a dry → 6b gate DAC → 6c LED bank ramp → 6d clamp-with-current
 - [ ] **7** Cameras: 7a loopback → 7b delayed sim → 7c real (needs Pi)
@@ -303,7 +307,17 @@ See `tools/openocd_pi5.cfg`.
 | 8/13/2026 | **U9 beam one-shot clamp (Q1)** | **122.68 µs** | ✅ **ANSWERED.** Median over 1291 pulses, spread 0.22 µs (0.18 %). **Neither 86 nor 113 µs** — implied K = **0.996**, not the 0.70 assumed. **Concern inverted, and a second problem found:** `STROBE_SW_MAX_US` was **73 µs**, not the 100 µs I had been quoting — *below* the 100 µs that .md §15 needs at 10 m/s, so slow-ball pulses would have been firmware-truncated 27 %. With a 122.7 µs hardware clamp, raised to **100 µs** (18 % margin). Hardware never truncates. Captured on pre-fix fw (2289 Hz, 218 µs commanded — still 1.8x headroom, valid) |
 | | **U5 strobe one-shot clamp** | | **Phase 6a.1. Expect ~122 µs** (identical part+RC to U9: 74LVC1G123, 56K, 2.2nF, BOM-confirmed). Tolerance band **109–136 µs**. **Set `STROBE_SW_MAX_US` from U5, not U9** |
 | 8/13/2026 | **Beam duty fidelity limit (Q2)** | **none up to 250 kHz** | ✅ **ANSWERED.** At 250 kHz: period 4.0 µs, TP5 low 1.2 µs = **exactly 30 %**. Swept 5→250 kHz at 30 % with no degradation. **The reset is active** — ~CLR discharges C57 through an internal low-impedance transistor in ~0.1–0.2 µs, *not* through R68's 123 µs RC, so there was never a real recovery problem. **Carrier design stands; Q3's search space is unconstrained to 250 kHz** |
+| 8/14/2026 | **GPIO36 / GPIO44 PWM slice collision** | **both slice 10A** | 🔴 **Found reading the SDK while writing the threshold DAC.** Same slice AND channel — a fourth pair of the CR-01 kind. `board.h`'s "16 apart" rule is **wrong above GPIO32**, where `slice = 8 + ((gpio>>1)&3)` gives period **8**. Safe today only because GPIO36 stays SIO/UART. **Never put GPIO36 on PWM** or the Pi link and the comparator threshold share one compare register |
+| 8/14/2026 | **GPIO33 not driven low on rail-down** | **fixed** | 🔴 `safe_state.c` handles boot because SEL high into an unpowered U14 back-feeds +5VA — but `hpf track` then `off` walked straight back into it. `PS_FORCE_OFF` now calls `detect_hpf_safe_off()` |
+| 8/14/2026 | **U15 has no hysteresis** | **netlist-confirmed** | 🔴 No resistor from `D_Comparator` to pin 3 anywhere. Chatter on slow edges is a board property → **CR-13**. Firmware counts fragments and reports a lower bound rather than a fake transit |
+| 8/14/2026 | **LM393 CM ceiling vs U12B swing** | **~3.5 V vs ~5.2 V** | 🟡 U15 runs from the **digital** +5 V; U12B is rail-to-rail on +5VA → **CR-14**. ADC5 saturating at 3.3 V is a conservative early warning. **Measure the real ceiling** |
+| 8/14/2026 | **LPF f0 from fitted values** | **15.39 kHz** | 4.7 k / 2.2 nF. The schematic's 15.9 kHz annotation is stale (3 %) |
+| 8/14/2026 | **TP8 settle time** | **2.62 ms dominant pole** | The two RC sections load each other — real poles 2.62 ms and 0.382 ms, not two 1 ms poles. `DAC_SETTLE_MS` = 20 ms. The doc's 10 ms was ~4τ ≈ 20 threshold codes of error |
+| 8/14/2026 | **R98, not R100, is the DNP part** | **gain is continuous** | R98 ∥ R100 from GND to U12B IN−; R100 (2 k) is fitted. Left unpopulated so its **value** could be picked after measuring. `cal gain <peak>` solves it and returns an E24 value |
 | | Chosen carrier frequency | | from `scan carrier` max-SNR (Q3) |
+| | `demod_phase_ticks` | | from `cal demod`. Persisted by `cfg save` |
+| | HPF SEL polarity | | **from `hpf test` — RUN THIS FIRST** |
+| | Beam path width (mm) | | `detect path <mm>`. No velocity is reported until set |
 | | Pi shutdown duration | | **Phase 8.2.** Set `PI_SHUTDOWN_MIN_HOLDOFF_MS` ≈ 2× this. It is 15 s on an assumption today |
 
 > ⚠ **Correction to earlier guidance in this file.** An earlier revision said the
@@ -506,121 +520,65 @@ firmware/
 
 ## 10. Next session — start here
 
-> ### 🔵 RESUME POINT — Phase 3 firmware, 2026-08-14
+> ### 🔵 RESUME POINT — Phase 3 firmware COMPLETE, bench work NOT STARTED (2026-08-14)
 >
-> **Approved plan:** `C:\Users\ATTAYEKP\.claude\plans\great-questions-1-let-s-refactored-kahan.md`
-> — read it first. It carries the full work order, the schematic findings table (F1–F10)
-> and the bench verification sequence.
+> **All Phase 3/4 firmware is written and builds clean. None of it has run on hardware.**
+> Branch `phase3-detection`. Approved plan lives in the user's `.claude/plans/` directory
+> (`great-questions-1-let-s-refactored-kahan.md`).
 >
-> **Build command** (cmake/ninja/gcc are private to the Pico extension, not on PATH):
+> **Build** (the toolchain is private to the Pico extension, not on PATH):
 > ```bash
 > export PATH="$USERPROFILE/.pico-sdk/cmake/v4.3.4/bin:$USERPROFILE/.pico-sdk/ninja/v1.13.2:$USERPROFILE/.pico-sdk/toolchain/15_2_Rel1/bin:$PATH"
 > cmake --build build
 > ```
 >
-> #### ✅ Step 1 COMPLETE and building clean
+> #### New modules
 >
-> - **Beam duty ceiling moved into `beam.c`**, and it is now enforced on **effective duty**
->   — what reaches the LED after U9's 122.68 µs one-shot truncates the high phase — not on
->   commanded duty. That distinction is load-bearing: `beam clamp` (1 kHz / 50 %) gives an
->   effective 12.3 % and must stay legal, while 104 kHz / 50 % gives an effective 50 % and
->   must not. Both `beam_configure()` and `beam_set_duty()` check; `beam_would_exceed_ceiling()`
->   lets the CLI warn before calling. New in `board.h`: `BEAM_ONESHOT_CLAMP_US` (122, U9,
->   measured — deliberately separate from the U5 strobe constants), `BEAM_DUTY_CEILING` 0.35,
->   `BEAM_DUTY_OPERATING` 0.25.
-> - **Stale `PWM_SLICE_*` defines deleted** from `board.h`. Three of four were wrong (the
->   2026-07-31 slice-map correction missed them). Replaced with a comment saying why there
->   are none: slices are resolved at runtime via `pwm_gpio_to_slice_num()`.
-> - **`adc_ring_history()` hardened against the DMA lap.** A full-depth read walks backwards
->   while the DMA writes forwards; they meet, and the tail came back as fresh data wearing an
->   old timestamp. It now measures how far the writer advanced during the copy and returns
->   only the provably-intact prefix. **A short return means "the ring lapped me", not an error.**
->   Callers must ask for the depth they need, not the maximum.
-> - **`HPF_SEL_TRACK` / `HPF_SEL_HOLD` added to `board.h`** — the U14 SEL polarity is
->   **unverified** (the netlist encodes only the pin name) and is now wrapped in one constant.
->   `hpf test` establishes it empirically. Nothing else may compare GPIO33's raw level.
+> | File | What |
+> |---|---|
+> | `src/detect.[ch]` | threshold DAC, HPF control, PIO consumer, ADC refinement, pass log |
+> | `src/detect.pio` | comparator transit timer (A2) |
+> | `src/pio_alloc.[ch]` | PIO block/base map — **the allocation is forced, see A2** |
+> | `src/cal.[ch]` | `cal demod`, phase model, `scan carrier`, R98 selection |
+> | `src/config_store.[ch]` | versioned CRC'd dual-slot flash config |
 >
-> #### ✅ Step 2 COMPLETE and building clean — `src/detect.c` / `detect.h`
+> #### 🔴 THE BENCH ORDER THAT MATTERS
 >
-> New module owning GPIO44, GPIO33 and GPIO46. New CLI: `threshold`, `threshold duty|volts`,
-> `threshold sweep`, `hpf`, `hpf track|hold`, `hpf test`. Wired into `CMakeLists.txt`,
-> `main.c` (`detect_init()` after `beam_init()`) and `cli.c`.
+> 1. **`hpf test` FIRST.** The GPIO33 SEL polarity is a compiled *hypothesis* — the netlist
+>    encodes only the pin name. Everything downstream (3.4, 3.6, and §3.6b's whole
+>    TRACK-vs-HOLD isolation) is wrong if it is inverted. If the test says INVERTED, flip
+>    `HPF_SEL_TRACK` in `board.h` and reflash.
+> 2. **`detect` with the rail up** — confirm GPIO46 reads and the SM arms. If the PIO never
+>    triggers, the fallback is `pio_gpio_init()` + immediate `pindirs = in`; the comment in
+>    `detect_pio_init()` explains why it is omitted.
+> 3. `threshold sweep` — cross-calibrates the DAC against ADC5 and measures GPIO44 crosstalk.
+> 4. §3.6b Q8 rail step — needs step 1 settled first, or it measures the wrong state.
+> 5. `cal model` then `scan carrier` — **warm beam, 25 % duty**, static reflector.
+> 6. §3.7 ramp transits, then `cal gain <peak>` to pick R98.
+> 7. `cfg save` to persist. It refuses unless the machine is quiet — a 4 KB erase blinds the
+>    supply monitor for tens of ms.
 >
-> - **`DAC_SETTLE_MS` = 20 ms**, not the bench doc's 10. The two RC sections load each
->   other, so the real poles are 2.62 ms and 0.382 ms — 10 ms is only ~4τ, leaving ~2 %
->   of a step ≈ 66 mV ≈ 20 threshold codes.
-> - **`hpf test`** decides the GPIO33 polarity from drift: TRACK is pinned to 0 V through
->   R96 2 M and should not move; HOLD floats and walks at ~44 mV/s at ADC5 (≈1 nA leakage
->   into C81 330 nF, ×14.5). Reports CONFIRMED / INVERTED / INCONCLUSIVE, and refuses to
->   guess a polarity from an inconclusive result.
-> - **`threshold sweep`** also reports total ADC5 movement across the sweep = GPIO44
->   crosstalk, and prints the `DAC_TOP` alternatives (2047 → 73 kHz, 511 → 293 kHz).
+> #### Unverified assumptions the firmware makes
 >
-> ##### 🔴 Two hardware findings made during Step 2
+> - **`DETECT_PIO_OVERHEAD_TICKS` = 2** is derived from the instruction listing, never
+>   executed. A constant offset, so it cancels between methods — but verify against known
+>   bit-banged pulse widths before trusting absolute transits.
+> - **PIO can read GPIO46 with FUNCSEL = SIO.** The datasheet says pad inputs reach every
+>   peripheral; not confirmed on this silicon.
+> - **`beam_set_duty(0)` really extinguishes the LED** (compare 0 → no rising edge → U9
+>   never fires) and the demod slice keeps running across a chop. Scope TP5 and GPIO39 once.
+> - **Beam path width is unset**, so no velocity is reported until `detect path <mm>`.
 >
-> 1. **GPIO36 (UART_TX) and GPIO44 (Threshold_PWM) are BOTH PWM slice 10A** — same slice
->    *and* same channel, a fourth collision pair of the CR-01 kind. `board.h`'s "never put
->    two PWM functions on GPIOs 16 apart" rule is **wrong above GPIO32**: there
->    `slice = 8 + ((gpio>>1)&3)`, so the period is **8**, not 16. Full corrected table now
->    in `board.h`. Safe today only because GPIO36 stays SIO/UART — **never put GPIO36 on
->    PWM**, or the Pi link and the comparator threshold become one compare register.
-> 2. **Nothing returned GPIO33 low when the rail dropped.** `safe_state.c` drives it low at
->    boot precisely because SEL high into an unpowered U14 back-feeds +5VA, but an ordinary
->    `hpf track` then `off` walked straight back into it. Fixed: `power_fsm.c` `PS_FORCE_OFF`
->    now calls `detect_hpf_safe_off()`, and `detect_hpf_set()` refuses unless the rail is up.
+> #### Deferred deliberately
 >
-> #### ✅ Step 3 COMPLETE and building clean — PIO comparator transit timer
->
-> `src/detect.pio`, `src/pio_alloc.[ch]`, consumer in `detect.c`. New CLI: `detect`,
-> `detect arm|disarm`, `detect coalesce <us>`.
->
-> - **PIO block allocation is forced, not chosen.** Each block's `GPIOBASE` holds only 0
->   or 16 → a 32-pin window. GPIO46 needs base 16; GPIO4/5/6 (mic) and 8/9/10 (cameras)
->   need base 0. They **cannot share a block** — the SDK returns
->   `PICO_ERROR_BAD_ALIGNMENT`. Map: **PIO0 base 0** (strobe GPIO25 + cameras),
->   **PIO1 base 0** (I²S mic), **PIO2 base 16** (detect). `_Static_assert`s in
->   `pio_alloc.c` catch a pin/block mismatch at compile time.
-> - `pio_set_gpio_base()` **fails once a block has instructions loaded**, so
->   `pio_alloc_init()` runs from `main()` before every other init.
-> - Verified against SDK 2.3.0: `sm_config_set_in_pins()` / `set_jmp_pin()` take
->   **absolute** GPIO numbers; `pio_sm_set_config()` translates via `pinhi`. Pass 46, not 30.
-> - Count loop is **exactly 2 cycles/tick** → SM clocked at 2× the tick rate.
->   150 MHz / 2 MHz = 75, an exact integer divider. Asserted at init, not assumed.
-> - **No glitch filter in the PIO, deliberately.** Every fragment is pushed;
->   `detect_service()` coalesces and *counts* them. The fragment count is the chatter
->   measurement §3.7 actually needs.
-> - **Chattered passes report a lower bound and say so.** `transit_us` sums the fragment
->   widths, excluding notches. Reconstructing the span from FIFO consumption timestamps
->   would be fake precision — the FIFO is 4 deep and drains in one superloop pass, so
->   `now` dates the read, not the edge. Those passes need the ADC-derived transit.
->
-> #### ▶ NEXT: Step 4 — ADC refinement + per-pass log
->
-> 1. **Add `adc_ring_view()` to `adc_engine.[ch]`** — an O(1) zero-copy snapshot
->    (`base`/`mask`/`newest`/`stride`/`rate_hz`) plus an inline accessor. Copying 8192
->    samples costs several hundred µs, which does not fit in the 100–300 µs camera-handshake
->    window the refinement is meant to hide inside. `adc_ring_history()` stays for the
->    waveform ring and bench dumps.
-> 2. **`detect_refine()`** — baseline from well before the rise (not a global min), peak,
->    50 %-of-*own*-peak crossings walked **outward from the peak**, linear interpolation.
->    ⚠ **ADC5 saturates at code 4095 (3.3 V) BEFORE D14 conducts at ~3.6 V** — so clipping
->    shows up as ADC full scale, not as a diode knee. A clipped peak biases the transit
->    **long** (speed under-estimated), which is the **opposite sign** to the comparator's
->    fixed-threshold bias. Flag it; do not average through it.
-> 3. **Per-pass log**: 48 B × 256 = 12 KB, plus 8 decimated waveforms (÷8 with a box
->    average) at 2 KB each. Full waveforms for 60 passes would need 960 KB vs 520 KB SRAM.
-> 4. **`detect stats`** — mean/σ per method per condition, plus the regression of bias
->    against 1/peak. That regression *is* the Phase 4 deliverable.
->
-> ⚠ **`hpf test` must run before any measurement that depends on TRACK vs HOLD**, including
-> §3.6b's Q8 rail-step test. If the polarity is inverted, that test measures the wrong state.
->
-> ⚠ **Step 5 note — chop the beam with `beam_set_duty(0)`, NOT `beam_enable(false)`.**
-> Disabling the slices stops the **demod clock** too, so U13's mux freezes at one sign and
-> the "off" half-cycle is a different circuit, not a dark reference. Compare-0 means the
-> carrier pin never rises, U9 never fires, the LED is dark, and the demod keeps running
-> with phase lock intact. This would have quietly corrupted every differential measurement
-> in `cal demod` and `scan carrier`.
+> - Core 1 is still unused; `detect_service()` runs in the core-0 superloop. A transit is
+>   2–130 ms and the PIO holds the timing regardless of when it is read, so this is fine
+>   until the strobe/camera path exists. **`pico_multicore` is not linked**, which is why
+>   `flash_safe_execute()` takes its simple path — when Phase 6 launches core 1,
+>   `flash_safe_execute_core_init()` must be called on it.
+> - The phase model lives in RAM in `cli.c`; `cfg save` persists its coefficients but
+>   `cfg_init()` does not rehydrate `s_phase_model` from them. Re-run `cal model` after a
+>   reset, or wire that up.
 
 **Phases 0 through 2 are complete.** `BENCH.md` and `BENCH_P2_BEAM.md` are both finished.
 **Reflash first** — eight firmware fixes landed during Phase 2 bring-up (table at the top).

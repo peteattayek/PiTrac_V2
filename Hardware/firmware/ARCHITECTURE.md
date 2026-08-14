@@ -127,7 +127,59 @@ instrument and restores IDLE (and therefore the ring) when it finishes.
 
 ---
 
-### 🟡 A2 — Comparator edge timing should be PIO, not an ISR
+### ✅ A2 — DONE 2026-08-14. Comparator edge timing is a PIO state machine.
+
+`src/detect.pio` + `src/pio_alloc.[ch]`. One SM waits for the rising edge on GPIO46, counts
+at 1 MHz, and pushes the width as a single FIFO word on the fall. The count loop is exactly
+2 cycles per tick, so the SM is clocked at 2 MHz — 150 MHz / 2 MHz = 75, an exact integer
+divider with no fractional-divider jitter on the timebase. Asserted at init rather than
+assumed.
+
+#### The PIO block allocation is forced, not chosen
+
+Each RP2350 PIO block has **one** `GPIOBASE` register holding only 0 or 16
+(`PIO_GPIOBASE_BITS = 0x10`), giving a 32-pin window of GPIO 0–31 or 16–47. Every pin field
+in that block — in/out/set/sideset bases and `jmp pin` — lives inside it.
+
+| Pin | Function | Phase | Compatible base |
+|---|---|---|---|
+| GPIO 4/5/6 | I²S mic | 5 | **0 only** |
+| GPIO 8/9/10 | camera strobe + trigger | 7 | **0 only** |
+| GPIO 25 | Strobe_Pulse | 6 | either |
+| **GPIO 46** | **D_Comparator** | **3/4** | **16 only** |
+
+So the detector **cannot share a block with the cameras or the mic**. This is not a
+performance trade — an allocation that violates it fails to configure, and the SDK returns
+`PICO_ERROR_BAD_ALIGNMENT` from `pio_sm_set_config()`.
+
+| Block | GPIOBASE | SM0 | SM1 |
+|---|---|---|---|
+| PIO0 | 0 | strobe (GPIO25), Ph6 | camera handshake (GPIO8/9/10), Ph7 |
+| PIO1 | 0 | I²S mic (GPIO4/5/6), Ph5 | free |
+| PIO2 | **16** | **detect (GPIO46)** | free |
+
+Two constraints that are easy to violate silently:
+
+1. **`pio_set_gpio_base()` refuses once a block has instructions loaded** — it checks the
+   used-instruction-space mask. Hence one `pio_alloc_init()` from `main()` before every
+   other init. Getting this wrong compiles fine and fails at run time.
+2. **Pin numbers passed to `sm_config_set_in_pins()` / `set_jmp_pin()` are ABSOLUTE.**
+   `pio_sm_set_config()` translates them against the base via the `pinhi` mechanism. Pass
+   46, not 46−16. Verified against SDK 2.3.0.
+
+`pio_alloc.c` carries `_Static_assert`s that each committed pin falls inside its block's
+window, so a future pin move is a compile error rather than a bench mystery.
+
+#### No glitch filter in the PIO, deliberately
+
+U15 has no hysteresis (`NEXT_BOARD_REV.md` CR-13), so slow edges chatter. Filtering in PIO
+would bake a policy into hardware before the chatter had ever been measured, and would hide
+exactly what Phase 4 exists to characterise. Every fragment is pushed; `detect_service()`
+coalesces and **counts** them, and the count is the measurement.
+
+---
+
+### 🟡 A2 (original analysis, retained)
 
 The .md (§13.6) puts a GPIO IRQ on GPIO46 with a RAM-resident handler, ~1–2 µs.
 That works, but a PIO state machine does it strictly better:

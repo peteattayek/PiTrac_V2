@@ -14,14 +14,14 @@ apparatus 3 builds — so they share a document.
 ```
 D12 (36 V bias) → U11A TIA (Rf 470k, 0.47 V/µA, inverting) ────────────→ TP7
      → U13/U12A sign-switching demod (phase-locked to carrier) ────────→ TP10
-     → 4th-order LPF, f0 15.9 kHz, gain 2 ──────────────────────────────→ TP9
-     → C81 + gated HPF (τ 0.66 s, or HOLD) → U12B ×14.5 ───────────────→ ADC5
-     → LM393 vs Threshold_DC (TP8) ────────────────────────────────────→ GPIO46
+     → 4th-order LPF, f0 15.39 kHz, gain 2 ─────────────────────────────→ TP9
+     → C81 330nF + gated HPF (τ 0.66 s, or HOLD) → U12B ×14.5 ─────────→ ADC5
+     → U15 LM393 vs Threshold_DC (TP8) ────────────────────────────────→ GPIO46
 ```
 
 **TP9 is the best single scope point for detection.** A ball transit there is a smooth
 positive bump: amplitude = 2× the TP10 shift, width = the transit time, carrier absent
-(−64 dB), edges shaped by the 15.9 kHz filter.
+(−64 dB), edges shaped by the 15.39 kHz filter.
 
 **Everything from TP6 through TP10 idles at the virtual ground, ≈2.59 V** — that is
 +5VA/2, not a regulated 2.5 V. Ignore every "2.50 V" in the .md (see Q8).
@@ -29,6 +29,45 @@ positive bump: amplitude = 2× the TP10 shift, width = the transit time, carrier
 **ADC5 is different: it idles near 0 V**, because it sits after the AC-coupling capacitor
 and the ×14.5 stage is referenced to *ground*, not to the virtual ground. A 100 mV bump at
 TP9 should appear as ~1.45 V at ADC5.
+
+---
+
+> ## ⚠ Corrections from the netlist, 2026-08-14 — read before starting
+>
+> Reading `THE_SECOND_BOARD_TO_RULE_THEM_ALL` against this document turned up several
+> things it asserts that the board does not do. Two of them change what you do at the bench.
+>
+> | # | This doc said | The board actually does |
+> |---|---|---|
+> | 1 | **R100** is the unpopulated gain option | **R98** is the DNP part. R98 and R100 are a *parallel pair* from GND to U12B's inverting input, and **R100 (2 k) is fitted**. |
+> | 2 | `gpio 33 1` = TRACK | **Unverified.** The netlist encodes only the pin name `SEL`; nothing says which level selects which throw. **Run `hpf test` first.** |
+> | 3 | The R102/D14 clamp is on the threshold node | **It is on ADC5.** `Threshold_DC` has no clamp at all — its only nodes are C76.2, R89.2, TP8.1, U15.2. |
+> | 4 | LPF f0 = 15.9 kHz | **15.39 kHz** from the fitted 4.7 k / 2.2 nF. The annotation was stale. |
+> | 5 | "Settle 10 ms" after a threshold change | **~13 ms is 5τ, use 20 ms.** The two RC sections *load each other*, so the real poles are 2.62 ms and 0.382 ms, not two independent 1 ms poles. 10 ms is ~4τ, leaving ~2 % ≈ 66 mV ≈ 20 threshold codes. |
+> | 6 | (not mentioned) | **U15 has NO HYSTERESIS.** There is no resistor from `D_Comparator` back to pin 3 anywhere on the board. Chatter on a slow edge is expected — see §3.7. |
+> | 7 | (not mentioned) | **The LM393's input common-mode ceiling is ≈ V+ − 1.5 V ≈ 3.5 V**, and U15 runs from the *digital* +5 V. U12B is rail-to-rail on +5VA and can drive pin 3 to ~5.2 V — outside the comparator's valid range on large signals. |
+> | 8 | (not mentioned) | **ADC5 saturates at code 4095 (3.3 V) BEFORE D14 conducts at ~3.6 V.** Clipping appears as ADC full scale, not a diode knee. |
+>
+> ### The gain option, correctly stated
+>
+> R98 was left unpopulated so its **value** could be chosen after measuring the real signal —
+> so gain is a continuous knob, not an on/off choice:
+>
+> ```
+> G = 1 + R101 / (R100 ∥ R98)        R101 = 27 k, R100 = 2 k
+> ```
+>
+> | R98 | R100 ∥ R98 | Gain | ΔTP9 at clip |
+> |---|---|---|---|
+> | absent | 2.00 k | **14.5** | 228 mV |
+> | 10 k | 1.67 k | 17.2 | 192 mV |
+> | 4.7 k | 1.40 k | 20.2 | 163 mV |
+> | 2 k | 1.00 k | 28.0 | 118 mV |
+> | 1 k | 667 Ω | 41.5 | 80 mV |
+>
+> **Measure at the as-built ×14.5 first**, then `cal gain <peak>` solves backwards and prints
+> the nearest E24 value. Set gain from the *weakest* target that must still trigger; the
+> ceiling comes from the strongest, and is `min(ADC 3.3 V, LM393 CM ≈ 3.5 V)`.
 
 ---
 
@@ -106,7 +145,7 @@ the fault: TP7 off alone → servo or bias; TP9 ≠ TP10 → an LPF stage.
 ## 3.3 Beam ON, no target
 
 ```
-beam duty 30
+beam duty 25          # NOT 30 -- CR-12: 30 % puts T_j at 123-133 C vs 145 max
 beam on
 ```
 
@@ -143,8 +182,18 @@ cycles. That differential ∝ cos(phase error), and it rejects ambient drift for
 
 Sweep `beam phase` in TOP/64 ≈ 22-tick steps across 0..1439, take the argmax.
 
-*(Firmware helper `cal demod` is not written yet — it lands with the Phase 3 code. Until
-then this is doable by hand: `beam off` / `beam on` with `capture 0x20 …` either side.)*
+✅ **`cal demod` now does this.** It chops, sweeps 64 phase points, and fits a cosine via the
+fundamental DFT bin rather than taking the grid argmax — using all 64 points instead of one,
+immune to a single noisy sample, and sub-step in resolution. It also computes |H2|/|H1| and
+**refuses to commit a phase when that exceeds 0.25**, because a response that is not a clean
+cosine is not a lock-in response.
+
+⚠ **The chop uses `beam_set_duty(0)`, never `beam_enable(false)`.** Disabling the slices
+stops the *demodulator clock* too, so U13's mux freezes at one sign and the "off" half-cycle
+is a different circuit rather than a dark reference. If you chop by hand, chop the duty.
+
+⚠ **Chop at 20 Hz, not 5.** With τ = 0.66 s a 100 ms half-cycle droops 14 %; 25 ms droops
+3.7 % and is still 80× above the HPF corner.
 
 ### Method B (quick): frozen HPF
 
@@ -161,12 +210,16 @@ Record `demod_phase_ticks` in `PROGRESS.md` §6.
 ## 3.5 Threshold DAC and comparator cross-calibration
 
 Threshold_PWM (GPIO44) → two 1 ms RC poles → Threshold_DC at **TP8** = 3.3 V × duty.
-Use TOP = 1023 → 146.5 kHz, 3.2 mV steps. Settle 10 ms after any change.
+Use TOP = 1023 → 146.5 kHz, 3.2 mV steps. **Settle 20 ms after any change, not 10.**
+The two RC sections load each other, so the real poles are 2.62 ms and 0.382 ms rather than
+two independent 1 ms poles; 10 ms is only ~4τ and leaves ~2 % of a step, about 20 codes.
+`threshold sweep` uses `DAC_SETTLE_MS` and gets this right for you.
 
 **Self-test needing no external gear:** sweep the threshold duty while watching ADC5 and
 GPIO46 together, and find the duty where D_Comparator flips. That single measurement
-cross-calibrates the threshold DAC against the ADC5 scale and proves both paths including
-the R102/D14 clamp.
+cross-calibrates the threshold DAC against the ADC5 scale and proves both paths.
+(The R102/D14 clamp is on **ADC5**, not on the threshold node — `Threshold_DC` has no clamp
+at all. So the sweep exercises the ADC path's protection, not the threshold's.)
 
 **Watch for:** the 146.5 kHz DAC carrier is only 42 kHz from the 104.17 kHz optical
 carrier. The two 1 ms RC poles attenuate it by ~120 dB so nothing should escape the node,
@@ -240,13 +293,15 @@ so the vulnerable state is exactly the operating state.
 
 ### The test
 
-Use the beam as the load step — at 30 % duty it is ~0.95 A, the largest thing you can switch.
+Use the beam as the load step — at 25 % duty it is ~0.79 A, the largest thing you can safely
+switch for a sustained test. (30 % is a bigger step but is not a sustainable operating
+point; see CR-12.)
 **No target present**, so the only optical change is crosstalk.
 
 ```
 on
 beam freq 104166
-beam duty 30
+beam duty 25          # NOT 30 -- see CR-12
 adcmode idle
 gpio 33 1          # HPF TRACK
 ```
@@ -310,13 +365,29 @@ repeatability you cannot measure.
 Set `v_min` to 0.3 m/s for bench work — the production 2.0 m/s rejects everything you can
 do by hand or ramp.
 
-**Log per pass:** comparator rise/fall timestamps, transit µs, computed v, and the ADC5
-waveform.
+**Log per pass:** `detect log` gives CSV of every pass — comparator transit, ADC transit,
+peak, baseline, asymmetry, fragment count, quality flags. `detect wave` dumps the retained
+waveform for the last few passes (4 are kept, decimated ×8; full waveforms for 60 passes
+would need 960 KB against 520 KB of SRAM).
+
+```
+detect path <mm>       # beam width. NO VELOCITY IS REPORTED UNTIL THIS IS SET --
+                       # a speed from a guessed geometry looks authoritative and is wrong.
+detect cond 0          # tag the condition before each block of 20 passes
+detect arm
+```
 
 ### Exit criteria
 - TP9 shows a clean smooth positive bump per pass
-- D_Comparator gives one clean pulse pair per pass, no chatter
 - Computed speed matches the ramp prediction within a few percent
+- ⚠ **"One clean pulse pair, no chatter" may not be achievable, and that is not a firmware
+  bug.** U15 has no hysteresis, so a slow-slewing edge can cross the threshold several
+  times. `detect` reports a **fragment count** per pass — that count *is* the chatter
+  measurement. A chattered pass reports its comparator transit as a **lower bound** (the
+  sum of fragment widths, excluding the notches) and says so, because the gaps cannot be
+  recovered from FIFO arrival times. Use the ADC-derived transit for those passes.
+- If chatter is bad enough to matter, the options are `detect coalesce` (software merge),
+  a PIO change to measure the notch widths, or the board fix in `NEXT_BOARD_REV.md` CR-13.
 
 ---
 
@@ -385,7 +456,14 @@ three conditions:
 
 For each pass log **both** the comparator-derived and ADC-derived transit.
 
-**Deliverable:** a table of mean and σ per method per condition, plus the measured
-amplitude-dependent bias of the comparator method. That table decides the final design —
+**Deliverable:** `detect stats` computes this on the board — mean and σ per method per
+condition, and then regresses bias against 1/peak across the three conditions. **That slope
+is the amplitude-dependent bias**, stated as a number rather than eyeballed from a table.
+
+⚠ **Saturated passes bias the ADC method the OPPOSITE way.** A clipped peak makes the 50 %
+level too low, so the transit reads long and the speed low — while the comparator's bias
+reads the transit short and the speed high. So a saturated pass brackets the truth rather
+than being useless, but silently mixing them in would flatten the very slope being measured.
+`detect stats` counts them separately; watch that column. That table decides the final design —
 and if the bias turns out negligible at your geometry, you get to simplify and drop the
 ADC refinement.
