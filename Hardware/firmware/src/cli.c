@@ -10,6 +10,7 @@
 #include "detect.h"
 #include "pio_alloc.h"
 #include "cal.h"
+#include "config_store.h"
 
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
@@ -477,6 +478,61 @@ static void dispatch(int argc, char **argv) {
                detect_comparator() ? "ABOVE threshold" : "below threshold");
         printf("settle %u ms per change (dominant pole 2.62 ms; the 10 ms in the .md is ~4 tau)\n",
                (unsigned)DAC_SETTLE_MS);
+    }
+
+    else if (!strcmp(c, "cfg")) {
+        if (argc >= 2 && !strcmp(argv[1], "save")) {
+            // Snapshot the live values that other modules own.
+            pitrac_cfg_t *m = cfg_mut();
+            m->demod_phase_ticks  = beam_phase_ticks();
+            m->carrier_hz         = beam_actual_freq_hz();
+            m->threshold_level    = detect_threshold_level();
+            m->detect_coalesce_us = (uint16_t)detect_coalesce_us();
+            m->adc5v_scale        = adc_get_5vin_scale();
+            m->path_mm            = detect_path_mm();
+            if (s_phase_model.valid) {
+                m->phase_a0 = s_phase_model.a0;
+                m->phase_a1 = s_phase_model.a1;
+                m->phase_a2 = s_phase_model.a2;
+                m->phase_f_lo = s_phase_model.f_lo;
+                m->phase_f_hi = s_phase_model.f_hi;
+                m->phase_pure_delay = s_phase_model.pure_delay ? 1 : 0;
+            }
+            const char *why = cfg_save_blocked_reason();
+            if (why) {
+                printf("REFUSED: %s.\n", why);
+                printf("  A 4 KB erase holds interrupts off for tens of ms, and during that\n"
+                       "  window the power FSM does not run -- so the V5_MIN_SUSTAINED monitor\n"
+                       "  is blind. That is the monitor that stops a Pi being fed through a\n"
+                       "  1 A diode. Quiesce first.\n");
+                return;
+            }
+            printf("%s\n", cfg_save() ? "saved" : "SAVE FAILED (readback did not verify)");
+            return;
+        }
+        if (argc >= 2 && !strcmp(argv[1], "default")) {
+            cfg_defaults(cfg_mut()); printf("in-RAM config reset to defaults ('cfg save' to commit)\n"); return;
+        }
+        {
+            const pitrac_cfg_t *k = cfg();
+            printf("source   : %s   seq %lu   v%u\n", cfg_source(),
+                   (unsigned long)k->seq, k->version);
+            printf("carrier  : %lu Hz   phase %ld ticks\n",
+                   (unsigned long)k->carrier_hz, (long)k->demod_phase_ticks);
+            printf("threshold: level %u    coalesce %u us\n",
+                   k->threshold_level, k->detect_coalesce_us);
+            printf("adc5v    : scale %.4f\n", (double)k->adc5v_scale);
+            printf("u12b gain: %.1f    path %.2f mm%s\n", (double)k->u12b_gain,
+                   (double)k->path_mm, k->path_mm > 0.0f ? "" : "  (unset: no velocity)");
+            printf("hpf sel  : %s\n", k->hpf_sel_track == 0xff
+                   ? "NEVER MEASURED -- run 'hpf test'"
+                   : (k->hpf_sel_track ? "TRACK = 1" : "TRACK = 0"));
+            printf("phase mdl: %s\n", k->phase_f_hi
+                   ? (k->phase_pure_delay ? "fitted, pure delay" : "fitted, dispersive")
+                   : "not fitted");
+            const char *why = cfg_save_blocked_reason();
+            printf("save     : %s\n", why ? why : "permitted now");
+        }
     }
 
     else if (!strcmp(c, "cal")) {

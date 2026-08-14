@@ -55,6 +55,7 @@ add_executable(pitrac
     src/pio_alloc.c
     src/detect.c
     src/cal.c
+    src/config_store.c
     src/cli.c
 )
 
@@ -73,6 +74,8 @@ target_link_libraries(pitrac
     hardware_gpio
     hardware_watchdog
     hardware_pio
+    hardware_flash
+    pico_flash
 )
 
 # stdio on USB only. UART1 goes to the Pi and will carry a framed binary protocol â€”

@@ -20,6 +20,7 @@
 #include "beam.h"
 #include "detect.h"
 #include "pio_alloc.h"
+#include "config_store.h"
 #include "cli.h"
 
 #include "pico/stdlib.h"
@@ -80,6 +81,10 @@ int main(void) {
 
     adc_engine_init();
     adc_engine_set_mode(ADC_MODE_IDLE);
+
+    // After adc_engine_init() (it pushes adc5v_scale back) and before the
+    // modules that consume calibration.
+    cfg_init();
 
     power_fsm_init();
     panel_init();
