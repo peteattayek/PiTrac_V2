@@ -569,19 +569,58 @@ firmware/
 >    `hpf track` then `off` walked straight back into it. Fixed: `power_fsm.c` `PS_FORCE_OFF`
 >    now calls `detect_hpf_safe_off()`, and `detect_hpf_set()` refuses unless the rail is up.
 >
-> #### ▶ NEXT: Step 3 — `src/detect.pio` + `src/pio_alloc.[ch]`
+> #### ✅ Step 3 COMPLETE and building clean — PIO comparator transit timer
 >
-> PIO comparator edge timing (ARCHITECTURE.md A2). **The block allocation is forced, not
-> chosen:** `pio_set_gpio_base()` is per-PIO-instance and takes only 0 or 16, so GPIO46
-> (needs base 16) and the strobe/camera pins GPIO8/9/10/25 (need base 0) **cannot share a
-> block**. Plan: PIO0 base 0 (strobe + camera), PIO1 base 0 (I²S mic), PIO2 base 16 (detect).
-> `pio_set_gpio_base()` **fails once any program is loaded into that block**, so a single
-> `pio_alloc_init()` must run from `main()` before every other init that touches PIO.
-> Glitch reject implemented but **default OFF** — the first bench run should show raw
-> comparator behaviour, since U15 has no hysteresis and chatter is what Phase 4 characterises.
+> `src/detect.pio`, `src/pio_alloc.[ch]`, consumer in `detect.c`. New CLI: `detect`,
+> `detect arm|disarm`, `detect coalesce <us>`.
+>
+> - **PIO block allocation is forced, not chosen.** Each block's `GPIOBASE` holds only 0
+>   or 16 → a 32-pin window. GPIO46 needs base 16; GPIO4/5/6 (mic) and 8/9/10 (cameras)
+>   need base 0. They **cannot share a block** — the SDK returns
+>   `PICO_ERROR_BAD_ALIGNMENT`. Map: **PIO0 base 0** (strobe GPIO25 + cameras),
+>   **PIO1 base 0** (I²S mic), **PIO2 base 16** (detect). `_Static_assert`s in
+>   `pio_alloc.c` catch a pin/block mismatch at compile time.
+> - `pio_set_gpio_base()` **fails once a block has instructions loaded**, so
+>   `pio_alloc_init()` runs from `main()` before every other init.
+> - Verified against SDK 2.3.0: `sm_config_set_in_pins()` / `set_jmp_pin()` take
+>   **absolute** GPIO numbers; `pio_sm_set_config()` translates via `pinhi`. Pass 46, not 30.
+> - Count loop is **exactly 2 cycles/tick** → SM clocked at 2× the tick rate.
+>   150 MHz / 2 MHz = 75, an exact integer divider. Asserted at init, not assumed.
+> - **No glitch filter in the PIO, deliberately.** Every fragment is pushed;
+>   `detect_service()` coalesces and *counts* them. The fragment count is the chatter
+>   measurement §3.7 actually needs.
+> - **Chattered passes report a lower bound and say so.** `transit_us` sums the fragment
+>   widths, excluding notches. Reconstructing the span from FIFO consumption timestamps
+>   would be fake precision — the FIFO is 4 deep and drains in one superloop pass, so
+>   `now` dates the read, not the edge. Those passes need the ADC-derived transit.
+>
+> #### ▶ NEXT: Step 4 — ADC refinement + per-pass log
+>
+> 1. **Add `adc_ring_view()` to `adc_engine.[ch]`** — an O(1) zero-copy snapshot
+>    (`base`/`mask`/`newest`/`stride`/`rate_hz`) plus an inline accessor. Copying 8192
+>    samples costs several hundred µs, which does not fit in the 100–300 µs camera-handshake
+>    window the refinement is meant to hide inside. `adc_ring_history()` stays for the
+>    waveform ring and bench dumps.
+> 2. **`detect_refine()`** — baseline from well before the rise (not a global min), peak,
+>    50 %-of-*own*-peak crossings walked **outward from the peak**, linear interpolation.
+>    ⚠ **ADC5 saturates at code 4095 (3.3 V) BEFORE D14 conducts at ~3.6 V** — so clipping
+>    shows up as ADC full scale, not as a diode knee. A clipped peak biases the transit
+>    **long** (speed under-estimated), which is the **opposite sign** to the comparator's
+>    fixed-threshold bias. Flag it; do not average through it.
+> 3. **Per-pass log**: 48 B × 256 = 12 KB, plus 8 decimated waveforms (÷8 with a box
+>    average) at 2 KB each. Full waveforms for 60 passes would need 960 KB vs 520 KB SRAM.
+> 4. **`detect stats`** — mean/σ per method per condition, plus the regression of bias
+>    against 1/peak. That regression *is* the Phase 4 deliverable.
 >
 > ⚠ **`hpf test` must run before any measurement that depends on TRACK vs HOLD**, including
 > §3.6b's Q8 rail-step test. If the polarity is inverted, that test measures the wrong state.
+>
+> ⚠ **Step 5 note — chop the beam with `beam_set_duty(0)`, NOT `beam_enable(false)`.**
+> Disabling the slices stops the **demod clock** too, so U13's mux freezes at one sign and
+> the "off" half-cycle is a different circuit, not a dark reference. Compare-0 means the
+> carrier pin never rises, U9 never fires, the LED is dark, and the demod keeps running
+> with phase lock intact. This would have quietly corrupted every differential measurement
+> in `cal demod` and `scan carrier`.
 
 **Phases 0 through 2 are complete.** `BENCH.md` and `BENCH_P2_BEAM.md` are both finished.
 **Reflash first** — eight firmware fixes landed during Phase 2 bring-up (table at the top).
