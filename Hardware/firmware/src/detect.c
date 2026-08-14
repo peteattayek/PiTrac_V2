@@ -148,12 +148,243 @@ bool detect_last_pass(detect_pass_t *out) {
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Pass log and waveform ring
+// ---------------------------------------------------------------------------
+
+static detect_pass_t s_log[DETECT_LOG_N];
+static size_t   s_log_n, s_log_head;      // ring; head = next write slot
+static detect_wave_t s_wave[DETECT_WAVE_N];
+static size_t   s_wave_head, s_wave_n;
+static float    s_path_mm;
+static uint8_t  s_condition;
+
+void    detect_set_path_mm(float mm) { s_path_mm = (mm > 0.0f) ? mm : 0.0f; }
+float   detect_path_mm(void)         { return s_path_mm; }
+void    detect_set_condition(uint8_t c) { s_condition = c; }
+uint8_t detect_condition(void)       { return s_condition; }
+
+size_t detect_log_count(void) { return s_log_n; }
+
+const detect_pass_t *detect_log_at(size_t i) {
+    if (i >= s_log_n) return NULL;
+    size_t oldest = (s_log_n == DETECT_LOG_N) ? s_log_head : 0;
+    return &s_log[(oldest + i) % DETECT_LOG_N];
+}
+
+void detect_log_clear(void) { s_log_n = s_log_head = 0; s_wave_n = s_wave_head = 0; }
+
+const detect_wave_t *detect_wave_recent(size_t i) {
+    if (i >= s_wave_n) return NULL;
+    return &s_wave[(s_wave_head + DETECT_WAVE_N - 1u - i) % DETECT_WAVE_N];
+}
+
+const detect_wave_t *detect_wave_for(uint32_t seq) {
+    for (size_t i = 0; i < s_wave_n; i++)
+        if (s_wave[i].pass_seq == seq) return &s_wave[i];
+    return NULL;
+}
+
+static void log_append(const detect_pass_t *p) {
+    s_log[s_log_head] = *p;
+    s_log_head = (s_log_head + 1u) % DETECT_LOG_N;
+    if (s_log_n < DETECT_LOG_N) s_log_n++;
+}
+
+// ---------------------------------------------------------------------------
+// detect_refine -- pull the bump back out of the ring and measure it by its own
+// shape rather than against a fixed threshold.
+// ---------------------------------------------------------------------------
+
+static uint16_t refine(detect_pass_t *p, uint32_t cmp_transit_us) {
+    adc_ring_view_t v;
+    if (!adc_ring_view(ADC_CH_DETECT, &v) || v.rate_hz == 0) return DQ_NO_ADC;
+
+    p->adc_rate_khz = (uint16_t)(v.rate_hz / 1000u);
+
+    size_t depth   = adc_ring_depth();
+    size_t n_span  = (size_t)(((uint64_t)cmp_transit_us * v.rate_hz) / 1000000u);
+    if (n_span < 4) n_span = 4;
+
+    // Search window: the transit plus 50 % guard either side. k grows backwards
+    // in time and the fall just happened, so the bump occupies roughly
+    // k = 0 .. n_span, and the pre-bump baseline sits beyond that.
+    size_t guard  = n_span / 2u;
+    size_t k_hi   = n_span + guard;                 // oldest index of the bump
+    size_t base_k = k_hi + n_span;                  // baseline region, well before
+    size_t base_n = 256;
+
+    uint16_t q = DQ_OK;
+    if (base_k + base_n >= depth) {
+        // The bump plus its baseline does not fit in the 32.8 ms the ring holds.
+        // Below about 1.4 m/s this is expected -- use `capture` for those.
+        q |= DQ_WINDOW_CLIP;
+        if (k_hi >= depth) k_hi = depth ? depth - 1u : 0u;
+        base_k = k_hi;
+        base_n = (depth > k_hi + 1u) ? (depth - k_hi - 1u) : 1u;
+        if (base_n > 256) base_n = 256;
+    }
+
+    // Baseline from BEFORE the bump, not a global minimum. ADC5 idles near 0 V
+    // but wanders in TRACK and drifts in HOLD, so a global min would sit below
+    // the local baseline and push the 50 % level down.
+    uint32_t sum = 0;
+    for (size_t i = 0; i < base_n; i++) sum += adc_ring_view_at(&v, base_k + i);
+    uint16_t baseline = (uint16_t)(sum / (base_n ? base_n : 1u));
+
+    // Peak over the window.
+    uint16_t peak = 0; size_t peak_k = 0; uint16_t sat = 0;
+    for (size_t k = 0; k <= k_hi; k++) {
+        uint16_t s = adc_ring_view_at(&v, k);
+        if (s >= DETECT_SAT_CODE) sat++;
+        if (s > peak) { peak = s; peak_k = k; }
+    }
+    if (sat >= 2) q |= DQ_SATURATED;
+
+    p->adc_baseline    = baseline;
+    p->adc_peak        = (peak > baseline) ? (uint16_t)(peak - baseline) : 0u;
+    p->adc_sat_samples = sat;
+
+    if (peak <= baseline + 8u) return q | DQ_NO_CROSSING;   // no bump worth measuring
+
+    // 50 % of the bump's OWN amplitude. Using (peak - baseline) is what makes
+    // this independent of both amplitude and baseline drift.
+    uint16_t half = (uint16_t)(baseline + (peak - baseline) / 2u);
+
+    // Walk OUTWARD from the peak in both directions. Outward rather than inward
+    // from the window edges, so a noise spike elsewhere cannot capture the
+    // crossing and shorten the transit.
+    size_t rise_k = 0; bool rise_ok = false;
+    for (size_t k = peak_k; k <= k_hi; k++) {          // backwards in time
+        if (adc_ring_view_at(&v, k) < half) { rise_k = k; rise_ok = true; break; }
+    }
+    size_t fall_k = 0; bool fall_ok = false;
+    for (size_t k = peak_k + 1; k-- > 0; ) {           // forwards in time
+        if (adc_ring_view_at(&v, k) < half) { fall_k = k; fall_ok = true; break; }
+        if (k == 0) break;
+    }
+    if (!rise_ok || !fall_ok) return q | DQ_NO_CROSSING;
+
+    // Linear interpolation between the straddling pair, in units of samples.
+    // At 250 ksps this turns 4 us of granularity into well under 1 us on a
+    // smooth edge -- and the LPF guarantees the edge is smooth.
+    float rise_f = (float)rise_k, fall_f = (float)fall_k;
+    {
+        uint16_t a = adc_ring_view_at(&v, rise_k);        // below half
+        uint16_t b = adc_ring_view_at(&v, rise_k - 1u);   // above half
+        if (b > a) rise_f = (float)rise_k - (float)(half - a) / (float)(b - a);
+    }
+    {
+        uint16_t a = adc_ring_view_at(&v, fall_k);        // below half
+        uint16_t b = adc_ring_view_at(&v, fall_k + 1u);   // above half
+        if (b > a) fall_f = (float)fall_k + (float)(half - a) / (float)(b - a);
+    }
+
+    float span_samples = rise_f - fall_f;
+    if (span_samples <= 0.0f) return q | DQ_NO_CROSSING;
+
+    p->adc_transit_ns = (uint32_t)(span_samples * 1.0e9f / (float)v.rate_hz);
+
+    // Asymmetry: a real ball bump is near-symmetric after a 4th-order LPF; a
+    // hand or an insect is not. Free pulse-shape validation, and the number a
+    // later rejection rule would key on.
+    float mid = (rise_f + fall_f) * 0.5f;
+    p->adc_asym_q8 = (int16_t)(((mid - (float)peak_k) / span_samples) * 256.0f);
+
+    // Only now ask whether the DMA lapped us mid-analysis. If it did, every
+    // number above is suspect and the honest answer is to say so.
+    if (!adc_ring_view_valid(&v, base_k + base_n)) q |= DQ_RING_LAPPED;
+
+    // Snapshot a decimated waveform for the most recent few passes.
+    if (!(q & DQ_RING_LAPPED)) {
+        detect_wave_t *w = &s_wave[s_wave_head];
+        size_t want = k_hi + 1u;
+        size_t dec  = (want + DETECT_WAVE_LEN - 1u) / DETECT_WAVE_LEN;
+        if (dec < DETECT_WAVE_DECIM) dec = DETECT_WAVE_DECIM;
+        size_t out = 0;
+        for (size_t k = 0; k + dec <= want && out < DETECT_WAVE_LEN; k += dec) {
+            uint32_t acc = 0;
+            for (size_t j = 0; j < dec; j++) acc += adc_ring_view_at(&v, k + j);
+            // Newest-first in the ring; store oldest-first so it plots as time.
+            w->s[out++] = (uint16_t)(acc / dec);
+        }
+        for (size_t a = 0, b = out ? out - 1u : 0u; a < b; a++, b--) {
+            uint16_t t = w->s[a]; w->s[a] = w->s[b]; w->s[b] = t;
+        }
+        w->pass_seq = p->seq;
+        w->len      = (uint16_t)out;
+        w->rate_hz  = (uint32_t)(v.rate_hz / dec);
+        w->baseline = baseline;
+        w->peak_idx = (uint16_t)(out ? (out - 1u - (peak_k / dec)) : 0u);
+        s_wave_head = (s_wave_head + 1u) % DETECT_WAVE_N;
+        if (s_wave_n < DETECT_WAVE_N) s_wave_n++;
+    }
+    return q;
+}
+
 static void close_pass(void) {
     if (!s_frag_open) return;
     s_frag_open = false;
+
+    s_building.condition = s_condition;
+    if (s_building.fragments > 1) s_building.quality |= DQ_CHATTER;
+    s_building.quality |= refine(&s_building, s_building.transit_us);
+
     s_last      = s_building;
     s_have_last = true;
     s_events++;
+    log_append(&s_last);
+}
+
+// ---------------------------------------------------------------------------
+
+bool detect_stats(uint8_t condition, detect_stats_t *out) {
+    if (!out) return false;
+    *out = (detect_stats_t){0};
+
+    // Two passes: means, then standard deviations. Two passes rather than the
+    // sum-of-squares shortcut because these are ~10^4 us values whose spread is
+    // ~10 us, and Sum(x^2) - n*mean^2 cancels to nearly nothing in float.
+    double cs = 0, as = 0, ps = 0;
+    for (size_t i = 0; i < s_log_n; i++) {
+        const detect_pass_t *p = detect_log_at(i);
+        if (p->condition != condition) continue;
+        if (p->quality & DQ_SATURATED) out->n_saturated++;
+        if (p->quality & DQ_CHATTER)   out->n_chatter++;
+        // Exclusions are about whether the ADC number is usable at all.
+        // Saturated passes stay IN: their bias has the opposite sign, so they
+        // bracket the truth rather than being noise -- but they are counted so
+        // the operator can see them.
+        if (p->quality & (DQ_NO_CROSSING | DQ_WINDOW_CLIP | DQ_RING_LAPPED | DQ_NO_ADC)
+            || p->adc_transit_ns == 0) { out->n_excluded++; continue; }
+        out->n++;
+        cs += p->transit_us;
+        as += p->adc_transit_ns / 1000.0;
+        ps += p->adc_peak;
+    }
+    if (out->n == 0) return false;
+
+    out->cmp_mean_us = (float)(cs / out->n);
+    out->adc_mean_us = (float)(as / out->n);
+    out->peak_mean   = (float)(ps / out->n);
+
+    double cv = 0, av = 0;
+    for (size_t i = 0; i < s_log_n; i++) {
+        const detect_pass_t *p = detect_log_at(i);
+        if (p->condition != condition) continue;
+        if (p->quality & (DQ_NO_CROSSING | DQ_WINDOW_CLIP | DQ_RING_LAPPED | DQ_NO_ADC)
+            || p->adc_transit_ns == 0) continue;
+        double d1 = (double)p->transit_us - out->cmp_mean_us;
+        double d2 = (p->adc_transit_ns / 1000.0) - out->adc_mean_us;
+        cv += d1 * d1; av += d2 * d2;
+    }
+    if (out->n > 1) {
+        out->cmp_sd_us = (float)sqrt(cv / (out->n - 1));
+        out->adc_sd_us = (float)sqrt(av / (out->n - 1));
+    }
+    out->bias = (out->adc_mean_us > 0.0f)
+              ? (out->cmp_mean_us / out->adc_mean_us - 1.0f) : 0.0f;
+    return true;
 }
 
 void detect_service(void) {
@@ -197,6 +428,8 @@ void detect_service(void) {
             s_building.raw_ticks       = ticks;
             s_building.fragments       = 1;
             s_building.threshold_level = s_thr_level;
+            s_building.quality         = DQ_OK;
+            s_building.adc_transit_ns  = 0;
             s_frag_open = true;
         }
         s_frag_last_end_us = now;

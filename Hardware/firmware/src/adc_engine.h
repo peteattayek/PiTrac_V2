@@ -94,6 +94,51 @@ size_t adc_ring_history(unsigned chan, uint16_t *dst, size_t n);
 bool adc_ring_running(void);
 
 // ---------------------------------------------------------------------------
+// ZERO-COPY RING ACCESS
+//
+// adc_ring_history() copies, and copying is too slow for the firing path: 8192
+// samples of strided modular indexing costs several hundred microseconds, and
+// the whole point of doing the ADC refinement during the camera handshake is
+// that it has to fit inside a 100-300 us window.
+//
+// This is the same data with no copy at all -- an O(1) snapshot of where the
+// ring currently is, plus an inline accessor. Analysis reads samples in place.
+//
+// THE SNAPSHOT GOES STALE. The DMA keeps writing, so a view taken now describes
+// a ring that is being overwritten from the oldest end. Call
+// adc_ring_view_valid() with the oldest index you actually touched, AFTER the
+// analysis, and discard the result if it returns false. That is the honest
+// guard; there is no way to make the read atomic.
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    const uint16_t *base;
+    size_t          mask;      // ADC_RING_SAMPLES - 1
+    size_t          newest;    // raw ring index of the newest sample of `chan`
+    unsigned        stride;    // round-robin channel count
+    uint32_t        rate_hz;   // PER-CHANNEL sample rate in the current mode
+} adc_ring_view_t;
+
+// false if the ring is stopped or `chan` is not in the current round-robin set.
+bool adc_ring_view(unsigned chan, adc_ring_view_t *v);
+
+// k = 0 is the newest sample of the channel; k increases backwards in time.
+static inline uint16_t adc_ring_view_at(const adc_ring_view_t *v, size_t k) {
+    return v->base[(v->newest - k * v->stride) & v->mask] & 0x0FFFu;
+}
+
+// Has the DMA lapped far enough to have overwritten sample `oldest_k`?
+bool adc_ring_view_valid(const adc_ring_view_t *v, size_t oldest_k);
+
+// Per-channel sample rate for the current mode: 125k IDLE, 250k ARMED, 500k
+// BURST. Recorded per pass, because a pass captured in IDLE and one captured in
+// ARMED have different time bases and the host must not have to guess.
+uint32_t adc_ring_channel_rate_hz(void);
+
+// Samples of `chan` currently held. ADC_RING_SAMPLES / stride.
+size_t adc_ring_depth(void);
+
+// ---------------------------------------------------------------------------
 // One-shot blocking reads. These STOP the ring, take the sample(s), and restart
 // it -- so they are disruptive by construction. Fine for the CLI's `adc <ch>`;
 // never call them from the armed or firing path.

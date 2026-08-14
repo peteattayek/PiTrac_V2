@@ -172,6 +172,38 @@ static bool ring_newest_of(uint chan, size_t *out) {
     return false;
 }
 
+uint32_t adc_ring_channel_rate_hz(void) {
+    // The SAR runs at a fixed ADC_MAX_RATE_HZ aggregate in every mode; the
+    // round-robin divides it between channels.
+    return s_ring_nch ? (ADC_MAX_RATE_HZ / s_ring_nch) : 0u;
+}
+
+size_t adc_ring_depth(void) {
+    return s_ring_nch ? (ADC_RING_SAMPLES / s_ring_nch) : 0u;
+}
+
+bool adc_ring_view(uint chan, adc_ring_view_t *v) {
+    if (!s_ring_on || !v || chan > 7) return false;
+    size_t newest;
+    if (!ring_newest_of(chan, &newest)) return false;
+    v->base   = s_ring;
+    v->mask   = ADC_RING_SAMPLES - 1u;
+    v->newest = newest;
+    v->stride = s_ring_nch;
+    v->rate_hz = adc_ring_channel_rate_hz();
+    return true;
+}
+
+bool adc_ring_view_valid(const adc_ring_view_t *v, size_t oldest_k) {
+    if (!v || !s_ring_on) return false;
+    // Raw distance from the newest sample back to the oldest one we touched.
+    size_t reached = oldest_k * v->stride;
+    // Raw distance the writer has advanced since the snapshot.
+    size_t advanced = (ring_write_index() - ((v->newest + 1u) & v->mask)) & v->mask;
+    // They collide once the two together span the whole ring.
+    return (reached + advanced) < ADC_RING_SAMPLES;
+}
+
 bool adc_ring_avg(uint chan, uint n, uint16_t *out_code) {
     if (!s_ring_on || chan > 7 || n == 0) return false;
     if (n * s_ring_nch > ADC_RING_SAMPLES) n = ADC_RING_SAMPLES / s_ring_nch;

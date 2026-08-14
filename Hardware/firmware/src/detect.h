@@ -41,6 +41,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 void detect_init(void);
 
@@ -149,13 +150,33 @@ bool detect_comparator(void);      // true = above threshold (active high)
 #define DETECT_TICK_HZ        1000000u   // 1 tick = 1 us
 #define DETECT_COALESCE_US       2000u   // default; retune from bench data
 
+// Why a pass may not mean what it looks like. Bit flags.
+typedef enum {
+    DQ_OK          = 0,
+    DQ_SATURATED   = 1u << 0,  // ADC5 hit full scale: the peak is unknown
+    DQ_NO_CROSSING = 1u << 1,  // the 50 % level was never crossed in the window
+    DQ_WINDOW_CLIP = 1u << 2,  // the bump ran off the end of the ring history
+    DQ_RING_LAPPED = 1u << 3,  // the DMA overwrote samples during the analysis
+    DQ_CHATTER     = 1u << 4,  // fragments > 1: comparator transit is a bound
+    DQ_NO_ADC      = 1u << 5,  // ch5 was not in the round-robin; no ADC result
+} detect_quality_t;
+
 typedef struct {
     uint32_t seq;
     uint32_t t_ms;             // ms since boot, when the pass was closed
     uint32_t transit_us;       // SUM of the fragments' widths -- see below
     uint32_t raw_ticks;        // same, in raw PIO ticks, uncorrected
+    uint32_t adc_transit_ns;   // 50 %-of-own-peak, interpolated. 0 = not computed
+    uint16_t adc_peak;         // code, relative to baseline
+    uint16_t adc_baseline;     // code
+    uint16_t adc_sat_samples;
+    int16_t  adc_asym_q8;      // (t_peak - midpoint)/transit, Q8. Shape check.
+    uint16_t adc_rate_khz;     // per-channel ADC rate when captured
     uint16_t fragments;        // 1 = clean. >1 = comparator chatter.
     uint16_t threshold_level;  // DAC level in force at the time
+    uint16_t quality;          // detect_quality_t bits
+    uint8_t  condition;        // 0/1/2, tags a Phase 4 experimental condition
+    uint8_t  _pad;
 } detect_pass_t;
 
 // WHAT transit_us MEANS, AND WHEN TO TRUST IT.
@@ -202,6 +223,84 @@ uint32_t detect_coalesce_us(void);
 // bit-banged pulse widths before trusting absolute transit numbers. It is a
 // constant offset, so it cancels out of any comparison between two methods.
 #define DETECT_PIO_OVERHEAD_TICKS  2u
+
+// ---------------------------------------------------------------------------
+// ADC REFINEMENT  (BENCH_P3_DETECT.md Phase 4, step 4)
+//
+// A fixed comparator threshold crosses the signal's rising slope at a point
+// that depends on the signal's AMPLITUDE, so a dimmer ball is detected later
+// going up and earlier coming down -> transit short -> speed over-estimated,
+// with the error scaling with reflectance. That is a systematic bias, not
+// noise, and averaging will not remove it.
+//
+// Working from 50 % of the bump's OWN peak removes the amplitude dependence
+// entirely. It costs ~10 us of post-processing, which is free because it
+// happens during the camera handshake we are already waiting on.
+//
+// SATURATION. ADC5 reaches full scale (code 4095, 3.3 V) BEFORE D14 conducts at
+// ~3.6 V, so clipping shows up as ADC full scale rather than a diode knee.
+// A clipped peak makes the 50 % level too LOW, so the rise crossing lands early
+// and the fall crossing late -> transit LONG -> speed UNDER-estimated. That is
+// the OPPOSITE sign to the comparator's bias, so a saturated pass brackets the
+// truth rather than being useless -- but mixing saturated passes into the
+// statistics silently would flatten the very slope Phase 4 is measuring. Hence
+// DQ_SATURATED, and hence detect_stats() counts them separately.
+// ---------------------------------------------------------------------------
+
+#define DETECT_SAT_CODE   4080u    // a few LSB below full scale
+
+// Log capacity. 60 passes is the Phase 4 experiment; 256 leaves room for
+// retries without wrapping.
+#define DETECT_LOG_N      256u
+
+// Waveform ring. A full ARMED window is 8192 samples x 2 B = 16 KB, and 60 of
+// those would be 960 KB against 520 KB of SRAM -- so full waveforms for every
+// pass are simply not possible. The bump is band-limited to 15.39 kHz by the
+// LPF but its WIDTH is the transit, i.e. milliseconds, so at 250 ksps it is
+// oversampled by orders of magnitude. Decimating by 8 with a box average is
+// both the anti-alias filter and a small noise reduction.
+#define DETECT_WAVE_DECIM   8u
+#define DETECT_WAVE_LEN  1024u
+#define DETECT_WAVE_N       4u     // 4 x 2 KB
+
+typedef struct {
+    uint32_t pass_seq;
+    uint32_t rate_hz;              // post-decimation
+    uint16_t len, peak_idx;
+    uint16_t baseline;
+    uint16_t _pad;
+    uint16_t s[DETECT_WAVE_LEN];
+} detect_wave_t;
+
+// Beam path width across the optical axis, in mm. Velocity is NOT reported
+// until this is set -- a speed derived from a guessed geometry is worse than no
+// speed, because it looks authoritative. Cross-check against the cardboard-ramp
+// prediction v = sqrt(2*g*h*5/7).
+void  detect_set_path_mm(float mm);
+float detect_path_mm(void);
+
+// Tags subsequent passes with a Phase 4 condition index (0 nominal, 1 far,
+// 2 low-reflectance).
+void    detect_set_condition(uint8_t c);
+uint8_t detect_condition(void);
+
+size_t               detect_log_count(void);
+const detect_pass_t *detect_log_at(size_t i);       // 0 = oldest retained
+void                 detect_log_clear(void);
+const detect_wave_t *detect_wave_for(uint32_t pass_seq);
+const detect_wave_t *detect_wave_recent(size_t i);  // 0 = most recent
+
+// Mean/sigma per method for one condition. Excludes passes whose ADC result is
+// unusable; `n_excluded` says how many.
+typedef struct {
+    uint32_t n, n_excluded, n_saturated, n_chatter;
+    float    cmp_mean_us, cmp_sd_us;
+    float    adc_mean_us, adc_sd_us;
+    float    bias;          // cmp_mean/adc_mean - 1
+    float    peak_mean;     // mean peak code, for the bias-vs-amplitude fit
+} detect_stats_t;
+
+bool detect_stats(uint8_t condition, detect_stats_t *out);
 
 // ---------------------------------------------------------------------------
 // THRESHOLD / COMPARATOR CROSS-CALIBRATION  (BENCH_P3_DETECT.md 3.5)

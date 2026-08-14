@@ -84,6 +84,10 @@ static const char *k_help =
     "  detect                     comparator + PIO transit timer status\n"
     "  detect arm | disarm        start/stop the PIO edge timer (resets counters)\n"
     "  detect coalesce <us>       chatter-merge window (U15 has no hysteresis)\n"
+    "  detect path <mm>           beam width; no velocity is reported until set\n"
+    "  detect cond <0|1|2>        tag passes: 0 nominal 1 far 2 low-reflectance\n"
+    "  detect log | stats | clear per-pass CSV / the Phase 4 table / reset\n"
+    "  detect wave [seq]          dump a retained waveform as CSV\n"
     "\n"
     "  fault                      show / 'fault clear' (also acks FAULT -> STANDBY)\n"
     "  reset [force]              soft reset. REFUSED while a Pi is powered:\n"
@@ -483,6 +487,88 @@ static void dispatch(int argc, char **argv) {
         }
         if (argc >= 3 && !strcmp(argv[1], "coalesce")) {
             detect_set_coalesce_us((uint32_t)strtoul(argv[2], NULL, 0));
+        }
+        if (argc >= 3 && !strcmp(argv[1], "path")) {
+            detect_set_path_mm(strtof(argv[2], NULL));
+            printf("beam path <- %.2f mm\n", (double)detect_path_mm());
+            return;
+        }
+        if (argc >= 3 && !strcmp(argv[1], "cond")) {
+            detect_set_condition((uint8_t)strtoul(argv[2], NULL, 0));
+            printf("condition <- %u  (0 nominal, 1 far, 2 low-reflectance)\n",
+                   detect_condition());
+            return;
+        }
+        if (argc >= 2 && !strcmp(argv[1], "clear")) {
+            detect_log_clear(); printf("log cleared\n"); return;
+        }
+        if (argc >= 2 && !strcmp(argv[1], "log")) {
+            printf("seq,t_ms,cond,cmp_us,adc_us,peak,baseline,asym_q8,frag,thr,rate_khz,qual\n");
+            for (size_t i = 0; i < detect_log_count(); i++) {
+                const detect_pass_t *p = detect_log_at(i);
+                printf("%lu,%lu,%u,%lu,%lu,%u,%u,%d,%u,%u,%u,0x%02x\n",
+                       (unsigned long)p->seq, (unsigned long)p->t_ms, p->condition,
+                       (unsigned long)p->transit_us,
+                       (unsigned long)(p->adc_transit_ns / 1000u),
+                       p->adc_peak, p->adc_baseline, p->adc_asym_q8,
+                       p->fragments, p->threshold_level, p->adc_rate_khz, p->quality);
+            }
+            printf("# qual bits: 01 SAT 02 NOCROSS 04 WINCLIP 08 LAPPED 10 CHATTER 20 NOADC\n");
+            return;
+        }
+        if (argc >= 2 && !strcmp(argv[1], "wave")) {
+            const detect_wave_t *w = (argc > 2)
+                ? detect_wave_for((uint32_t)strtoul(argv[2], NULL, 0))
+                : detect_wave_recent(0);
+            if (!w) { printf("no waveform retained (only the last %u passes)\n",
+                             (unsigned)DETECT_WAVE_N); return; }
+            printf("# pass %lu  rate %lu Hz  len %u  baseline %u  peak_idx %u\n",
+                   (unsigned long)w->pass_seq, (unsigned long)w->rate_hz,
+                   w->len, w->baseline, w->peak_idx);
+            printf("i,code\n");
+            for (uint16_t i = 0; i < w->len; i++) printf("%u,%u\n", i, w->s[i]);
+            return;
+        }
+        if (argc >= 2 && !strcmp(argv[1], "stats")) {
+            static const char *names[3] = {"nominal", "far 1.5x", "low-reflect"};
+            printf("cond           n   cmp mean   cmp sd   adc mean   adc sd     bias    peak\n");
+            printf("---------------------------------------------------------------------------\n");
+            float bx[3], by[3]; int nb = 0;
+            for (uint8_t ci = 0; ci < 3; ci++) {
+                detect_stats_t s;
+                if (!detect_stats(ci, &s)) continue;
+                printf("%u %-11s %3lu  %8.1f  %7.1f  %9.1f  %7.1f  %6.2f%%  %6.0f\n",
+                       ci, names[ci], (unsigned long)s.n,
+                       (double)s.cmp_mean_us, (double)s.cmp_sd_us,
+                       (double)s.adc_mean_us, (double)s.adc_sd_us,
+                       (double)(s.bias * 100.0f), (double)s.peak_mean);
+                if (s.n_excluded || s.n_saturated || s.n_chatter)
+                    printf("   excluded %lu   saturated %lu   chattered %lu\n",
+                           (unsigned long)s.n_excluded, (unsigned long)s.n_saturated,
+                           (unsigned long)s.n_chatter);
+                if (s.peak_mean > 1.0f) { bx[nb] = 1.0f / s.peak_mean; by[nb] = s.bias; nb++; }
+            }
+            // The deliverable: bias against 1/amplitude. A fixed threshold
+            // crosses a smaller bump later going up and earlier coming down, so
+            // if the comparator's error is the amplitude effect and not
+            // something else, bias is linear in 1/peak and this slope measures
+            // it. A slope indistinguishable from zero at this geometry means
+            // the ADC refinement can be dropped and the design simplifies.
+            if (nb >= 2) {
+                float sx=0, sy=0, sxx=0, sxy=0;
+                for (int i=0;i<nb;i++){ sx+=bx[i]; sy+=by[i]; sxx+=bx[i]*bx[i]; sxy+=bx[i]*by[i]; }
+                float den = nb*sxx - sx*sx;
+                if (den != 0.0f) {
+                    float m = (nb*sxy - sx*sy)/den, b = (sy - m*sx)/nb;
+                    printf("\nbias vs 1/peak : slope %.4g  intercept %.4g  (n=%d conditions)\n",
+                           (double)m, (double)b, nb);
+                    printf("  ^ THIS is the amplitude-dependent comparator bias. A slope near\n"
+                           "    zero at your geometry means the ADC refinement can be dropped.\n");
+                }
+            } else {
+                printf("\n(need >=2 conditions with data for the bias fit -- use 'detect cond')\n");
+            }
+            return;
         }
         printf("detect   : %s   PIO block 2 (GPIOBASE %u) SM %u\n",
                detect_armed() ? "ARMED" : "disarmed",
