@@ -558,6 +558,36 @@ firmware/
 > 7. `cfg save` to persist. It refuses unless the machine is quiet — a 4 KB erase blinds the
 >    supply monitor for tens of ms.
 >
+> #### ✅ Two review passes done 2026-08-14 — 14 defects found and fixed
+>
+> Reviewed after the firmware was written. **Three would have produced confidently wrong
+> results at the bench**, which is worse than a crash because nothing looks broken.
+>
+> | | Defect | Why it mattered |
+> |---|---|---|
+> | 🔴 | `refine()` window anchored to "now", not to the falling edge | `close_pass()` fires from the coalesce timeout, so refine ran ≥2 ms late; the guard was half a transit, so **any transit under ~4 ms put the bump entirely outside the window**. At 40 m/s it measured baseline noise and reported it as a transit. Now takes the edge age and offsets the window. |
+> | 🔴 | Flash config saved `carrier_hz`/`demod_phase_ticks` but **never restored them** | `beam_init()` runs after `cfg_init()` and overwrote both with the compile-time default, so `cfg` reported saved values while the beam ran on defaults. Split into `cfg_apply_beam()`, called after `beam_init()`. |
+> | 🔴 | `hpf_sel_track`, `u12b_gain`, `cal_warm` never written by anything | `cfg` would report `NEVER MEASURED` forever. Now written by `hpf test`, `cal gain`, `cal demod`. |
+> | 🟠 | Stale ADC fields leaked between passes | `refine()` returns early on `DQ_NO_ADC` without touching peak/baseline/sat/asym, so the **previous** pass's values were logged as this one's. Record is zeroed first. |
+> | 🟠 | `safe_state_now()` reverts every PWM pad to SIO, nothing reclaimed them | `gpio_init()` drops the function select, so the threshold DAC and beam would be dead after any fault teardown — and `beam on` would report success and emit no light. Added `safe_state_reclaim_pins()`. **Pre-existing.** |
+> | 🟠 | Dropped PIO words invisible | `push noblock` discards silently when the FIFO fills, and `detect_fragments()` counts what was *read*. Heavy chatter — the thing the count exists to measure — undercounted invisibly. Now latches `RXSTALL`. |
+> | 🟡 | `peak_idx` underflowed to 65535 | Whenever the peak landed in a trailing partial decimation group. Found by enumeration, not by reading. |
+> | 🟡 | Chattered passes got the *tightest* refine window | Window was sized from `transit_us`, which for chatter is deliberately a lower bound — so the passes that most need the ADC path got the worst window. Guard now widens. |
+> | 🟡 | `adc_ring_view_valid()` biased toward calling lapped data valid | Inferred the snapshot write index as `newest+1`; now records the real one. |
+> | 🟡 | `ARCHITECTURE.md` put comparator timing on PIO0 SM1 | **Not implementable** — PIO0 needs base 0 for strobe/camera, GPIO46 needs 16. Gate DAC also still read 2A instead of 6A. |
+> | 🟢 | Fit residual vacuous at exactly 3 points | An exact fit gives residual 0, reported as a perfect score. Returns −1 = unavailable. |
+> | 🟢 | `adc5_sigma()` used the shortcut `detect_stats()` avoids | Replaced with Welford — one pass, no buffer. (A buffered two-pass would have cost 64 KB of BSS.) |
+> | 🟢 | FSM `default:` skipped teardown on the way to STANDBY | Routed through `PS_FORCE_OFF`. |
+> | 🟢 | `BEAM_DUTY_OPERATING` was decorative | `scan carrier` now holds the ceiling at 25 % for its duration and restores it. 35 % is a destruction limit, not an operating point. |
+>
+> **New cross-phase constraint — `ARCHITECTURE.md` A9.** The ADC ring is one resource with
+> mode-scoped contents: entering BURST restarts it and changes the stride, so every ch5/ch7
+> sample already captured becomes *unreadable*, not stale. Phase 3/4 reads ch5 after the
+> comparator edge, Phase 5 reads ch7 for the same shot, and Phase 6 destroys both. **The
+> firing path must finish all ch5/ch7 analysis before switching to BURST.** Phase 4 happens
+> to be ordered correctly; nothing enforces it, and the failure is silent (`DQ_NO_ADC`).
+> Also recorded in `BENCH_P5_P7_MIC_CAMERA.md` and `BENCH_P6_STROBE.md`.
+>
 > #### Unverified assumptions the firmware makes
 >
 > - **`DETECT_PIO_OVERHEAD_TICKS` = 2** is derived from the instruction listing, never

@@ -18,10 +18,11 @@
 #include <math.h>
 
 static void detect_pio_init(void);   // forward decl; defined below detect_init()
+static void close_pass(void);        // fwd; defined with the pass log
 
 static uint     s_pio_offset;
 static bool     s_armed;
-static uint32_t s_events, s_fragments;
+static uint32_t s_events, s_fragments, s_dropped;
 static uint32_t s_coalesce_us = DETECT_COALESCE_US;
 
 // Partially-assembled pass, while fragments are still arriving.
@@ -127,9 +128,15 @@ bool detect_arm(bool on) {
         pio_sm_clear_fifos(PIO_BLK_HIGH, PIO_SM_DETECT);
         pio_sm_restart(PIO_BLK_HIGH, PIO_SM_DETECT);
         pio_sm_exec(PIO_BLK_HIGH, PIO_SM_DETECT, pio_encode_jmp(s_pio_offset));
-        s_events = s_fragments = 0;
+        s_events = s_fragments = s_dropped = 0;
         s_frag_open = false;
         s_have_last = false;
+    }
+    if (!on) {
+        // Close any pass still being assembled rather than dropping it silently.
+        // It is real data; the operator disarmed mid-flight, which is not the
+        // same thing as the pass never having happened.
+        close_pass();
     }
     pio_sm_set_enabled(PIO_BLK_HIGH, PIO_SM_DETECT, on);
     s_armed = on;
@@ -139,6 +146,22 @@ bool detect_arm(bool on) {
 bool     detect_armed(void)      { return s_armed; }
 uint32_t detect_events(void)     { return s_events; }
 uint32_t detect_fragments(void)  { return s_fragments; }
+
+// Words the PIO pushed that we never read.
+//
+// `push noblock` DISCARDS when the 4-deep RX FIFO is full -- deliberately, so a
+// slow consumer can never stall the timer. But that makes the loss invisible to
+// a counter of what was read, and the case where it happens is heavy chatter,
+// which is precisely what the fragment count exists to measure. RXSTALL latches
+// it in hardware; we drain the latch so the count is cumulative.
+uint32_t detect_dropped(void) {
+    uint32_t bit = 1u << (PIO_FDEBUG_RXSTALL_LSB + PIO_SM_DETECT);
+    if (PIO_BLK_HIGH->fdebug & bit) {
+        PIO_BLK_HIGH->fdebug = bit;      // write-1-to-clear
+        s_dropped++;
+    }
+    return s_dropped;
+}
 uint32_t detect_coalesce_us(void){ return s_coalesce_us; }
 void     detect_set_coalesce_us(uint32_t us) { s_coalesce_us = us; }
 
@@ -196,22 +219,42 @@ static void log_append(const detect_pass_t *p) {
 // shape rather than against a fixed threshold.
 // ---------------------------------------------------------------------------
 
-static uint16_t refine(detect_pass_t *p, uint32_t cmp_transit_us) {
+static inline size_t us_to_samples(uint64_t us, uint32_t rate_hz) {
+    return (size_t)((us * rate_hz) / 1000000u);
+}
+
+// `age_us` is how long ago the FALLING EDGE was, at the moment this runs.
+//
+// That parameter is the whole reason this function is correct. The window used
+// to be anchored at k = 0, i.e. "the newest sample right now" -- but close_pass()
+// fires from the coalesce timeout, so refine() runs at least DETECT_COALESCE_US
+// after the fall, plus superloop latency. With a guard of half a transit, any
+// transit shorter than about twice the coalesce window put the bump entirely
+// outside the search range: at 40 m/s the transit is ~1 ms and the bump sat
+// ~2 ms further back than the window reached. The result was not an error, it
+// was a confident measurement of baseline noise.
+static uint16_t refine(detect_pass_t *p, uint32_t cmp_transit_us, uint64_t age_us) {
     adc_ring_view_t v;
     if (!adc_ring_view(ADC_CH_DETECT, &v) || v.rate_hz == 0) return DQ_NO_ADC;
 
     p->adc_rate_khz = (uint16_t)(v.rate_hz / 1000u);
 
-    size_t depth   = adc_ring_depth();
-    size_t n_span  = (size_t)(((uint64_t)cmp_transit_us * v.rate_hz) / 1000000u);
+    size_t depth  = adc_ring_depth();
+    size_t n_span = us_to_samples(cmp_transit_us, v.rate_hz);
     if (n_span < 4) n_span = 4;
 
-    // Search window: the transit plus 50 % guard either side. k grows backwards
-    // in time and the fall just happened, so the bump occupies roughly
-    // k = 0 .. n_span, and the pre-bump baseline sits beyond that.
-    size_t guard  = n_span / 2u;
-    size_t k_hi   = n_span + guard;                 // oldest index of the bump
-    size_t base_k = k_hi + n_span;                  // baseline region, well before
+    // Where the falling edge sits in the ring right now.
+    size_t k_fall = us_to_samples(age_us, v.rate_hz);
+
+    // Half a transit of guard either side -- widened to a full transit for a
+    // chattered pass, because there transit_us is the SUM of fragment widths and
+    // therefore understates the true span. Those are exactly the passes that
+    // most need the ADC path, so they must not also get the tightest window.
+    size_t guard = (p->fragments > 1) ? n_span : (n_span / 2u);
+
+    size_t k_lo = (k_fall > guard) ? (k_fall - guard) : 0u;
+    size_t k_hi = k_fall + n_span + guard;
+    size_t base_k = k_hi + n_span;          // baseline region, older than the bump
     size_t base_n = 256;
 
     uint16_t q = DQ_OK;
@@ -220,6 +263,7 @@ static uint16_t refine(detect_pass_t *p, uint32_t cmp_transit_us) {
         // Below about 1.4 m/s this is expected -- use `capture` for those.
         q |= DQ_WINDOW_CLIP;
         if (k_hi >= depth) k_hi = depth ? depth - 1u : 0u;
+        if (k_lo > k_hi)   k_lo = k_hi;
         base_k = k_hi;
         base_n = (depth > k_hi + 1u) ? (depth - k_hi - 1u) : 1u;
         if (base_n > 256) base_n = 256;
@@ -233,8 +277,8 @@ static uint16_t refine(detect_pass_t *p, uint32_t cmp_transit_us) {
     uint16_t baseline = (uint16_t)(sum / (base_n ? base_n : 1u));
 
     // Peak over the window.
-    uint16_t peak = 0; size_t peak_k = 0; uint16_t sat = 0;
-    for (size_t k = 0; k <= k_hi; k++) {
+    uint16_t peak = 0; size_t peak_k = k_lo; uint16_t sat = 0;
+    for (size_t k = k_lo; k <= k_hi; k++) {
         uint16_t s = adc_ring_view_at(&v, k);
         if (s >= DETECT_SAT_CODE) sat++;
         if (s > peak) { peak = s; peak_k = k; }
@@ -251,17 +295,20 @@ static uint16_t refine(detect_pass_t *p, uint32_t cmp_transit_us) {
     // this independent of both amplitude and baseline drift.
     uint16_t half = (uint16_t)(baseline + (peak - baseline) / 2u);
 
-    // Walk OUTWARD from the peak in both directions. Outward rather than inward
-    // from the window edges, so a noise spike elsewhere cannot capture the
-    // crossing and shorten the transit.
+    // Walk OUTWARD from the peak in both directions, bounded by the window.
+    // Outward rather than inward from the edges, so a noise spike elsewhere
+    // cannot capture the crossing and shorten the transit.
+    //
+    // peak > half strictly (guaranteed by the +8 test above), so neither loop can
+    // terminate on its first step -- which is what makes rise_k >= peak_k+1 and
+    // fall_k <= peak_k-1, and therefore makes the neighbour reads below in range.
     size_t rise_k = 0; bool rise_ok = false;
     for (size_t k = peak_k; k <= k_hi; k++) {          // backwards in time
         if (adc_ring_view_at(&v, k) < half) { rise_k = k; rise_ok = true; break; }
     }
     size_t fall_k = 0; bool fall_ok = false;
-    for (size_t k = peak_k + 1; k-- > 0; ) {           // forwards in time
+    for (size_t k = peak_k; k-- > k_lo; ) {            // forwards in time
         if (adc_ring_view_at(&v, k) < half) { fall_k = k; fall_ok = true; break; }
-        if (k == 0) break;
     }
     if (!rise_ok || !fall_ok) return q | DQ_NO_CROSSING;
 
@@ -298,16 +345,16 @@ static uint16_t refine(detect_pass_t *p, uint32_t cmp_transit_us) {
     // Snapshot a decimated waveform for the most recent few passes.
     if (!(q & DQ_RING_LAPPED)) {
         detect_wave_t *w = &s_wave[s_wave_head];
-        size_t want = k_hi + 1u;
+        size_t want = k_hi - k_lo + 1u;
         size_t dec  = (want + DETECT_WAVE_LEN - 1u) / DETECT_WAVE_LEN;
         if (dec < DETECT_WAVE_DECIM) dec = DETECT_WAVE_DECIM;
         size_t out = 0;
-        for (size_t k = 0; k + dec <= want && out < DETECT_WAVE_LEN; k += dec) {
+        for (size_t k = k_lo; k + dec <= k_hi + 1u && out < DETECT_WAVE_LEN; k += dec) {
             uint32_t acc = 0;
             for (size_t j = 0; j < dec; j++) acc += adc_ring_view_at(&v, k + j);
-            // Newest-first in the ring; store oldest-first so it plots as time.
             w->s[out++] = (uint16_t)(acc / dec);
         }
+        // Ring order is newest-first; reverse so the array plots as time.
         for (size_t a = 0, b = out ? out - 1u : 0u; a < b; a++, b--) {
             uint16_t t = w->s[a]; w->s[a] = w->s[b]; w->s[b] = t;
         }
@@ -315,7 +362,14 @@ static uint16_t refine(detect_pass_t *p, uint32_t cmp_transit_us) {
         w->len      = (uint16_t)out;
         w->rate_hz  = (uint32_t)(v.rate_hz / dec);
         w->baseline = baseline;
-        w->peak_idx = (uint16_t)(out ? (out - 1u - (peak_k / dec)) : 0u);
+        // Peak index AFTER the reversal, clamped rather than computed bare.
+        // When the peak lands in a trailing partial decimation group,
+        // (peak_k - k_lo)/dec can equal `out` -- and out-1-out underflows a
+        // size_t, then wraps a uint16_t to 65535 and plots off-scale.
+        {
+            size_t pi = (peak_k >= k_lo) ? ((peak_k - k_lo) / dec) : 0u;
+            w->peak_idx = (out == 0 || pi >= out) ? 0u : (uint16_t)(out - 1u - pi);
+        }
         s_wave_head = (s_wave_head + 1u) % DETECT_WAVE_N;
         if (s_wave_n < DETECT_WAVE_N) s_wave_n++;
     }
@@ -328,7 +382,13 @@ static void close_pass(void) {
 
     s_building.condition = s_condition;
     if (s_building.fragments > 1) s_building.quality |= DQ_CHATTER;
-    s_building.quality |= refine(&s_building, s_building.transit_us);
+
+    // How long ago the fall was. refine() needs this to find the bump: without
+    // it the search window is anchored to "now", which is always at least one
+    // coalesce window too late.
+    uint64_t now = time_us_64();
+    uint64_t age = (now > s_frag_last_end_us) ? (now - s_frag_last_end_us) : 0u;
+    s_building.quality |= refine(&s_building, s_building.transit_us, age);
 
     s_last      = s_building;
     s_have_last = true;
@@ -422,6 +482,10 @@ void detect_service(void) {
             s_building.t_ms = to_ms_since_boot(get_absolute_time());
         } else {
             close_pass();
+            // Zero first: refine() short-circuits on DQ_NO_ADC without touching
+            // adc_peak / adc_baseline / adc_sat_samples / adc_asym_q8, and those
+            // would otherwise still hold the previous pass's values.
+            s_building = (detect_pass_t){0};
             s_building.seq             = s_events + 1;
             s_building.t_ms            = to_ms_since_boot(get_absolute_time());
             s_building.transit_us      = width_us;

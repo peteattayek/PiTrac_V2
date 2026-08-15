@@ -207,6 +207,48 @@ the PIO word.
 
 ---
 
+### 🔴 A9 — The ADC ring is ONE resource with MODE-SCOPED contents
+
+`adc_engine_set_mode()` calls `ring_stop()` then `ring_start()`, which resets the DMA
+write address and changes the round-robin stride. **Every sample already in the ring
+becomes unreadable at that instant** — not stale, unreadable, because the de-interleave
+depends on a stride that just changed.
+
+| Mode | Channels | What is readable |
+|---|---|---|
+| IDLE | 1, 2, 5, 7 | supply, TIA, detect, mic |
+| ARMED | 5, 7 | detect, mic |
+| **BURST** | **0 only** | **strobe current — detect and mic history are GONE** |
+
+Three phases want this resource in the same instant, and the conflict is not obvious
+from any single one of them:
+
+- **Phase 3/4** pulls the detect bump out of the ring *after* the comparator edge, to
+  get an amplitude-independent transit.
+- **Phase 5** pulls the shot audio out of the ring for the same reason.
+- **Phase 6** needs BURST for the per-pulse strobe current, and entering it destroys
+  both of the above.
+
+**The ordering constraint, which belongs in the firing path and not in a comment in one
+module:**
+
+```
+comparator edge  →  ADC refinement (ch5) AND mic analysis (ch7)  →  THEN BURST
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    all of this must COMPLETE before the mode changes
+```
+
+The Phase 4 design already puts the refinement inside the camera-handshake wait, which
+is before the strobe fires — so the natural sequence is correct. The hazard is that
+nothing *enforces* it, and the failure is silent: `adc_ring_view()` simply returns false
+once ch5 leaves the round-robin, the pass is flagged `DQ_NO_ADC`, and the experiment
+quietly loses its ADC column.
+
+**When the firing path is written in Phase 6, `adc_engine_set_mode(ADC_MODE_BURST)` must
+be the last thing it does before the burst, not the first.**
+
+---
+
 ### 🟡 A3 — The camera handshake should not be a busy-wait
 
 .md §13.6 does:
@@ -360,17 +402,22 @@ are allowed to; production paths are not.
 |---|---|---|
 | Beam carrier | PWM **7B** | ✅ done — **validated on hardware**, see above |
 | Demod clock | PWM **11B**, phase-locked | ✅ done — **0.15 ticks across 6 reconfigurations** |
-| Gate DAC | PWM 2A | ✅ done |
+| Gate DAC | PWM **6A** | planned — ⚠ **collides with the ready LED, CR-01/A7** |
 | Threshold DAC | PWM 10A | ✅ done |
 | Panel LEDs | PWR 5B + 50 Hz timer; **RDY off PWM entirely** | 🟢 A4, 🔴 **A7** |
-| Strobe burst | **PIO0 SM0** + DMA | planned, `.pio` written |
-| **Comparator transit timing** | **PIO0 SM1** | 🟡 A2 — new |
-| **Camera trigger/strobe handshake** | **PIO0 SM2** | 🟡 A3 — new |
-| I²S mic | **PIO1 SM0** + DMA | planned |
+| Strobe burst | **PIO0 SM0** (base 0) + DMA | planned, `.pio` written |
+| **Comparator transit timing** | **PIO2 SM0 (base 16)** | ✅ **A2 done** — *not* PIO0; see below |
+| **Camera trigger/strobe handshake** | **PIO0 SM1** (base 0) | 🟡 A3 |
+| I²S mic | **PIO1 SM0** (base 0) + DMA | planned |
 | Detect + mic acquisition | ADC round-robin → **continuous DMA ring** | ✅ **A1 done** |
 | Strobe current capture | ADC ch0 → DMA, burst window | planned |
 | Pi UART | DMA both directions | 🟢 A5 |
 | Power FSM, CLI, calibration, reporting | **CPU — correctly** | ✅ |
+
+⚠ **This table previously said comparator timing goes on PIO0 SM1. That is not
+implementable.** PIO0 must be `GPIOBASE = 0` to reach the strobe (GPIO25) and camera
+(GPIO8/9/10) pins, and GPIO46 is only reachable at base 16. One block, one base. The
+detector therefore gets its own block — see A2.
 
 After A1–A3, the entire hot path is hardware: a ball transit produces a PIO FIFO
 word, the camera handshake produces another, the burst plays out of DMA, and the

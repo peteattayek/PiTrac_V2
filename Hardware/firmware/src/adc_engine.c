@@ -191,6 +191,11 @@ bool adc_ring_view(uint chan, adc_ring_view_t *v) {
     v->newest = newest;
     v->stride = s_ring_nch;
     v->rate_hz = adc_ring_channel_rate_hz();
+    // The REAL write index, not newest+1. ring_newest_of() can walk back up to
+    // stride-1 slots to land on this channel, so inferring the write position
+    // from `newest` under-counts how far the DMA has gone -- which biases
+    // adc_ring_view_valid() toward calling lapped data valid.
+    v->w_at_snap = ring_write_index();
     return true;
 }
 
@@ -199,7 +204,7 @@ bool adc_ring_view_valid(const adc_ring_view_t *v, size_t oldest_k) {
     // Raw distance from the newest sample back to the oldest one we touched.
     size_t reached = oldest_k * v->stride;
     // Raw distance the writer has advanced since the snapshot.
-    size_t advanced = (ring_write_index() - ((v->newest + 1u) & v->mask)) & v->mask;
+    size_t advanced = (ring_write_index() - v->w_at_snap) & v->mask;
     // They collide once the two together span the whole ring.
     return (reached + advanced) < ADC_RING_SAMPLES;
 }

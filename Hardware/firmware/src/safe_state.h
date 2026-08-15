@@ -35,7 +35,23 @@ void safe_state_init(void);
 // Same, but also drops the +5V latch. Use from fault paths where the rail
 // itself is suspect. NOTE: with a Pi seated this is a hard power cut â€” the
 // power FSM prefers an orderly shutdown and only calls this as a last resort.
+// Drive everything to its safe level and drop the rail.
+//
+// !! THIS REVERTS PIN FUNCTIONS TO SIO. !! out_low() calls gpio_init(), which
+// takes the pad back from whatever peripheral owned it -- so GPIO44 (threshold
+// DAC), GPIO31 (beam carrier) and GPIO39 (demod clock) all stop being PWM
+// outputs. Nothing re-claims them on its own: beam_enable() only writes
+// pwm_hw->en, not the function select, so after this `beam on` reports success
+// and produces no light.
+//
+// Any caller that intends the board to keep working must call
+// safe_state_reclaim_pins() afterwards. A caller that is latching a fault and
+// expects a reboot does not need to.
 void safe_state_now(void);
+
+// Re-establish the peripheral pin functions that safe_state_now() tore down.
+// Safe to call at any time; it only touches the function select, never a level.
+void safe_state_reclaim_pins(void);
 
 // Latch a fault. First fault wins (so the root cause survives the cascade).
 void fault_raise(fault_t f);

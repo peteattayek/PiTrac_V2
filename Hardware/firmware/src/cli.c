@@ -559,6 +559,7 @@ static void dispatch(int argc, char **argv) {
             printf("h2/h1    : %.3f  (cosine purity; >0.25 is not a lock-in response)\n",
                    (double)r.h2_ratio);
             printf("warm     : %s\n", r.warm ? "yes" : "NO -- see above");
+            cfg_mut()->cal_warm = r.warm ? 1u : 0u;
             if (ok) {
                 beam_set_phase(r.best_ticks);
                 printf("phase <- %ld ticks. Record it in PROGRESS.md section 6.\n",
@@ -603,6 +604,10 @@ static void dispatch(int argc, char **argv) {
             float frac = (argc > 3) ? strtof(argv[3], NULL) : 0.67f;
             cal_gain_t g;
             cal_gain_recommend(peak, frac, &g);
+            // Record the gain the board will actually be running at once the
+            // recommendation is fitted, so ADC5 codes can be converted back to
+            // TP9 millivolts later without re-deriving it.
+            cfg_mut()->u12b_gain = g.gain_target;
             printf("measured peak %.0f codes at the as-built gain %.1f\n",
                    (double)peak, (double)g.gain_now);
             printf("target %.0f%% of ADC full scale\n", (double)(frac * 100.0f));

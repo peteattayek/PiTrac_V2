@@ -66,6 +66,15 @@ typedef struct {
 _Static_assert(sizeof(pitrac_cfg_t) == 256, "config record size is part of the format");
 
 void  cfg_init(void);              // pick the newest valid slot, or defaults
+
+// Push the saved carrier and demod phase into beam.c.
+//
+// SEPARATE FROM cfg_init() ON PURPOSE. beam_init() calls beam_configure() with
+// the compile-time default, so anything cfg_init() pushed into the beam earlier
+// would simply be overwritten. This must therefore be called AFTER beam_init().
+// Splitting it is the only way to make the ordering explicit rather than a
+// silent dependency on the order of two lines in main().
+void  cfg_apply_beam(void);
 const pitrac_cfg_t *cfg(void);
 pitrac_cfg_t       *cfg_mut(void); // mark dirty by writing through this
 bool  cfg_save(void);              // guarded; see below

@@ -100,6 +100,15 @@ void cfg_init(void) {
     if (s_cfg.path_mm > 0.0f)     detect_set_path_mm(s_cfg.path_mm);
 }
 
+void cfg_apply_beam(void) {
+    // Guard against a corrupt-but-CRC-valid record steering the beam somewhere
+    // dangerous: a frequency outside the range beam_configure() handles sanely,
+    // or a phase outside one period, is a reason to fall back to the default.
+    if (s_cfg.carrier_hz >= 5000u && s_cfg.carrier_hz <= 250000u) {
+        beam_configure(s_cfg.carrier_hz, beam_duty(), s_cfg.demod_phase_ticks);
+    }
+}
+
 const pitrac_cfg_t *cfg(void)     { return &s_cfg; }
 pitrac_cfg_t       *cfg_mut(void) { return &s_cfg; }
 const char         *cfg_source(void) { return s_source; }

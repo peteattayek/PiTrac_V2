@@ -211,7 +211,13 @@ bool     detect_armed(void);
 void     detect_service(void);
 
 uint32_t detect_events(void);        // completed passes since arm
-uint32_t detect_fragments(void);     // raw FIFO words since arm
+uint32_t detect_fragments(void);     // raw FIFO words READ since arm
+
+// FIFO words the PIO pushed and we never read, because `push noblock` discards
+// when the RX FIFO is full. Non-zero means the fragment counts are understated
+// and the superloop is not keeping up with the chatter. Polls and drains the
+// hardware RXSTALL latch, so call it before trusting detect_fragments().
+uint32_t detect_dropped(void);
 bool     detect_last_pass(detect_pass_t *out);
 
 void     detect_set_coalesce_us(uint32_t us);

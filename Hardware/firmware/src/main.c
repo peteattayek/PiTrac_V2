@@ -95,6 +95,11 @@ int main(void) {
     // the input safe_state() already configured.
     detect_init();
 
+    // AFTER beam_init() and detect_init(), because beam_init() writes the
+    // compile-time default carrier and would overwrite anything applied earlier.
+    // This is what makes `cfg save` actually mean something across a reset.
+    cfg_apply_beam();
+
     // Give the USB host a moment to enumerate before the CLI banner, otherwise
     // the first thing you see after a reflash is a truncated help text.
     sleep_ms(500);

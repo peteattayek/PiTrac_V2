@@ -219,3 +219,37 @@ hardware clamp truncates it. Record it.
 - [ ] Strobe current LUT built, ADC0 agrees with TP4
 - [ ] Q9 and HS1 thermals sane, heatsink demonstrably coupling
 - [ ] `PULSE_LIMIT_DISABLE` still 0, still with no CLI path
+
+---
+
+## ⚠ Two constraints Phase 3 established that bite here
+
+### 1. Entering BURST destroys the detect and mic history
+
+`adc_engine_set_mode()` restarts the ring, so the moment BURST is selected every ch5 and
+ch7 sample already captured becomes unreadable — the stride changes and the de-interleave
+no longer maps. BURST is `{0}` only.
+
+So the firing path must be ordered:
+
+```
+comparator edge -> ADC refinement (ch5) + mic analysis (ch7) -> THEN adcmode burst
+```
+
+The Phase 4 design already runs the refinement inside the camera-handshake wait, which is
+before the strobe, so the natural sequence is right. **The hazard is that nothing enforces
+it and the failure is silent** — `adc_ring_view()` just returns false, the pass is flagged
+`DQ_NO_ADC`, and the ADC column quietly disappears from the results. Full detail in
+`ARCHITECTURE.md` **A9**.
+
+### 2. Launching core 1 changes what `cfg_save()` has to do
+
+`pico_multicore` is deliberately not linked today, so `flash_safe_execute()` takes its
+single-core path. **The moment Phase 6 launches core 1, `flash_safe_execute_core_init()`
+must be called on it.** Without that, core 1 executes XIP during a flash erase, which is a
+hard fault rather than a corrupted write.
+
+Also note `cfg_save()` refuses while the beam is on, the detector is armed, or the state is
+not STANDBY/BENCH_RUNNING — a 4 KB erase blinds the `V5_MIN_SUSTAINED` monitor for tens of
+milliseconds. **Consequence: calibration cannot be persisted between shots**, only at the
+end of a session. That is the right trade, but plan the session around it.

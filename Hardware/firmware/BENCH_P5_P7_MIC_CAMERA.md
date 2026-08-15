@@ -157,3 +157,28 @@ permanently in triggered mode and have the RP2354 generate the preview cadence i
 Same hardware either way. If the Pi-side mode switching turns out to be slow or flaky,
 this is the escape hatch — worth keeping in mind before investing heavily in the
 libcamera reconfiguration path.
+
+---
+
+## ⚠ The mic shares the ADC ring, and BURST destroys it
+
+`ADC_MODE_ARMED` is `{5, 7}` — detect and mic free-running at 250 ksps each — so the two
+coexist by design. But `ADC_MODE_BURST` is `{0}` only, and `adc_engine_set_mode()` restarts
+the ring: the write address resets and the stride changes, so **every mic sample already
+captured becomes unreadable the instant BURST is entered.**
+
+This is the same constraint the detect path hit in Phase 3/4, arriving from the other side.
+Any mic analysis of a shot must complete before the strobe fires. See `ARCHITECTURE.md`
+**A9** for the full ordering rule.
+
+The practical consequence for this phase: while characterising the mic on its own, stay in
+IDLE or ARMED and do not let anything switch modes underneath the measurement. `adc <ch>`
+and `capture` are both documented as disruptive for exactly this reason.
+
+## 🔴 Q6 should be resolved before anything is plugged into J4
+
+Q6 (Mira220 digital I/O possibly 1.8 V, while J4 drives 3.3 V through 220 Ω) is **the only
+damage-class open question left in the whole plan** — every other outstanding item is a
+measurement whose worst case is a wrong number. It costs nothing to settle from the
+datasheet now, and the failure mode is a dead sensor. Do it before Phase 5 rather than at
+Phase 7c.

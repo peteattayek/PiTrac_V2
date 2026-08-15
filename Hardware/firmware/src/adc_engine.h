@@ -117,6 +117,7 @@ typedef struct {
     size_t          newest;    // raw ring index of the newest sample of `chan`
     unsigned        stride;    // round-robin channel count
     uint32_t        rate_hz;   // PER-CHANNEL sample rate in the current mode
+    size_t          w_at_snap; // raw write index when the view was taken
 } adc_ring_view_t;
 
 // false if the ring is stopped or `chan` is not in the current round-robin set.

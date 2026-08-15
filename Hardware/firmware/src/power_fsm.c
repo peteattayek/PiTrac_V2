@@ -409,7 +409,10 @@ void power_fsm_step(void) {
         break;
 
     default:
-        enter(PS_STANDBY);
+        // Defensive only -- no transition reaches here. Route through FORCE_OFF
+        // rather than straight to STANDBY so it cannot become the one path that
+        // skips the teardown (latch drop, GPIO33 low, Pi shutdown deassert).
+        enter(PS_FORCE_OFF);
         break;
     }
 }

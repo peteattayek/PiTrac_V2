@@ -63,23 +63,34 @@ static float adc5_sigma(uint32_t ms) {
     // The ring holds 32.8 ms per channel, so take several snapshots spaced
     // slightly further apart than that to get independent data rather than
     // re-reading the same samples.
-    uint64_t sum = 0, sq = 0; uint32_t n = 0;
     uint32_t snaps = (ms + 34u) / 35u; if (!snaps) snaps = 1;
     size_t depth = adc_ring_depth();
     size_t take  = depth > 2048 ? 2048 : depth;
+    if (take == 0 || snaps > 16) return -1.0f;
 
-    for (uint32_t s = 0; s < snaps; s++) {
+    // Welford's online algorithm: one pass, no buffer, and numerically stable
+    // without needing the data kept around.
+    //
+    // The obvious alternatives are both wrong here. Sum(x^2) - n*mean^2 is what
+    // detect_stats() deliberately avoids, and duplicating it here would leave two
+    // functions in the same firmware disagreeing about how to compute a variance.
+    // Buffering for a genuine two-pass would cost 64 KB of BSS to fix a stylistic
+    // point. Welford gives the stability of two passes at the cost of one.
+    double mean = 0, m2 = 0;
+    uint32_t n = 0;
+    for (uint32_t si = 0; si < snaps; si++) {
         if (!adc_ring_view(ADC_CH_DETECT, &v)) break;
         for (size_t k = 0; k < take; k++) {
-            uint32_t x = adc_ring_view_at(&v, k);
-            sum += x; sq += (uint64_t)x * x; n++;
+            double x = (double)adc_ring_view_at(&v, k);
+            n++;
+            double d = x - mean;
+            mean += d / n;
+            m2   += d * (x - mean);
         }
-        if (s + 1 < snaps) sleep_ms(35);
+        if (si + 1 < snaps) sleep_ms(35);
     }
     if (n < 2) return -1.0f;
-    // 64-bit accumulators: n up to 8192 and x^2 up to 4095^2 overflows 32 bits.
-    double mean = (double)sum / n;
-    double var  = (double)sq / n - mean * mean;
+    double var = m2 / (n - 1);
     return (var > 0.0) ? (float)sqrt(var) : 0.0f;
 }
 
@@ -220,7 +231,10 @@ bool cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts,
         double p = out->a0 + out->a1 * f + out->a2 * f * f;
         resid += (p - th[i]) * (p - th[i]);
     }
-    out->resid_rms_rad = (float)sqrt(resid / n);
+    // With exactly 3 points a quadratic fit is EXACT, so the residual is
+    // identically zero and says nothing about fit quality. Report it as
+    // unavailable rather than as a perfect score.
+    out->resid_rms_rad = (n > 3) ? (float)sqrt(resid / n) : -1.0f;
     out->f_lo = (uint32_t)fs[0];
     out->f_hi = (uint32_t)fs[n-1];
     out->n_points = (uint8_t)n;
@@ -237,8 +251,13 @@ bool cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts,
 int32_t cal_model_phase_ticks(const cal_phase_model_t *m, uint32_t f) {
     if (!m || !m->valid) return 0;
     double th = m->a0 + (double)m->a1 * f + (double)m->a2 * (double)f * f;
-    // Required ticks = theta/(2*pi) of one period, and one period is TOP+1
-    // ticks at that frequency.
+    // Required ticks = theta/(2*pi) of one period, and one period is TOP+1 ticks
+    // at that frequency.
+    //
+    // This recomputes TOP+1 rather than calling beam_plan(), which owns that
+    // knowledge -- acceptable only because it is exact for clkdiv 1, and clkdiv
+    // is 1 for everything above ~2289 Hz. The whole scan range is far above that.
+    // If this is ever asked about a sub-kHz carrier it will be wrong.
     double top1 = (double)SYSCLK_HZ / (double)f;
     double frac = th / (2.0 * M_PI);
     frac -= floor(frac);
@@ -255,6 +274,15 @@ bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts,
                       const cal_phase_model_t *model, bool force_cold,
                       cal_scan_point_t *best) {
     if (!best || npts < 2) return false;
+
+    // A scan is minutes of continuous beam. The 35 % ceiling is a DESTRUCTION
+    // limit, not an operating point -- CR-12 measured the junction at 123-133 C
+    // at 30 % against a 145 C maximum. Hold the ceiling at the sustainable duty
+    // for the duration so nothing inside the scan can wander above it, and put
+    // it back afterwards so the ceiling means the same thing everywhere else.
+    float saved_ceiling = beam_duty_ceiling();
+    beam_set_duty_ceiling(BEAM_DUTY_OPERATING);
+    if (beam_duty() > BEAM_DUTY_OPERATING) beam_set_duty(BEAM_DUTY_OPERATING);
 
     // WARM-UP GATE. From cold to plateau the LED loses 25-45 % of its optical
     // output while current moves +1.7 % and power +0.6 % -- so nothing
@@ -321,6 +349,7 @@ bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts,
     printf("\nBEST by SNR: %lu Hz, SNR %.2f, phase %ld ticks%s\n",
            (unsigned long)best->freq_hz, (double)best->snr,
            (long)best->phase_ticks, warm ? "" : "   *** COLD, NOT TRUSTWORTHY ***");
+    beam_set_duty_ceiling(saved_ceiling);
     printf("Also read beam_noise_ratio: it is sigma_noise/sigma_floor, i.e. how much\n"
            "noise the BEAM adds over ambient. That is the boost-harmonic folding this\n"
            "scan exists to dodge. A candidate with high SNR and a ratio near 1.0 is\n"

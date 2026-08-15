@@ -155,6 +155,16 @@ void safe_state_now(void) {
     gpio_put(PIN_LATCH_CONTROL, 0);
 }
 
+// See the header. safe_state_init() uses gpio_init(), which resets the pad's
+// function select to SIO, so every peripheral-owned pin has to be handed back.
+// Kept here rather than in the owning modules so there is exactly one list, next
+// to the code that tore them down.
+void safe_state_reclaim_pins(void) {
+    gpio_set_function(PIN_MOD_PWM,       GPIO_FUNC_PWM);
+    gpio_set_function(PIN_DEMOD_PWM,     GPIO_FUNC_PWM);
+    gpio_set_function(PIN_THRESHOLD_PWM, GPIO_FUNC_PWM);
+}
+
 void fault_raise(fault_t f) {
     if (f == FAULT_NONE) return;
     if (s_fault == FAULT_NONE) s_fault = f;   // first fault wins
