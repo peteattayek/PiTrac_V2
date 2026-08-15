@@ -327,6 +327,23 @@
 //
 // Design rule for the next board spin, corrected: below GPIO32 keep PWM
 // functions off pins 16 apart; at or above GPIO32, off pins 8 apart.
+//
+// TWO MORE PAIRS, found 2026-08-14 by GENERATING the table instead of writing
+// it by hand (tools/netlist_report.py). Neither is in the list above, and both
+// are the kind of thing an ordinary-sounding change walks straight into:
+//
+//   GPIO2  SYSTEM_READY  vs GPIO18 LED_RED     -- slice 1A
+//   GPIO3  IRQ_OUT       vs GPIO19 LED_YELLOW  -- slice 1B
+//
+// Both status LEDs are plain SIO on/off today, so nothing is broken. But "dim
+// the status LEDs with PWM" is a completely reasonable request, and doing it
+// would silently start toggling SYSTEM_READY or IRQ_OUT -- both Pi-facing
+// signals. If the status LEDs ever need brightness control, use software PWM off
+// the 50 Hz timer the way ARCHITECTURE.md A4 describes for the panel ring.
+//
+// THE FULL, GENERATED COLLISION TABLE LIVES IN /HARDWARE_REFERENCE.md section 11.
+// This comment is a summary of it and can go stale; that file cannot, because it
+// is regenerated from the netlist and `--check` fails if it drifts.
 // ---------------------------------------------------------------------------
 
 // NOTE: there are deliberately no PWM_SLICE_* constants here.
