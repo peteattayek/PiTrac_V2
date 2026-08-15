@@ -71,6 +71,83 @@ TP9 should appear as ~1.45 V at ADC5.
 
 ---
 
+> ## ✅ Pre-bench netlist verification, 2026-08-14
+>
+> Every schematic sheet was checked before starting. Nothing here blocks bench work, but
+> four of these are numbers you would otherwise derive at the bench from a wrong premise.
+>
+> ### Verified clean
+>
+> - **All 30 `board.h` pin definitions and all 5 ADC channels** were cross-checked against
+>   the netlist mechanically. Every one maps to a real, named net; none maps to an
+>   unconnected or missing node.
+> - **DNP inventory is complete across all 10 sheets.** Exactly three electrical parts are
+>   unpopulated: **R98** (the detect-chain gain option), **C9** (100 pF on VIR) and **R11**
+>   (5R1, Power). Everything else flagged is a mounting hole or an off-board part. There is
+>   no second tuning option hiding anywhere.
+> - **Test point map** (all are bare 1.0 mm pads, "No Solder" — probe holes, nothing fitted):
+>
+>   | | | | | |
+>   |---|---|---|---|---|
+>   | TP1 GND | TP2 +12V | TP3 U7-E1 | TP4 CurrentSense_ADC | **TP5 `Strobe_GND`** |
+>   | **TP6 +2V5** | **TP7 TIA_Out** | **TP8 Threshold_DC** | **TP9 LPF out** | **TP10 Demod out** |
+>
+>   ⚠ **TP5 is `Strobe_GND`, the shared low-side return** — it is what Phase 2 measured the
+>   U9 clamp on, and in Phase 6 the strobe pulses appear there too. Phase 3 does not use it.
+> - `Modulation_PWM` and `Demodulation_PWM` each carry a **1 kΩ pull-down** (R69, R91), so
+>   both sit at a defined level whenever the MCU pads are high-Z.
+>
+> ### Four numbers that change how you read a result
+>
+> **1. The +2V5 divider is filtered at 31.8 Hz — the Q8 test is valid, the Phase 6
+> extrapolation is pessimistic.** R75/R76 (10K/10K) have **C66 = 1 µF** on the midpoint:
+> `R75∥R76 = 5 kΩ × 1 µF → τ = 5 ms, f_c = 31.8 Hz`. Then a U11C unity buffer, then
+> R79 10 Ω into C71 10 µF (a second pole at 1.6 kHz).
+>
+> So the virtual ground tracks the rail **only below ~32 Hz**. Consequences:
+> - §3.6b uses `beam on`/`beam off` as the step, which is effectively DC against a 32 Hz
+>   corner — so **it measures the fully-coupled worst case, which is exactly what you want.
+>   The ×7.25 prediction stands for that test.**
+> - But this doc's warning that *"a detector that false-triggers on a 100 mV step will
+>   false-trigger on its own strobe"* is **too pessimistic**. A strobe transient is orders
+>   of magnitude faster and is attenuated by this pole — a ~200 µs event by roughly 150×, a
+>   ~5 ms burst envelope by only ~6×. **Measure it in Phase 6; do not assume either extreme.**
+>
+> **2. The DC servo corner is confirmed at 2.27 Hz, and that is why the chop runs at 20 Hz.**
+> Derived independently from the fitted parts — R83 1M × C73 330 nF = 0.48 Hz, times
+> R80/R78 = 470K/100K = 4.7 → **2.27 Hz**, which reproduces the schematic's own annotation
+> exactly. Chopping near that corner costs signal:
+>
+> | chop | loss to the servo |
+> |---|---|
+> | 5 Hz (this doc's original suggestion) | **8.9 %** |
+> | 20 Hz (what `cal demod` uses) | **0.6 %** |
+>
+> 20 Hz sits in a clean window: above the 2.27 Hz servo and the 0.24 Hz gated HPF, far
+> below the 15.39 kHz LPF.
+>
+> **3. The TIA is dispersive, and by a measurable amount.** Feedback is R80 470K with
+> **C68 in series with C70 (1 pF + 1 pF = 0.5 pF)** — two parts in series because sub-pF
+> capacitors are unbuyable and PCB parasitics would dominate. That gives a **677 kHz** pole:
+>
+> | carrier | TIA phase lag |
+> |---|---|
+> | 104.2 kHz | **8.7°** |
+> | 150 kHz | 12.5° |
+> | 200 kHz | 16.5° |
+> | 250 kHz | **20.3°** |
+>
+> **This is the concrete reason a single demod-phase number cannot cover the whole scan
+> range**, and why `cal model` fits phase against frequency instead of assuming a pure
+> delay. It is also a *testable prediction*: the fitted model should show roughly this much
+> curvature. If `cal model` reports `pure_delay`, something is wrong with the measurement.
+>
+> **4. ADC1 has no filter capacitor** — `Net-(U3-GPIO41_ADC1)` is R46.1, R47.2 and the pin,
+> nothing else. That is consistent with Q9 (50 kΩ source into an ADC wanting ≤10 kΩ, with no
+> reservoir to help the sample-and-hold) and is what CR-03 fixes.
+
+---
+
 ## 3.1 ADC allocation
 
 One SAR, 500 ksps aggregate. `adcmode` switches:
