@@ -25,7 +25,7 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 | **CR-06** | J1 terminal block for 14 AWG stranded | 🟡 Med | 1 part + footprint | Cannot land the supply wire you want to use |
 | **CR-07** | 12 V shunt regulator burns ~40 mA at idle | 🟢 Low | Redesign | ~31 % of idle power, forever |
 | **CR-08** | No PGOOD or VIR sense | 🟢 Low | Needs a free ADC | Boost readiness stays open-loop timed |
-| **CR-09** | Mira220 1.8 V I/O translation | ⏸ Blocked | TBD | **Conditional on Q6** — may damage the sensor |
+| **CR-09** | Mira220 1.8 V I/O translation | 🔴 **Unblocked** | High | **Q6 ANSWERED**: I/O is 1.8 V, no 3.3 V tolerance. Both directions fail; 220 Ω fixes neither |
 | **CR-11** | Net `Strobe_GND` is not ground — rename it | 🟢 Low | Rename | A name that invites clipping a scope ground to Q11's drain |
 | **CR-12** | Beam LED thermal path caps sustained duty at ~20 % | 🔴 High | **Vias + bigger sink** (fanless target) | Beam runs at 2/3 optical power while armed → worse Phase 3 SNR |
 
@@ -390,17 +390,83 @@ tradeoff is visible at layout time, not as a recommendation.
 
 ---
 
-## CR-09 — ⏸ Mira220 1.8 V I/O translation — **blocked on Q6**
+## CR-09 — 🔴 Mira220 1.8 V I/O translation — **Q6 ANSWERED 2026-08-14, no longer blocked**
 
-**Do not act on this yet.** J4 drives 3.3 V logic through only 220 Ω into what may be a 1.8 V
-sensor domain. Until the specific sensor-board schematic is obtained and Q6 is answered, the
-required change is unknown — it could be nothing, a divider, or a full level shifter.
+### The sensor spec, from the datasheet
 
-Both directions need answering, and the input direction has a hard constraint: **RP2350 VIH
-is 2.0–2.31 V on a 3.3 V rail, so a 1.8 V sensor output will not register without
-translation.** See `BENCH_P5_P7_MIC_CAMERA.md` §7.0.
+ams-OSRAM Mira220, **DS000642 v9-00 (2025-Sep-26)**, Tables 2 and 3:
 
-Carried here so it is not forgotten at layout time.
+| Symbol | Parameter | Min | Typ | Max |
+|---|---|---|---|---|
+| VDD18 | **I/O supply voltage** | 1.70 | **1.80** | 1.90 V |
+| VDD18 | I/O supply, *absolute max* | | | 4.125 V |
+| IVDD18 | **I/O supply current** | | | **0.6 mA** |
+| VIH | High-level input | 0.7·VDD18 = **1.26 V** | | **VDD18 = 1.80 V** |
+| VIL | Low-level input | VSS | | 0.3·VDD18 = 0.54 V |
+| VOH | **High-level output** | 0.8·VDD18 = **1.44 V** | | VDD18 = 1.80 V |
+| VOL | Low-level output | VSSIO | | 0.2·VDD18 = 0.36 V |
+| ISCR | Input current, latch-up immunity | | ±100 mA | (JESD78D) |
+
+**So Q6's question is answered: yes, the digital I/O is a 1.8 V domain, and there is no
+3.3 V tolerance — VIH max is specified as VDD18 itself.**
+
+### Both directions fail, and 220 Ω fixes neither
+
+**Read direction — a guaranteed functional failure, not a risk.** `Cam_Strobe_0/1` (GPIO8/9)
+are RP2350 *inputs*. The sensor's guaranteed VOH minimum is **1.44 V** and its absolute
+ceiling is 1.80 V, against an RP2350 VIH of **~2.15 V** (0.65 × IOVDD). **1.80 < 2.15**, so
+the strobe inputs never read high and the entire Phase 7 camera handshake cannot work. This
+half was already flagged in the previous revision of this CR; the datasheet now makes it
+certain rather than suspected.
+
+**Write direction — the damage path, quantified.** `D_Cam_Trigger` (GPIO10) drives 3.3 V
+through R18 220 Ω into the sensor input, which clamps to VDD18 through its ESD diode:
+
+```
+I = (3.3 − (1.8 + 0.7)) / 220 Ω ≈ 3.6 mA
+```
+
+- **Latch-up is NOT the concern.** 3.6 mA against ISCR = ±100 mA is ~27× margin.
+- **Rail injection IS.** The sensor's entire I/O supply draws **0.6 mA max**, so 3.6 mA of
+  injection is **six times the rail's own consumption**. An LDO cannot sink, so VDD18 gets
+  pulled up — out of its 1.70–1.90 V operating window, though still under the 4.125 V
+  absolute max. Out-of-spec operation rather than instant destruction.
+- **The genuinely destructive case is driving J4 while the camera is unpowered.** That
+  back-powers VDD18 through the ESD diode and partially wakes the sensor through an I/O pin,
+  violating the datasheet's power-up sequence. This is the one to avoid absolutely.
+
+The 220 Ω resistors limit current, which helps the damage case a little. **They shift no
+levels at all and fix neither direction.**
+
+### The fix
+
+Three signals need translating: one output (`D_Cam_Trigger`) and two inputs
+(`Cam_Strobe_0/1`).
+
+| Direction | Minimum viable | Preferred |
+|---|---|---|
+| 3.3 V → 1.8 V (trigger) | resistive divider — one extra resistor | part of the translator below |
+| 1.8 V → 3.3 V (strobe ×2) | **a divider cannot step up** — translation is mandatory | |
+
+Use a proper translator for all three rather than mixing approaches: a **TXB0104**-class
+auto-direction part, or discrete **BSS138** MOSFET translators. Either needs a 1.8 V
+reference available at J4 — **which the current J4 pinout does not provide** (pins 1, 2, 5, 6
+are all GND). So J4 must gain a VDDIO sense pin, or the translator's low side must be fed
+from a local 1.8 V regulator.
+
+⚠ **Running the RP2350's bank 0 at 1.8 V is not an option** — it is a single IOVDD domain and
+the rest of the board is 3.3 V.
+
+### The one thing still unknown
+
+**Whether the camera board mates raw sensor pins to J4, or already level-shifts.** The
+analysis above is definitive for a *bare* Mira220. `BENCH_P5_P7_MIC_CAMERA.md` records that
+the sensors hang off the Pi's CSI and J4 carries only trigger/strobe — so J4 lands on the
+camera board's own header, and that board's schematic governs. **Get it before connecting
+anything**, because if the module already translates, this CR may reduce to nothing.
+
+**Until then the rule stands: do not connect J4 to a camera**, and in particular never drive
+`D_Cam_Trigger` high with the camera unpowered.
 
 ---
 

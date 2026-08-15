@@ -175,7 +175,35 @@ The practical consequence for this phase: while characterising the mic on its ow
 IDLE or ARMED and do not let anything switch modes underneath the measurement. `adc <ch>`
 and `capture` are both documented as disruptive for exactly this reason.
 
-## 🔴 Q6 should be resolved before anything is plugged into J4
+## ✅ Q6 ANSWERED 2026-08-14 — and the answer is bad
+
+**The Mira220's digital I/O is a 1.8 V domain with no 3.3 V tolerance** (datasheet DS000642
+v9-00: VDD18 = 1.70/1.80/1.90 V, **VIH max specified as VDD18 itself**, VOH min = 1.44 V).
+
+**Both directions fail, and the 220 Ω resistors fix neither** — they limit current; they
+shift no levels:
+
+- **Reading the strobes cannot work.** The sensor's output ceiling is 1.80 V against an
+  RP2350 VIH of ~2.15 V. `Cam_Strobe_0/1` will never read high, so the §7b/7c handshake is
+  dead on arrival without translation.
+- **Driving the trigger injects 3.6 mA** into the sensor's ESD clamp. Latch-up is not the
+  risk (±100 mA immunity), but the I/O rail draws only **0.6 mA max**, so that is 6× its own
+  consumption and lifts VDD18 out of spec. **The destructive case is driving J4 with the
+  camera unpowered**, which back-powers VDD18 through the diode and violates the power-up
+  sequence.
+
+**Full analysis and the fix in `NEXT_BOARD_REV.md` CR-09**, now unblocked and red.
+
+⚠ **One unknown remains, and it decides everything:** J4 lands on the *camera board's*
+header, not on raw sensor pins. If that board already level-shifts, CR-09 may reduce to
+nothing. **Get its schematic before connecting anything.**
+
+**The loopback test in §7a is unaffected** — it jumpers J4 to itself with no camera present,
+so it stays valid and is still the right first step.
+
+---
+
+### (original wording, retained)
 
 Q6 (Mira220 digital I/O possibly 1.8 V, while J4 drives 3.3 V through 220 Ω) is **the only
 damage-class open question left in the whole plan** — every other outstanding item is a
