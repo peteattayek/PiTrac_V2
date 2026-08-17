@@ -246,6 +246,34 @@ the fault: TP7 off alone → servo or bias; TP9 ≠ TP10 → an LPF stage.
 
 ## 3.3 Beam ON, no target
 
+> ### 🔴 STOP HERE — this is where the board currently blocks (2026-08-17)
+>
+> **The TIA saturates on beam coupling above ~3 % duty.** Measured with `capture 0x04 400 500000`:
+>
+> | duty | TIA_Out codes | |
+> |---|---|---|
+> | 2 % | 597 … 3709 | linear |
+> | **3 %** | 98 … 3791 | **linear, bottom 79 mV off the rail** |
+> | 4 % | **5** … 3798 | bottom railed |
+> | 6 %, 8 % | 4 … **4095** | both rails |
+>
+> Knock-on: a full-scale square into the demodulator slew-limits the LPF's OPA4323 sections
+> (1.5 V/µs needs 3.3 µs for a 5 V step against a 9.6 µs carrier period), **a slew-limited
+> filter stops filtering**, and **313 mV of carrier lands on ADC5**. Any comparator threshold
+> below ~250 mV chatters at 104 kHz.
+>
+> **§3.4 onward cannot produce trustworthy numbers until this is fixed** — `scan carrier` SNR
+> would be dominated by the feedthrough, which is the exact quantity it exists to compare.
+>
+> Full analysis, the open mechanism question, and the acceptance test: **`NEXT_BOARD_REV.md`
+> CR-15**. The mechanism (optical crosstalk vs beam-current coupling) is **not yet settled** —
+> the drive itself is exonerated (U9 measured exact, 210/210 edges at 100.000 µs).
+>
+> ⚠ **Before running any optical test here, read `PROGRESS.md` §11.** A foil-over-D12 test shorted
+> 36 V into the TIA summing node. D12's cathode is at VIR through R77 — nothing conductive goes
+> near it without knowing what it must not touch.
+
+
 ```
 beam duty 25          # NOT 30 -- CR-12: 30 % puts T_j at 123-133 C vs 145 max
 beam on

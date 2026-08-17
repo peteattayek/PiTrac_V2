@@ -59,7 +59,9 @@ Includes phases 0–2 (`safe_state`, `adc_engine`, `power_fsm`, `panel`, `beam`,
 | Toolchain | **Installed** — VS Code Pico extension, private copies in `%USERPROFILE%\.pico-sdk`. SDK 2.3.0, toolchain 15_2_Rel1, ninja 1.13.2, cmake 4.3.4. |
 | Bench equipment | Scope, logic analyzer, DMM, current-limited PSU, **FLIR thermal camera**. See the thermal section in `BENCH.md` for the four points where the FLIR matters. |
 | Firmware | Phases 0–2 written, **builds clean**, flashed and running |
-| Bench work done | **Phases 0, 0.5, 1, 1b, 1c (2026-07-31) and 2 (2026-08-13) all complete.** Phase 2: phase lock to 0.15 ticks, beam ramped to 30 %, U9 clamp 122.68 µs, duty fidelity flat to 250 kHz, thermals characterised. E9 check passed. All rails verified. All Phase 1 tests pass including fail-safe-through-reset; **the full Phase 1b matrix passes**, covering both timeouts, the RPI5_ON fallback, the escape hatch and the reset invariant. Standby draw **32 mA**. **Phase 2 next.** |
+| Bench work done | **Phases 0, 0.5, 1, 1b, 1c (2026-07-31) and 2 (2026-08-13) all complete.** Phase 2: phase lock to 0.15 ticks, beam ramped to 30 %, U9 clamp 122.68 µs, duty fidelity flat to 250 kHz, thermals characterised. E9 check passed. All rails verified. All Phase 1 tests pass including fail-safe-through-reset; **the full Phase 1b matrix passes**, covering both timeouts, the RPI5_ON fallback, the escape hatch and the reset invariant. Standby draw **32 mA**. |
+| **Phase 3 bench, 2026-08-17** | 🔴 **STARTED, then BLOCKED.** Firmware boots and works: PIO on block 2 / GPIOBASE 16, threshold DAC correct on a DMM, `hpf test` resolved the GPIO33 polarity (**TRACK = 0**, matching the TMUX1219 datasheet), `cfg save` persists. **Blocked at §3.3 by CR-15** — the TIA saturates on beam coupling above ~3 % duty. |
+| ⚠ **BOARD STATE RIGHT NOW** | **The DC servo is latched at its positive rail and TP7 sits at 0 V.** Caused by a diagnostic step that laid conductive foil over D12; see §11. **Every rail, D12 and the reference test good and the current budget closes to 0.3 µA — no damage indicated.** Clearing it needs a long power-down. **Read §11 before touching the board.** |
 
 **Bug found and fixed on the bench 2026-07-30 — ✅ fix verified (Phase 1 test 5).**
 
@@ -245,9 +247,14 @@ See `tools/openocd_pi5.cfg`.
 - [~] **3** Photodiode: **FIRMWARE COMPLETE 2026-08-14, builds clean, NOT YET RUN ON HARDWARE.**
       All of steps 1-7 written: threshold DAC, HPF control + polarity self-test, PIO transit
       timer, ADC refinement, `cal demod` + phase model, `scan carrier`, flash config.
-      **Bench work not started.** Run `hpf test` first — the GPIO33 polarity is unverified.
+      **Bench work STARTED 2026-08-17 and is BLOCKED at §3.3.** Passing so far: boot, PIO
+      allocation on silicon, threshold DAC vs DMM, static health (`adc 2` = 2.5884 V),
+      **`hpf test` → GPIO33 = 0 is TRACK** (agrees with the TMUX1219 truth table), `cfg save`.
+      🔴 **Blocked by CR-15:** the TIA saturates on beam coupling above ~3 % duty, so §3.4
+      onward cannot produce trustworthy numbers. Mechanism (optical vs beam-current) still open.
 - [~] **4** Trigger source experiment — **firmware complete** (`detect log` / `detect stats`,
-      including the bias-vs-1/peak regression). Bench work not started.
+      including the bias-vs-1/peak regression). Bench work not started, and **gated on CR-15** —
+      the comparator would chatter at 104 kHz on the carrier feedthrough.
 - [ ] **5** Microphone *(can be pulled forward — runs on USB power alone, no latch needed)*
 - [ ] **6** Strobe: 6a dry → 6b gate DAC → 6c LED bank ramp → 6d clamp-with-current
 - [ ] **7** Cameras: 7a loopback → 7b delayed sim → 7c real (needs Pi)
@@ -534,7 +541,22 @@ firmware/
 
 ## 10. Next session — start here
 
-> ### 🔵 RESUME POINT — Phase 3 firmware COMPLETE, bench work NOT STARTED (2026-08-14)
+> ### 🔴 RESUME POINT — Phase 3 bench BLOCKED by CR-15, board in a latched state (2026-08-17)
+>
+> **Read §11 first — the board is not in a clean state.** The DC servo is latched at its
+> positive rail and TP7 reads 0 V. Nothing is believed damaged; it needs a long power-down.
+>
+> **Phase 3 bench progress before the block:** boot ✅, PIO block 2 @ GPIOBASE 16 ✅, threshold
+> DAC vs DMM ✅, static health ✅ (`adc 2` = 2.5884 V vs 2.59 expected), **`hpf test` → TRACK =
+> GPIO33 low** ✅ (confirmed twice — empirically and against the TMUX1219 datasheet), `cfg save` ✅.
+>
+> 🔴 **Then blocked at §3.3:** the TIA saturates on beam coupling above ~3 % duty (CR-15). Until
+> that is fixed, §3.4 onward cannot produce trustworthy numbers — 313 mV of carrier reaches ADC5
+> and any comparator threshold under ~250 mV would chatter at 104 kHz.
+>
+> ---
+>
+> ### (below: the 2026-08-14 firmware handover, still accurate for the code)
 >
 > **All Phase 3/4 firmware is written and builds clean. None of it has run on hardware.**
 > Branch `phase3-detection`. Approved plan lives in the user's `.claude/plans/` directory
@@ -664,3 +686,76 @@ nearest-edge approach fails at exactly phase 0, TOP/2 and TOP.
 ```
 & "$env:USERPROFILE\.pico-sdk\ninja\v1.13.2\ninja.exe" -C <firmware>\build
 ```
+
+---
+
+## 11. Incident 2026-08-17 — foil short across D12, and the latched servo
+
+**Recorded because the board is still in this state, and because the diagnostic that caused
+it was a bad instruction rather than a bad execution.**
+
+### What happened
+
+Chasing the CR-15 mechanism, the next step was to block light with something definitively
+opaque at 850 nm. The instruction given was to lay **aluminium foil over D12** — with no
+warning about contact. D12's cathode sits on **VIR, 36 V, through R77 10 kΩ**, and its anode
+is the TIA summing node. Foil across the package bridges them.
+
+```
+(36 − 2.59) / 10 kΩ = 3.3 mA into U11A's summing node
+U11A must sink it through R80 470 kΩ → would need 1570 V → rails low
+```
+
+The give-away was direction: the capture collapsed to ~8 mV, i.e. the **negative** rail. The
+TIA is inverting, so *removing* light drives the output **up**. A negative rail means current
+flowing **into** the node — the opposite of what blocking light does. **Absence of signal is
+baseline (2.59 V), not a rail.**
+
+### Current state, and why no damage is indicated
+
+| point | reading | verdict |
+|---|---|---|
+| TP6 (+2V5) | 2.59 V | ✅ +5VA and the reference healthy; U11C alive |
+| TP2 (+12 V) | 12.3 V | ✅ boost fine |
+| D12 cathode | 36 V | ✅ **D12 not conducting**; diode-checks good out of circuit |
+| D12 anode (summing node) | 4.26 V | = the R78/R80 divider, see below |
+| R78 far pad (U11D out) | 5.2 V | 🔴 **servo latched at the positive rail** |
+| TP7 (TIA_Out) | 0 V | saturated — the *correct* response, see below |
+
+**The current budget closes:**
+
+```
+in  via R78:  (5.20 − 4.26) / 100 kΩ = 9.40 µA
+out via R80:  (4.26 − 0.00) / 470 kΩ = 9.06 µA
+                          unaccounted =  0.34 µA
+```
+
+Every microamp is accounted for by two resistors. **Damage shows up as unexplained current;
+there is none.** The summing node at 4.26 V is exactly 5.2 × 470/(470+100) = 4.29 V, the
+passive divider between a railed servo and a railed-low output.
+
+And U11A is behaving **correctly**: to hold the node at 2.59 V against 9.4 µA through R78 it
+would need its output at 2.59 − (9.4 µA × 470 kΩ) = **−1.8 V**, below its rail. Saturating is
+the right answer, not a fault.
+
+Stepping back once more, U11D is a unity inverter (R84 = R85 = 10 kΩ) around +2V5, so
+`V_U11D = 5.18 − V_U11B` puts **U11B, the integrator, at its negative rail.**
+
+### The open question
+
+U11B *should* unwind by itself. R83 1 MΩ from TP7 at 0 V against the 2.59 V reference gives
+2.59 µA into C73 330 nF = **7.85 V/s**, a full traverse in ~0.3 s. It has had far longer.
+
+**Clearing it:** power down for **several minutes** — C73 is 330 nF and with U11 unpowered it
+discharges only through high-impedance internal structures, so a 30 s cycle may not be enough.
+If a long power-down does not clear it, the suspicion moves to **C73 or U11B**, neither of
+which the foil touched.
+
+### Lessons worth keeping
+
+1. **Never put conductive material near this board without stating what it must not touch.**
+   D12 has 36 V on one leg.
+2. **A rail is not a null.** If a test is supposed to *remove* a signal, the pass condition is
+   "returns to baseline", not "goes quiet" — a saturated output is also very quiet.
+3. Foil over the **photodiode** was chosen over the LED specifically to keep metal away from
+   the switching loop. That reasoning was right; the omission was the contact warning.
