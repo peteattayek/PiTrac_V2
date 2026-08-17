@@ -206,7 +206,7 @@ adc 2 256          # TIA_Out
 | Point | Expect |
 |---|---|
 | TP6 (+2V5) | 2.59 V ±0.05 |
-| **TP7 (TIA_Out)** | **2.59 V regardless of ambient light** — the 2.27 Hz DC servo nulls it |
+| **TP7 (TIA_Out)** | **2.59 V mean regardless of ambient light** — the DC servo nulls it. ⚠ **DC only:** the servo corner is 2.27 Hz, so mains flicker is *not* removed — see the note below |
 | TP9, TP10 | 2.59 V |
 | ADC2 | should agree with TP7 on the scope |
 
@@ -216,6 +216,31 @@ VIR at J3, and C67.
 
 All four agreeing is the pass criterion, not the absolute number. Divergence localises
 the fault: TP7 off alone → servo or bias; TP9 ≠ TP10 → an LPF stage.
+
+> ### ⚠ Ambient flicker is NOT rejected with the beam off — measured 2026-08-17
+>
+> The DC servo nulls **DC**. Its corner is 2.27 Hz, so 100/120 Hz room-light flicker passes
+> straight through it. And with the beam off, `Demodulation_PWM` is low (R91 pulldown) → U13
+> statically passes TIA_Out → **there is no lock-in rejection either.** Gain from TP7 to ADC5
+> is then ×29 (U12A ±1 × LPF 2 × U12B 14.5), and the 0.24 Hz HPF passes flicker happily.
+>
+> **Measured on this board under ordinary LED room lighting:** `capture 0x20 4000 125000`
+> gave **201 codes = 162 mV p-p at ADC5, at ~120 Hz** — a ramp-then-collapse shape, not a
+> sinusoid, because LED lamps run off a rectified supply. That works back to ~5.6 mV at TP7
+> and **~12 nA of photocurrent ripple**.
+>
+> **Consequences:**
+> - **`hpf test` needs the photodiode shaded or the lights off.** It resolves 20–90 mV
+>   baselines; 162 mV of flicker swamps it and the test correctly reports ORDER-DEPENDENT.
+> - For scale: a 100 mV bump at TP9 is ~1.45 V at ADC5, so flicker is ~11 % of a nominal ball
+>   — a real noise floor with the demod static, and the reason the carrier exists.
+>
+> ### 🟢 Use this as the lock-in proof
+>
+> Take that capture **lights on, beam off** (162 mV of 120 Hz), then repeat it **beam on with
+> the demodulator running**. The flicker should collapse by ~64 dB and effectively vanish.
+> That is a direct, quantitative demonstration that the synchronous demodulator works, and it
+> is a stronger check than anything in §3.4 — do it before trusting any phase calibration.
 
 ---
 
