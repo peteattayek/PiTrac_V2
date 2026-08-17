@@ -27,6 +27,7 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 | **CR-08** | No PGOOD or VIR sense | 🟢 Low | Needs a free ADC | Boost readiness stays open-loop timed |
 | **CR-09** | Mira220 1.8 V I/O translation | 🔴 **Unblocked** | High | **Q6 ANSWERED**: I/O is 1.8 V, no 3.3 V tolerance. Both directions fail; 220 Ω fixes neither |
 | **CR-11** | Net `Strobe_GND` is not ground — rename it | 🟢 Low | Rename | A name that invites clipping a scope ground to Q11's drain |
+| **CR-15** | **LED→PD crosstalk saturates the TIA above ~2–4 % duty** | 🔴 **Blocker** | Baffle (mech) | **Phase 3 cannot proceed.** Front end rails, LPF slew-limits, 313 mV of carrier lands on ADC5 |
 | **CR-12** | Beam LED thermal path caps sustained duty at ~20 % | 🔴 High | **Vias + bigger sink** (fanless target) | Beam runs at 2/3 optical power while armed → worse Phase 3 SNR |
 
 ---
@@ -812,3 +813,76 @@ comparator in range.
 dynamic range. **Measure the actual ceiling first:** sweep the threshold against signal
 amplitude and find where GPIO46 stops tracking ADC5. That number decides whether this is
 urgent or academic.
+
+---
+
+## CR-15 — 🔴 LED→photodiode crosstalk saturates the TIA above ~2–4 % duty
+
+### The measurement, 2026-08-17
+
+`capture 0x04 400 500000` (ADC2 = TIA_Out) with the beam running, no target:
+
+| beam duty | TIA_Out codes | state |
+|---|---|---|
+| **2 %** | 600 … 3709 | linear |
+| **10 %** | 2 … 4095 | **saturated, both rails** |
+| **25 %** | 3 … 4095 | **saturated, both rails** |
+
+Confirmed optical rather than electrical by the duty scaling: edge-coupled pickup would
+be duty-independent, since the number of switching edges per second is the same at any duty.
+
+At 2 % the crosstalk swing is 3109 codes = **2.50 V**, so the leakage photocurrent is
+2.50 V / R80 470 kΩ = **~5.3 µA peak**.
+
+### Why it saturates
+
+The TIA idles at 2.59 V with about ±2.6 V of headroom. **A 2.50 V crosstalk swing uses 96 %
+of it at the lowest usable duty.** There is essentially no headroom for crosstalk at all.
+
+The DC servo then makes it worse as duty rises. It nulls the *mean*, so wider pulses push the
+baseline up to compensate — driving the off level toward the positive rail while the on level
+already sits near the negative one. Both extremes rail, which is the `4095 / 2` pattern above.
+
+### Why it matters far more than a saturated front end usually would
+
+Saturation does not stay contained in the TIA:
+
+1. The demodulator receives a **full-scale square wave** instead of a small signal.
+2. The 4th-order LPF is built from OPA4323 sections whose slew rate is ~1.5 V/µs. A 5 V step
+   needs ~3.3 µs against a 9.6 µs carrier period, so **the filter op-amps slew-limit**.
+3. **A slew-limited filter stops filtering.** It passes large signals through as triangles
+   rather than attenuating them.
+4. Measured result: **313 mV p-p of carrier on ADC5**, where the small-signal prediction
+   (66 dB of rejection at 104 kHz) says ~18 mV. The 18× discrepancy *is* the slew limiting.
+
+Consequences if not fixed:
+
+- **Any comparator threshold below ~250 mV chatters at 104 kHz continuously.** That is not a
+  detector.
+- 313 mV is ~4× the measured ambient-flicker floor, so it would dominate every `scan carrier`
+  SNR figure — the exact quantity that scan exists to compare.
+- It would not announce itself. The numbers would simply be wrong.
+
+### The fix
+
+**An optical baffle between D11 and D12** — this is a mechanical change, not a PCB one, and
+it is the correct place to solve it. Crosstalk and signal are the same physical quantity
+(reflected 850 nm light), so it cannot be filtered electrically; it has to be stopped
+optically before it reaches the photodiode.
+
+Sizing: the isolation needed is the ratio between the current crosstalk and the amount that
+leaves adequate headroom at the intended operating duty. Take the max-linear-duty measurement
+first and size from that rather than guessing.
+
+Secondary options, both with real costs:
+
+| Option | Cost |
+|---|---|
+| Reduce R80 below 470 kΩ | Lowers crosstalk swing *and* ball sensitivity by the same factor — no net SNR gain |
+| Run at 2 % duty | Linear, but ~12× less optical power and therefore ~12× less signal |
+| Faster op-amps in the LPF | Treats the symptom; the TIA is still saturated and its output is meaningless |
+
+### Verify
+
+`capture 0x04 400 500000` at the intended operating duty: no sample at 4095 or near 0.
+Then `capture 0x20 400 500000` should show the carrier gone from ADC5, not merely reduced.
