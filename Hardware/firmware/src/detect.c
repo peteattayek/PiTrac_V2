@@ -569,12 +569,13 @@ bool detect_comparator(void) { return gpio_get(PIN_D_COMPARATOR) != 0; }
 // further while a tighter threshold just makes the test brittle.
 // ---------------------------------------------------------------------------
 
-static float sample_drift_v(uint32_t window_ms, float *out_mean_v) {
-    // Let the mux settle and the HPF do whatever it is going to do first.
-    sleep_ms(200);
-
+// Sample the ADC5 baseline: mean and peak-to-peak excursion over `window_ms`.
+// Assumes the caller has already settled the node -- this does NOT settle.
+static void sample_baseline(uint32_t window_ms, float *out_mean, float *out_drift) {
     uint16_t code;
-    if (!adc_ring_avg(ADC_CH_DETECT, 256, &code)) { if (out_mean_v) *out_mean_v = 0.0f; return -1.0f; }
+    if (!adc_ring_avg(ADC_CH_DETECT, 256, &code)) {
+        *out_mean = 0.0f; *out_drift = -1.0f; return;
+    }
     float first = adc_code_to_volts(code);
     float lo = first, hi = first, sum = first;
     uint32_t n = 1;
@@ -588,38 +589,57 @@ static float sample_drift_v(uint32_t window_ms, float *out_mean_v) {
         if (v > hi) hi = v;
         sum += v; n++;
     }
-    if (out_mean_v) *out_mean_v = sum / (float)n;
-    return hi - lo;
+    *out_mean  = sum / (float)n;
+    *out_drift = hi - lo;
 }
 
 void detect_hpf_test(hpf_test_t *out, uint32_t window_ms) {
     if (!out) return;
-    hpf_mode_t restore = s_hpf;
+    *out = (hpf_test_t){0};
+    out->track_level = -1;
 
-    detect_hpf_set(HPF_TRACK);
-    out->track_drift_v = sample_drift_v(window_ms, &out->track_mean_v);
+    int restore = gpio_get_out_level(PIN_HPF_TOGGLE);
 
-    detect_hpf_set(HPF_HOLD);
-    out->hold_drift_v = sample_drift_v(window_ms, &out->hold_mean_v);
-
-    detect_hpf_set(restore);
-
-    if (out->track_drift_v < 0.0f || out->hold_drift_v < 0.0f) {
-        out->ratio = 0.0f; out->conclusive = false; out->polarity_ok = false;
-        return;
+    // Alternate the levels so an ordering artifact shows up as a disagreement
+    // between the two repeats of the same level rather than as a fake result.
+    for (int rep = 0; rep < 2; rep++) {
+        for (int lvl = 0; lvl < 2; lvl++) {
+            gpio_put(PIN_HPF_TOGGLE, lvl);
+            sleep_ms(HPF_TEST_SETTLE_MS);      // >= 7 tau. See the header.
+            sample_baseline(window_ms, &out->mean_v[lvl][rep], &out->drift_v[lvl][rep]);
+        }
     }
+    gpio_put(PIN_HPF_TOGGLE, restore);
 
-    // Floor the denominator at one ADC LSB so a perfectly still TRACK trace does
-    // not divide by zero and report an infinite, meaningless ratio.
-    float floor_v = adc_code_to_volts(1);
-    float denom   = (out->track_drift_v > floor_v) ? out->track_drift_v : floor_v;
-    out->ratio    = out->hold_drift_v / denom;
+    for (int lvl = 0; lvl < 2; lvl++)
+        for (int rep = 0; rep < 2; rep++)
+            if (out->drift_v[lvl][rep] < 0.0f) return;   // no ADC; nothing to say
 
-    // 4x separation. The predicted separation is far larger, so this is a loose
-    // bar deliberately -- it only has to beat noise, and demanding more would
-    // turn an ambiguous board into a failed test.
-    out->conclusive  = (out->ratio >= 4.0f) || (out->ratio <= 0.25f);
-    out->polarity_ok = out->conclusive && (out->ratio >= 4.0f);
+    // Average the repeats, and take the magnitude: TRACK sits at ~0, HOLD walks
+    // away from it in whichever direction the leakage happens to push.
+    float m0 = fabsf((out->mean_v[0][0] + out->mean_v[0][1]) * 0.5f);
+    float m1 = fabsf((out->mean_v[1][0] + out->mean_v[1][1]) * 0.5f);
+
+    // The repeatability check. This is the test that the previous version lacked
+    // and that would have caught its ordering bug immediately: if the two
+    // measurements of ONE level differ by more than the two levels differ from
+    // each other, then whatever is being measured is not a property of the level.
+    float spread0 = fabsf(out->mean_v[0][0] - out->mean_v[0][1]);
+    float spread1 = fabsf(out->mean_v[1][0] - out->mean_v[1][1]);
+    float between = fabsf(m0 - m1);
+    out->order_effect = (spread0 > between) || (spread1 > between);
+
+    float big = (m0 > m1) ? m0 : m1;
+    float sml = (m0 > m1) ? m1 : m0;
+    float floor_v = adc_code_to_volts(4);          // a few LSB of noise floor
+    out->separation = big / ((sml > floor_v) ? sml : floor_v);
+
+    // TRACK is the level whose baseline stays near zero.
+    out->conclusive  = !out->order_effect && (out->separation >= 3.0f);
+    if (out->conclusive) {
+        out->track_level = (m0 < m1) ? 0 : 1;
+        out->polarity_ok = (out->track_level == HPF_SEL_TRACK);
+    }
 }
 
 // ---------------------------------------------------------------------------

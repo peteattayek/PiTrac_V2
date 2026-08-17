@@ -108,20 +108,48 @@ const char *detect_hpf_name(hpf_mode_t m);
 // boot case; this covers the runtime one.
 void        detect_hpf_safe_off(void);
 
+// Settle time before each measurement window.
+//
+// THIS CONSTANT IS THE WHOLE REASON THE FIRST VERSION OF THIS TEST WAS WRONG.
+// It used 200 ms against an HPF whose tau is 0.66 s -- 0.3 tau. So the first
+// window measured the node still settling from whatever state preceded it,
+// amplified x14.5, and the second window (which had enjoyed 3+ s of settling)
+// looked quiet by comparison. The result followed the ORDER OF MEASUREMENT and
+// not the pin level at all, and it confidently reported INVERTED twice in a row
+// -- once for each value of the constant it was supposed to be validating.
+//
+// 5 s is ~7.6 tau, so a TRACK node is settled to <0.1 % before sampling starts.
+#define HPF_TEST_SETTLE_MS   5000u
+
 typedef struct {
-    float track_drift_v;      // ADC5 excursion over the window, TRACK
-    float hold_drift_v;       // same, HOLD
-    float track_mean_v;
-    float hold_mean_v;
-    float ratio;              // hold_drift / track_drift
-    bool  conclusive;         // ratio big enough to call it
-    bool  polarity_ok;        // HPF_SEL_TRACK as defined matches what TRACK does
+    // Indexed [gpio33_level][repeat]. Raw LEVELS, not TRACK/HOLD -- the point of
+    // the test is to discover which is which, so it must not label them from the
+    // constant it is checking.
+    float mean_v [2][2];
+    float drift_v[2][2];
+
+    int   track_level;    // the level that behaves like TRACK, or -1 if unknown
+    float separation;     // |mean(level 0)| vs |mean(level 1)|, larger/smaller
+    bool  order_effect;   // repeats of the SAME level disagree -> untrustworthy
+    bool  conclusive;
+    bool  polarity_ok;    // track_level matches the compiled HPF_SEL_TRACK
 } hpf_test_t;
 
-// Sit in each mode for `window_ms` and compare how far the ADC5 baseline walks.
-// TRACK is pinned to 0 V through 2M and should barely move; HOLD floats and
-// should visibly ramp. Blocking, ~2 x window_ms. Needs the ADC ring running and
-// ch5 in the current round-robin set (IDLE or ARMED).
+// Establish which GPIO33 level selects the R96/GND leg, empirically.
+//
+// The discriminator is the ABSOLUTE steady-state baseline, not a drift rate:
+// TRACK is DC-coupled to ground through R96 2M, so after settling ADC5 must sit
+// at ~0 (op-amp offset only). HOLD is a genuine open, so C81 integrates the
+// switch leakage and the baseline walks away from 0 without bound -- roughly
+// 11 mV/s at ADC5 as measured on this board.
+//
+// Each level is measured TWICE, alternating, and the repeats are compared. That
+// is not redundancy: it is the specific check that catches an ordering artifact,
+// which is the failure mode this test already had once. If the two repeats of one
+// level disagree, `order_effect` is set and no conclusion is drawn.
+//
+// Blocking, about 4 x (HPF_TEST_SETTLE_MS + window_ms) -- ~32 s at the default.
+// Needs the +5V rail up and ch5 in the round-robin (IDLE or ARMED).
 void detect_hpf_test(hpf_test_t *out, uint32_t window_ms);
 
 // ---------------------------------------------------------------------------

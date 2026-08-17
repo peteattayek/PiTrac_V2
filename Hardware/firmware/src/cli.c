@@ -786,32 +786,51 @@ static void dispatch(int argc, char **argv) {
                        "         Use 'on' first.\n", power_state_name(power_fsm_state()));
                 return;
             }
-            printf("measuring ADC5 baseline drift in each mux state, %lu ms each ...\n",
-                   (unsigned long)w);
-            printf("  TRACK pins the node to 0 V through R96 2M -- it should not move.\n"
-                   "  HOLD floats it; ~1 nA of switch leakage into C81 330 nF is\n"
-                   "  ~44 mV/s at ADC5, so it should visibly walk.\n");
+            printf("Establishing the GPIO33 polarity. Each level twice, alternating,\n"
+                   "%lu ms settle + %lu ms sample each -- about %lu s total.\n",
+                   (unsigned long)HPF_TEST_SETTLE_MS, (unsigned long)w,
+                   (unsigned long)(4u * (HPF_TEST_SETTLE_MS + w) / 1000u));
+            printf("  TRACK is DC-coupled to 0 V through R96 2M, so its SETTLED baseline\n"
+                   "  must sit at ~0. HOLD is a genuine open, so C81 integrates the switch\n"
+                   "  leakage and the baseline walks off (~11 mV/s measured on this board).\n");
+            printf("  Each level is measured TWICE so an ordering artifact shows up as a\n"
+                   "  disagreement between repeats instead of as a confident wrong answer.\n\n");
             hpf_test_t r;
             detect_hpf_test(&r, w);
-            printf("\n  as-compiled TRACK (GPIO33=%d): drift %.4f V, mean %.4f V\n",
-                   HPF_SEL_TRACK, (double)r.track_drift_v, (double)r.track_mean_v);
-            printf("  as-compiled HOLD  (GPIO33=%d): drift %.4f V, mean %.4f V\n",
-                   HPF_SEL_HOLD, (double)r.hold_drift_v, (double)r.hold_mean_v);
-            printf("  ratio hold/track = %.1f\n", (double)r.ratio);
-            if (!r.conclusive) {
-                printf("\n  INCONCLUSIVE. The two states did not separate. That is a\n"
-                       "  HARDWARE finding, not a firmware result -- do not guess a\n"
-                       "  polarity from it. Try a longer window, or scope TP9 and the\n"
-                       "  U14 pins directly.\n");
+            printf("  level     rep1 mean   rep2 mean    rep1 p-p   rep2 p-p\n");
+            for (int lvl = 0; lvl < 2; lvl++)
+                printf("  GPIO33=%d  %+9.4f V %+9.4f V   %8.4f   %8.4f\n", lvl,
+                       (double)r.mean_v[lvl][0], (double)r.mean_v[lvl][1],
+                       (double)r.drift_v[lvl][0], (double)r.drift_v[lvl][1]);
+            printf("\n  separation %.1fx\n", (double)r.separation);
+
+            if (r.order_effect) {
+                printf("\n  *** ORDER-DEPENDENT -- NO CONCLUSION DRAWN ***\n"
+                       "  The two repeats of one level disagree by more than the levels\n"
+                       "  differ from each other, so what is being measured is not a\n"
+                       "  property of the level. Settling or something external dominates.\n"
+                       "  Try a longer window. Do NOT change HPF_SEL_TRACK on this result --\n"
+                       "  an earlier version of this test had exactly this bug and reported\n"
+                       "  INVERTED twice, once for each value of the constant.\n");
+            } else if (!r.conclusive) {
+                printf("\n  INCONCLUSIVE -- the levels did not separate (%.1fx, need 3x).\n"
+                       "  That is a HARDWARE finding, not a firmware result. Scope TP9 and\n"
+                       "  the U14 pins directly rather than guessing a polarity.\n",
+                       (double)r.separation);
             } else if (r.polarity_ok) {
-                printf("\n  CONFIRMED: HPF_SEL_TRACK = %d is correct. No change needed.\n",
-                       HPF_SEL_TRACK);
+                cfg_mut()->hpf_sel_track = (uint8_t)HPF_SEL_TRACK;
+                printf("\n  CONFIRMED: GPIO33=%d is TRACK, matching the compiled\n"
+                       "  HPF_SEL_TRACK. No change needed.\n", r.track_level);
+                printf("  The TMUX1219 datasheet agrees independently: SEL=0 selects S1,\n"
+                       "  and S1 is the R96/GND leg.\n");
+                printf("  Recorded in the config -- 'cfg save' to persist.\n");
             } else {
-                printf("\n  *** INVERTED *** The state this firmware calls TRACK is the one\n"
-                       "  that drifts, so SEL=%d actually selects the FLOATING throw.\n"
-                       "  FIX: set HPF_SEL_TRACK to %d in board.h and reflash.\n"
-                       "  Everything measured before this point in TRACK/HOLD is suspect.\n",
-                       HPF_SEL_TRACK, !HPF_SEL_TRACK);
+                printf("\n  *** DISAGREES WITH THE DATASHEET -- INVESTIGATE, DO NOT FLIP ***\n"
+                       "  This measurement says GPIO33=%d is TRACK; HPF_SEL_TRACK is %d.\n"
+                       "  But the TMUX1219 truth table says SEL=0 selects S1, and S1 is the\n"
+                       "  R96/GND leg -- so 0 should be TRACK. Two independent sources\n"
+                       "  disagreeing means one is being misread. Scope TP9 and the U14\n"
+                       "  pins before changing anything.\n", r.track_level, HPF_SEL_TRACK);
             }
             return;
         }
