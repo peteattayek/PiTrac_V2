@@ -634,8 +634,26 @@ void detect_hpf_test(hpf_test_t *out, uint32_t window_ms) {
     float floor_v = adc_code_to_volts(4);          // a few LSB of noise floor
     out->separation = big / ((sml > floor_v) ? sml : floor_v);
 
-    // TRACK is the level whose baseline stays near zero.
-    out->conclusive  = !out->order_effect && (out->separation >= 3.0f);
+    // NO-OVERLAP is the primary criterion, not the ratio.
+    //
+    // A fixed ratio bar is the wrong statistic here, and it rejected a good
+    // measurement once already. HOLD is an INTEGRATOR: its displacement depends
+    // on how long the test dwelt in that state and on temperature, so the ratio
+    // is not a property of the board -- observed 2.8x and 3.8x on the same board
+    // on the same day with the same (correct) polarity. What IS invariant is that
+    // every TRACK reading falls below every HOLD reading, because TRACK is pinned
+    // to a fixed point and HOLD is somewhere else entirely.
+    //
+    // So: require complete separation of the two repeats, plus a modest ratio to
+    // keep noise from satisfying it. That is effectively a rank test, and it is
+    // insensitive to the absolute magnitude the ratio bar was hostage to.
+    float lo0 = fminf(fabsf(out->mean_v[0][0]), fabsf(out->mean_v[0][1]));
+    float hi0 = fmaxf(fabsf(out->mean_v[0][0]), fabsf(out->mean_v[0][1]));
+    float lo1 = fminf(fabsf(out->mean_v[1][0]), fabsf(out->mean_v[1][1]));
+    float hi1 = fmaxf(fabsf(out->mean_v[1][0]), fabsf(out->mean_v[1][1]));
+    bool no_overlap = (hi0 < lo1) || (hi1 < lo0);
+
+    out->conclusive  = !out->order_effect && no_overlap && (out->separation >= 2.0f);
     if (out->conclusive) {
         out->track_level = (m0 < m1) ? 0 : 1;
         out->polarity_ok = (out->track_level == HPF_SEL_TRACK);
