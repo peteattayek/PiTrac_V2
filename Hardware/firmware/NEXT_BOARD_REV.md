@@ -816,7 +816,7 @@ urgent or academic.
 
 ---
 
-## CR-15 — 🔴 LED→photodiode crosstalk saturates the TIA above ~2–4 % duty
+## CR-15 — 🔴 Beam coupling saturates the TIA above ~3 % duty — **mechanism NOT yet established**
 
 ### The measurement, 2026-08-17
 
@@ -828,8 +828,48 @@ urgent or academic.
 | **10 %** | 2 … 4095 | **saturated, both rails** |
 | **25 %** | 3 … 4095 | **saturated, both rails** |
 
-Confirmed optical rather than electrical by the duty scaling: edge-coupled pickup would
-be duty-independent, since the number of switching edges per second is the same at any duty.
+> ### ⚠ CORRECTION 2026-08-17 — the mechanism is OPEN, not settled
+>
+> This CR originally asserted the coupling was optical, on the grounds that saturation scales
+> with duty while edge-coupled pickup would be duty-independent. **That reasoning is wrong.**
+>
+> The duty scaling is fully explained by **TIA settling** — the light pulse is shorter than
+> the 235 ns feedback time constant (R80 470 k × 0.5 pF, a 677 kHz pole) at low duty, so the
+> output never reaches full amplitude:
+>
+> | duty | pulse width | settling |
+> |---|---|---|
+> | 2 % | 192 ns | 56 % |
+> | 3 % | 288 ns | 71 % |
+> | 4 % | 384 ns | 80 % |
+> | 8 % | 768 ns | 96 % |
+>
+> **An electrically coupled current pulse at the summing node would be exactly as wide as the
+> LED on-time and would settle identically.** So the duty sweep shows only that the
+> disturbance is a pulse synchronous with the drive — which both mechanisms produce.
+>
+> **Two direct optical tests came back negative and were discounted at the time:** shading the
+> photodiode changed nothing (explained away as retroreflection), and a baffle changed nothing.
+> On the evidence as it stands, **electrical coupling is now the more likely explanation.**
+>
+> Candidate electrical paths, none yet excluded:
+> - **+5VA is fed from +5V through FB2**, and the beam puts 3 A pulses on +5V. U11's PSRR at
+>   104 kHz is poor, and because C66 filters +2V5 at 31.8 Hz the virtual ground does *not*
+>   follow — so the op-amp sees the full rail step relative to its own reference.
+> - **D12's cathode sits on VIR through R77 10 kΩ.** VIR ripple couples through the
+>   photodiode's junction capacitance (~10–20 pF at 36 V ≈ 100 kΩ at 104 kHz) directly into
+>   the summing node; 100 mV of ripple injects ~1 µA.
+> - Stray capacitance from the switching node into the 470 kΩ summing node. ~0.1 pF against a
+>   5 V/50 ns edge is enough to inject 10 µA.
+>
+> **Discriminating test:** drop the carrier to ~10 kHz and capture ADC2 at 500 ksps, giving 50
+> samples per period and no aliasing. Optical crosstalk is a pulse as wide as the LED on-time
+> (~12 samples at 25 %); edge-coupled pickup is a 1–2 sample spike at each transition with a
+> flat level between. **Do this before committing to any fix** — a baffle is worthless if the
+> path is electrical, and the two fixes share nothing.
+>
+> ⚠ Note also that 850 nm passes through many materials that look opaque, including most black
+> plastics. A negative baffle result is only trustworthy with foil, thick card or anodised metal.
 
 At 2 % the crosstalk swing is 3109 codes = **2.50 V**, so the leakage photocurrent is
 2.50 V / R80 470 kΩ = **~5.3 µA peak**.
@@ -865,8 +905,9 @@ Consequences if not fixed:
 
 ### The fix
 
-**An optical baffle between D11 and D12** — this is a mechanical change, not a PCB one, and
-it is the correct place to solve it. Crosstalk and signal are the same physical quantity
+⚠ **Conditional on the mechanism — see the correction above. Establish that first.**
+
+*If optical:* **a baffle between D11 and D12** — a mechanical change, not a PCB one. Crosstalk and signal are the same physical quantity
 (reflected 850 nm light), so it cannot be filtered electrically; it has to be stopped
 optically before it reaches the photodiode.
 
