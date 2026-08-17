@@ -741,9 +741,53 @@ the right answer, not a fault.
 Stepping back once more, U11D is a unity inverter (R84 = R85 = 10 kΩ) around +2V5, so
 `V_U11D = 5.18 − V_U11B` puts **U11B, the integrator, at its negative rail.**
 
-### The open question
+### 🔴 RESOLVED 2026-08-17 — U11B is damaged, replace U11
 
-U11B *should* unwind by itself. R83 1 MΩ from TP7 at 0 V against the 2.59 V reference gives
+A 10-minute full power removal (USB and PSU both out) did **not** clear it, which rules out a
+latched integrator — C73 is fully discharged by then. It is a real fault.
+
+**The measurements that close it**, with the rail up and the beam off:
+
+| point | reading | |
+|---|---|---|
+| C73, resistance, power off | **open** | ✅ not shorted — eliminates the one passive that could fake this |
+| R84, U11.7 side = **U11B output** | **0 V** | 🔴 negative rail |
+| R84, U11.13 side = **U11D inverting input** | **2.59 V** | ✅ its virtual ground — U11D is *linear*, not saturated |
+| R78 far pad = U11D output | 5.2 V | ✅ consistent: a unity inverter fed 0 V gives 2.59 + 2.59 = **5.18 V** |
+
+**U11D is provably healthy** — holding its virtual ground and inverting faithfully.
+
+**U11B is provably broken.** Its inputs are:
+
+- V+ (U11.5) = `+2V5` = **2.59 V**
+- V− (U11.6) = **0 V**, pulled there through R83 from TIA_Out. C73 is a capacitor and carries
+  no DC, so R83 alone sets this node.
+
+**V+ exceeds V− by 2.59 V, so a working op-amp drives its output to the POSITIVE rail.** It sits
+at the negative one. That is not a latch, an operating point, or a loop needing time — the
+output is opposite to what the inputs demand.
+
+The tell: a healthy U11B would sit at **+5.2 V**, U11D would invert to **~0 V**, R78 would pull
+current *out* of the summing node and the TIA would recover. **Every node is exactly inverted
+from the healthy state.**
+
+### The part
+
+```
+U11 = OPA4323IPWR    TSSOP-14 (PW0014A)    LCSC C22419728
+```
+
+**U12 is the same part and is undamaged** — it is the LPF and output amp and worked normally
+throughout. Only U11 needs replacing. Three of U11's four sections still test good (U11A
+saturates correctly, U11C makes a clean 2.59 V, U11D inverts linearly), but they share one die.
+
+**After replacement, verify:** TP6 and TP7 both **2.59 V** (DMM, beam off), `adc 2 256` ≈ **3212**,
+then `hpf test` should still report CONFIRMED / TRACK = 0.
+
+⚠ **CR-15 is unrelated and unchanged.** The TIA saturation above ~3 % duty was measured on a
+healthy board *before* this incident, and it is still the actual Phase 3 blocker.
+
+### Why it did not self-recover R83 1 MΩ from TP7 at 0 V against the 2.59 V reference gives
 2.59 µA into C73 330 nF = **7.85 V/s**, a full traverse in ~0.3 s. It has had far longer.
 
 **Clearing it:** power down for **several minutes** — C73 is 330 nF and with U11 unpowered it
