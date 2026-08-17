@@ -80,14 +80,17 @@ float detect_threshold_vref(void);
 //   S2 -> not connected   the node floats and C81 holds its charge -> HOLD
 //
 // So HOLD is a genuine open circuit, not a second filter corner. The U12B input
-// DC level is undefined there and walks on switch leakage and op-amp bias --
-// roughly 1 nA into 330 nF is 3 mV/s at the node, x14.5 = ~44 mV/s at ADC5. That
-// is the effect detect_hpf_test() measures, and it is also why ARMED (which means
-// HOLD) cannot be held open indefinitely.
+// DC level is undefined there and walks on switch leakage and op-amp bias.
+// MEASURED 2026-08-17: ~11 mV/s at ADC5, implying ~250 pA of switch leakage into
+// C81. That is the effect detect_hpf_test() measures, and it is also why ARMED
+// (which means HOLD) cannot be held open indefinitely -- the baseline is both
+// frozen AND walking.
 //
-// WHICH GPIO33 LEVEL SELECTS WHICH PATH IS UNVERIFIED. The netlist encodes only
-// the pin name "SEL". Everything here goes through HPF_SEL_TRACK in board.h; if
-// detect_hpf_test() says the sense is inverted, flip that one line.
+// POLARITY RESOLVED 2026-08-17. TMUX1219 truth table: SEL=0 -> S1, SEL=1 -> S2.
+// S1 is the R96/GND leg, so GPIO33=0 is TRACK and GPIO33=1 is HOLD. The netlist
+// could not say -- it carries only the pin name "SEL" -- and the bench doc's
+// original assumption was backwards. Confirmed twice: `hpf test` on hardware and
+// the datasheet independently. Encoded once, in HPF_SEL_TRACK in board.h.
 // ---------------------------------------------------------------------------
 
 typedef enum { HPF_TRACK = 0, HPF_HOLD } hpf_mode_t;

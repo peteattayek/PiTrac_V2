@@ -553,12 +553,20 @@ bool detect_comparator(void) { return gpio_get(PIN_D_COMPARATOR) != 0; }
 //
 //   TRACK  the node is pinned to 0 V through R96 2M. Op-amp bias (~10 pA) into
 //          2M is ~20 uV. It does not move.
-//   HOLD   the node is open. TMUX1219 off-leakage of order 1 nA into C81 330 nF
-//          is ~3 mV/s at the node, x14.5 = ~44 mV/s at ADC5 = ~55 codes/s.
+//   HOLD   the node is open, so C81 integrates the switch leakage.
 //
-// So over a few seconds HOLD walks by tens to hundreds of codes and TRACK does
-// not. Anything less than a clear separation is a hardware finding, not a
-// firmware result, and the caller must say so rather than pick a winner.
+// MEASURED 2026-08-17 on this board: HOLD drifts ~11 mV/s at ADC5, TRACK ~1.9,
+// for a ratio of about 6. Working back, 11 mV/s / 14.5 gain x C81 330 nF implies
+// ~250 pA of TMUX1219 off-leakage.
+//
+// The original comment here predicted ~44 mV/s from an assumed 1 nA. That was 4x
+// pessimistic -- TI specs this part's leakage in the low hundreds of pA at room
+// temperature, which is what a *precision* switch is for. The direction of the
+// test was right but the MARGIN was overestimated, and the 4x conclusiveness bar
+// below only just cleared. Do not tighten that bar on the assumption of a large
+// separation; if anything, lengthen the window instead -- a floating node's drift
+// grows with time and a pinned one's does not, so a longer window separates them
+// further while a tighter threshold just makes the test brittle.
 // ---------------------------------------------------------------------------
 
 static float sample_drift_v(uint32_t window_ms, float *out_mean_v) {

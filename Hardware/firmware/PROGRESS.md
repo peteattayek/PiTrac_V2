@@ -325,7 +325,9 @@ See `tools/openocd_pi5.cfg`.
 | 8/14/2026 | **ADC1 has no filter cap** | **R46/R47 + pin only** | Consistent with Q9 (50 kΩ into an ADC wanting ≤10 kΩ, no reservoir for the S/H). CR-03 fixes it |
 | | Chosen carrier frequency | | from `scan carrier` max-SNR (Q3) |
 | | `demod_phase_ticks` | | from `cal demod`. Persisted by `cfg save` |
-| | HPF SEL polarity | | **from `hpf test` — RUN THIS FIRST** |
+| 8/17/2026 | **HPF SEL polarity (GPIO33)** | **GPIO33=0 is TRACK** | ✅ **RESOLVED, two independent ways.** `hpf test` on hardware reported INVERTED vs the compiled guess; the TMUX1219 truth table (SEL=0 → S1, SEL=1 → S2) says the same, and S1 is the R96/GND leg. **The bench doc's original `gpio 33 1` = TRACK was backwards.** `HPF_SEL_TRACK` changed 1 → 0 |
+| 8/17/2026 | **HOLD baseline drift** | **~11 mV/s at ADC5** | TRACK ~1.9 mV/s, ratio ~6. Implies **~250 pA** of TMUX1219 off-leakage into C81 — **4× lower than the 1 nA I predicted**, so the test's separation was 6× not the ~20× expected and the 4× conclusiveness bar only just cleared. Lengthen the window rather than tightening the bar: a floating node's drift grows with time, a pinned one's does not |
+| 8/17/2026 | **Phase 3 bring-up steps 1-4** | **all pass** | ✅ Boots; PIO on **block 2, GPIOBASE 16, SM 0** (A2 allocation confirmed on silicon); `D_Comparator` reads high with the rail down as predicted (U15 unpowered, R103 pulls up); threshold DAC correct on a DMM at 0/25/50/75 %; `adc 2` = **2.5884 V** vs the expected 2.59; 5V_IN 5.207 V, ring RUNNING |
 | | Beam path width (mm) | | `detect path <mm>`. No velocity is reported until set |
 | | Pi shutdown duration | | **Phase 8.2.** Set `PI_SHUTDOWN_MIN_HOLDOFF_MS` ≈ 2× this. It is 15 s on an assumption today |
 

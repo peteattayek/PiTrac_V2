@@ -40,7 +40,7 @@ TP9 should appear as ~1.45 V at ADC5.
 > | # | This doc said | The board actually does |
 > |---|---|---|
 > | 1 | **R100** is the unpopulated gain option | **R98** is the DNP part. R98 and R100 are a *parallel pair* from GND to U12B's inverting input, and **R100 (2 k) is fitted**. |
-> | 2 | `gpio 33 1` = TRACK | **Unverified.** The netlist encodes only the pin name `SEL`; nothing says which level selects which throw. **Run `hpf test` first.** |
+> | 2 | `gpio 33 1` = TRACK | ❌ **BACKWARDS — resolved 2026-08-17.** TMUX1219 truth table: SEL=0 → S1, SEL=1 → S2, and S1 is the R96/GND leg. So **`gpio 33 0` is TRACK.** Confirmed twice: `hpf test` on hardware and the datasheet. `HPF_SEL_TRACK` is now 0. Use `hpf track` / `hpf hold`, never the raw level. |
 > | 3 | The R102/D14 clamp is on the threshold node | **It is on ADC5.** `Threshold_DC` has no clamp at all — its only nodes are C76.2, R89.2, TP8.1, U15.2. |
 > | 4 | LPF f0 = 15.9 kHz | **15.39 kHz** from the fitted 4.7 k / 2.2 nF. The annotation was stale. |
 > | 5 | "Settle 10 ms" after a threshold change | **~13 ms is 5τ, use 20 ms.** The two RC sections *load each other*, so the real poles are 2.62 ms and 0.382 ms, not two independent 1 ms poles. 10 ms is ~4τ, leaving ~2 % ≈ 66 mV ≈ 20 threshold codes. |

@@ -106,7 +106,7 @@
 
 // --- U14 gated HPF: which SEL level selects which path -----------------------
 //
-// !! UNVERIFIED -- ESTABLISH WITH `hpf test` BEFORE TRUSTING ANY MEASUREMENT !!
+// ✅ RESOLVED ON HARDWARE 2026-08-17, and confirmed against the datasheet.
 //
 // U14 is a TMUX1219 SPDT. Only ONE throw is connected:
 //   S1 -> R96 2M -> GND    with C81 330 nF this is the 0.66 s HPF  ("TRACK")
@@ -117,14 +117,20 @@
 // that is a real, unbounded effect, and it is the state the detector runs in
 // while armed.
 //
-// The netlist encodes only the pin name "SEL"; it does NOT say whether SEL=1
-// picks S1 or S2, and BENCH_P3_DETECT.md's assumption that `gpio 33 1` = TRACK
-// was never checked against hardware. `hpf test` settles it empirically: TRACK
-// pulls the ADC5 baseline back toward 0 and holds it there, HOLD lets it walk.
+// TMUX1219 truth table (TI datasheet): SEL = 0 -> S1 to D, SEL = 1 -> S2 to D.
+// The unselected source goes high-impedance. Therefore on THIS board:
 //
-// If the test comes back inverted, flip THIS ONE LINE. Nothing else in the
-// firmware may compare against PIN_HPF_TOGGLE's raw level.
-#define HPF_SEL_TRACK        1    // level that selects S1 (the 2M/GND leg)
+//        GPIO33 = 0  ->  S1  ->  R96/GND  ->  TRACK
+//        GPIO33 = 1  ->  S2  ->  open     ->  HOLD
+//
+// **The netlist could not tell us this** -- it encodes only the pin name "SEL" --
+// and BENCH_P3_DETECT.md's original assumption that `gpio 33 1` = TRACK was
+// backwards. Two independent lines of evidence now agree: `hpf test` on hardware
+// reported INVERTED relative to the old constant, and the datasheet truth table
+// says the same thing.
+//
+// Nothing else in the firmware may compare against PIN_HPF_TOGGLE's raw level.
+#define HPF_SEL_TRACK        0    // level that selects S1 (the 2M/GND leg)
 #define HPF_SEL_HOLD         (!HPF_SEL_TRACK)
 
 // --- Misc -------------------------------------------------------------------
