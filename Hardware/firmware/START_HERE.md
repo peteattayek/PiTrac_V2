@@ -112,6 +112,10 @@ the bottom.
 
 ## Step 4 — Flash the board
 
+> **Already done this once, and this is a second board?** Use
+> **`BRINGUP_NEW_BOARD.md`** instead — it is the condensed, ordered re-run of only the
+> parts that are specific to a board rather than to the design.
+
 The RP2354 boots into a USB-drive mode when you hold a button during reset.
 
 1. Plug a USB-C cable from your PC into **J6** on the board. Nothing else

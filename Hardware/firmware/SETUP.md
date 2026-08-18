@@ -81,6 +81,11 @@ Family must be `rp2350-arm-s`. Anything else means the platform/board flags didn
 
 ## Flashing
 
+> **Freshly assembled board?** Flash it, then work through **`BRINGUP_NEW_BOARD.md`** before
+> using it. Two of those steps are safety gates — the ADC +5 V scale is per-chip, and a wrong
+> one can let the board latch on USB power and back-feed a Pi through a 1 A diode.
+
+
 ### USB BOOTSEL
 Hold **SW1** (BOOTSEL), tap **SW2** (RUN), release SW1. A drive named `RPI-RP2` appears — drag
 `build/pitrac.uf2` onto it. Or:
