@@ -885,17 +885,31 @@ static void dispatch(int argc, char **argv) {
                 uint sd = pwm_gpio_to_slice_num(PIN_DEMOD_PWM);
                 uint32_t en = pwm_hw->en;
 
-                printf("-- hardware readback --\n");
+                // Every check below is against what the state SHOULD be RIGHT NOW,
+                // not against "running". With the beam off the slices are meant to
+                // be disabled, the pads SIO and the counter frozen. Flagging those
+                // as faults trains the operator to ignore the readback, which
+                // defeats the reason it exists -- telling "firmware is not driving
+                // the pin" apart from "my probe is wrong".
+                bool bon = beam_enabled();
+
+                printf("-- hardware readback --   (checked against beam %s)\n",
+                       bon ? "ON" : "off");
                 printf("PWM_EN   : 0x%03lx  slice %u(car) %s   slice %u(dem) %s\n",
                        (unsigned long)en,
-                       sc, ((en >> sc) & 1u) ? "ENABLED" : "*** OFF ***",
-                       sd, ((en >> sd) & 1u) ? "ENABLED" : "*** OFF ***");
+                       sc, ((((en >> sc) & 1u) != 0) == bon)
+                               ? (bon ? "ENABLED ok" : "off ok") : "*** MISMATCH ***",
+                       sd, ((((en >> sd) & 1u) != 0) == bon)
+                               ? (bon ? "ENABLED ok" : "off ok") : "*** MISMATCH ***");
 
-                printf("funcsel  : GPIO%u=%d %s   GPIO%u=%d %s   (4 = PWM)\n",
+                printf("funcsel  : GPIO%u=%d %s   GPIO%u=%d %s   (4 = PWM, 5 = SIO)\n",
                        PIN_MOD_PWM,   (int)gpio_get_function(PIN_MOD_PWM),
-                       gpio_get_function(PIN_MOD_PWM) == GPIO_FUNC_PWM ? "ok" : "*** NOT PWM ***",
+                       ((gpio_get_function(PIN_MOD_PWM) == GPIO_FUNC_PWM) == bon)
+                           ? (bon ? "ok" : "ok - SIO while off is deliberate")
+                           : "*** MISMATCH ***",
                        PIN_DEMOD_PWM, (int)gpio_get_function(PIN_DEMOD_PWM),
-                       gpio_get_function(PIN_DEMOD_PWM) == GPIO_FUNC_PWM ? "ok" : "*** NOT PWM ***");
+                       ((gpio_get_function(PIN_DEMOD_PWM) == GPIO_FUNC_PWM) == bon)
+                           ? "ok" : "*** MISMATCH ***");
 
                 // RP2350 pads reset ISOLATED. gpio_set_function() clears it; if
                 // this ever reads 1 the pad is disconnected no matter what the
@@ -926,8 +940,11 @@ static void dispatch(int argc, char **argv) {
                 unsigned b = pwm_hw->slice[sc].ctr; busy_wait_us(2);
                 unsigned c = pwm_hw->slice[sc].ctr;
                 printf("ctr(car) : %u -> %u -> %u   %s\n", a, b, c,
-                       (a == b && b == c) ? "*** FROZEN - slice is not running ***"
-                                          : "counting (slice is live)");
+                       (a == b && b == c)
+                           ? (bon ? "*** FROZEN - should be counting ***"
+                                  : "frozen (ok, beam is off)")
+                           : (bon ? "counting (slice is live)"
+                                  : "*** COUNTING - beam is off! ***"));
             }
             printf("rails    : %s\n", power_rails_ready() ? "up" : "DOWN â€” beam cannot run");
             return;
