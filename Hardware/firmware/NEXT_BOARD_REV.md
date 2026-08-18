@@ -847,7 +847,31 @@ urgent or academic.
 
 ---
 
-## CR-15 — 🔴 Beam coupling saturates the TIA above ~3 % duty — **mechanism NOT yet established**
+## CR-15 — 🔴 Beam coupling saturates the TIA above ~2-3 % duty — **CONFIRMED ON TWO BOARDS**
+
+> ### ✅ Confirmed as a DESIGN property, 2026-08-18
+>
+> Board 2, independently assembled, run through the identical duty sweep with no optical baffle:
+>
+> | duty | board 2 TIA_Out | board 1 TIA_Out |
+> |---|---|---|
+> | 2 % | **339 - 3672 linear** | 597 - 3709 linear |
+> | 3 % | **8** - 3680 railed | 98 - 3791 linear |
+> | 4 % | 5 - 3775 railed | 5 - 3798 railed |
+> | 6 % | 4 - 3981 railed | 4 - 4095 both rails |
+> | 8 % / 10 % / 12 % / 25 % | 3 - **4095** both rails | - |
+>
+> **Highest linear duty: board 1 = 3 %, board 2 = 2 %.** Same ceiling within one measurement
+> step, and the crosstalk swing at 2 % agrees closely (2.51 V vs 2.69 V).
+>
+> **Two independent boards saturating at the same duty rules out an assembly artifact.** The
+> front end has no meaningful headroom for beam coupling by design, and the fix is required
+> rather than optional. Board 2 being marginally worse is ordinary unit-to-unit variation in
+> LED output, photodiode responsivity and mechanical spacing.
+>
+> ⚠ This confirms the **magnitude**, not the **mechanism**. The run was without a baffle, so
+> optical crosstalk and beam-current coupling both remain in play. See the correction below,
+> and the resistor-substitution test that settles it.
 
 ### The measurement, 2026-08-17
 
