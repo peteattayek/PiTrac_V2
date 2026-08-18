@@ -25,6 +25,7 @@ of them protects a Pi.
 
 ## 1. Before anything is energised
 
+- [ ] 🔴 **SET THE PSU CURRENT LIMIT TO 2 A BEFORE ANYTHING ELSE.** See the box below.
 - [ ] USB-C to **J6** only. **No bench supply. No Pi. J2 jumper OFF.**
 - [ ] Firmware flashed (`SETUP.md`). A blank RP2354 enumerates as `RPI-RP2` on its own —
       the SW1/SW2 dance is only needed once there is an image to interrupt.
@@ -39,6 +40,25 @@ id
 - [ ] Note the **UID** — write it in the sign-off table at the bottom.
 
 ---
+
+> ### 🔴 PSU current limit — 2 A, and check it every session
+>
+> **Cost a full bench session on 2026-08-18.** VIR's bulk capacitance needs **amps** for a few
+> milliseconds at startup (~100 uF charged to 36 V is ~65 mJ). Against a low limit the supply
+> drops into CC, **the boost never finishes its soft-start**, and it parks at a lower voltage.
+>
+> **What makes it vicious is that everything looks fine afterwards.** Parked at 27 V the steady
+> draw is tiny — the 12 V shunt pulls only (27-12)/4K7 = 3.2 mA — so the supply sits far below
+> its limit, **+5V_IN reads a healthy 5.2 V**, the CLI works, the LED works and the firmware's
+> supply monitor is perfectly happy. The fault exists only during a startup transient nobody
+> observes.
+>
+> **Symptom to recognise: VIR low (e.g. 27 V instead of 36 V) AND idle current low
+> (e.g. 80 mA instead of ~129 mA) at the same time.** Those two travel together, because a
+> lower VIR means the shunt draws less. If you see both, **suspect the supply before the board.**
+>
+> ⚠ The firmware cannot detect this — **there is no VIR sense and PGOOD is unconnected**
+> (`NEXT_BOARD_REV.md` **CR-08**). This incident is the concrete argument for that change.
 
 ## 2. Dead-board rail smoke test (Phase 0.5)
 
@@ -250,6 +270,7 @@ this is fiddly; that does not make bare metal acceptable.
 
 | item | board 1 reference | this board |
 |---|---|---|
+| **PSU current limit set to 2 A** | — | |
 | Chip UID | `a764f5332ca5ac53` | |
 | Silicon revision | A4 | |
 | E9 `pins` check | all 0 | |

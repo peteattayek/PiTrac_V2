@@ -371,7 +371,7 @@ anything replacing it needs to hold up under the burst load the shunt handles tr
 
 ---
 
-## CR-08 — 🟢 No PGOOD, no VIR sense
+## CR-08 — 🟡 No PGOOD, no VIR sense — **cost a bench session 2026-08-18**
 
 ### Why
 
@@ -379,6 +379,37 @@ anything replacing it needs to hold up under the burst load the shunt handles tr
 Boost readiness is therefore timed **open-loop** in `power_fsm.c` — `RAIL_SETTLE_MS` 250 ms,
 covering an ~86 ms soft start plus margin. It works, but the firmware genuinely cannot tell
 the difference between "boost came up" and "boost failed and we waited 250 ms."
+
+> ### This stopped being theoretical on 2026-08-18
+>
+> A bench PSU left at a **0.3 A** current limit could not supply the startup inrush into VIR's
+> bulk capacitance (~100 uF to 36 V is ~65 mJ, needing amps for a few milliseconds). The
+> supply dropped into CC, **the boost never completed soft-start, and VIR parked at 27 V.**
+>
+> **Every downstream symptom pointed at the board rather than the supply**, because once
+> parked the steady draw is tiny — the 12 V shunt pulls (27-12)/4K7 = 3.2 mA — so:
+>
+> - `+5V_IN` read a healthy **5.207 V** and the latch guard was satisfied
+> - the sustained supply monitor never tripped, correctly
+> - the CLI, the LED and the detect chain all worked
+> - idle current was **80 mA** instead of ~129 mA, which reads as "less load", not "fault"
+>
+> Two boards showed it simultaneously, which made it look like a systematic assembly or BOM
+> error. Time went into measuring the feedback divider, questioning the LM5157 reference
+> voltage, and considering whether firmware could be involved — **none of which it could,
+> since no MCU pin touches U1 at all.**
+>
+> **A single VIR sense would have made this instant.** The firmware knows the boost is
+> supposed to be at 36 V and had no way to look.
+>
+> This also has a safety dimension for Phase 6: **the strobe runs from VIR.** A silently low
+> rail means every strobe measurement is taken against the wrong supply, and the firmware
+> would fire regardless because it cannot see the difference.
+
+### Priority raised
+
+From 🟢 to 🟡. Not because the mechanism changed, but because the failure mode is now
+demonstrated to be **silent, plausible and expensive** rather than hypothetical.
 
 ### The change
 
