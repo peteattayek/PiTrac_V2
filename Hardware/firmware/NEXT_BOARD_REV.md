@@ -27,6 +27,8 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 | **CR-08** | No PGOOD or VIR sense | 🟢 Low | Needs a free ADC | Boost readiness stays open-loop timed |
 | **CR-09** | Mira220 1.8 V I/O translation | 🔴 **Unblocked** | High | **Q6 ANSWERED**: I/O is 1.8 V, no 3.3 V tolerance. Both directions fail; 220 Ω fixes neither |
 | **CR-11** | Net `Strobe_GND` is not ground — rename it | 🟢 Low | Rename | A name that invites clipping a scope ground to Q11's drain |
+| **CR-16** | **Analog chain runs 0-5.2 V into a 3.3 V ADC** | 🔴 High | Rail or scale | **36 % of every signal is invisible to firmware**, and clipping corrupts the ADC reference |
+| **CR-17** | No test point on the comparator input node | 🟡 Med | 1 pad | The detection decision node cannot be probed; TP8 gives the threshold but not the signal |
 | **CR-15** | **LED→PD crosstalk saturates the TIA above ~2–4 % duty** | 🔴 **Blocker** | Baffle (mech) | **Phase 3 cannot proceed.** Front end rails, LPF slew-limits, 313 mV of carrier lands on ADC5 |
 | **CR-12** | Beam LED thermal path caps sustained duty at ~20 % | 🔴 High | **Vias + bigger sink** (fanless target) | Beam runs at 2/3 optical power while armed → worse Phase 3 SNR |
 
@@ -849,6 +851,40 @@ urgent or academic.
 
 ## CR-15 — 🔴 Beam coupling saturates the TIA above ~2-3 % duty — **CONFIRMED ON TWO BOARDS**
 
+> ### ⚠ CORRECTION 2026-08-19 — only the BOTTOM clipping is real
+>
+> Every beam-on ADC2 capture was read as the op-amp railing at **both** extremes. That is wrong.
+> **`4095` is the ADC's 3.3 V ceiling, not the op-amp's 5.2 V rail** (CR-16). Confirmed on a
+> logic analyser in analog mode at 50 MS/s: TP7's top is clean, with well over a volt in hand.
+>
+> **The bottom clipping at ~0 V is real**, and here is why the asymmetry is inherent rather
+> than surprising:
+>
+> 1. The TIA is **inverting**, so the beam pulse is always a **downward** excursion.
+> 2. The DC servo forces the **mean** of TIA_Out to 2.59 V, not its resting level. With the
+>    output slammed low during each pulse, the off-level must sit **above** 2.59 V to average
+>    out: `(1 - f) x V_off = 2.59`, where f is the fraction of the period spent depressed.
+> 3. The crosstalk swing (~2.5-3.8 V) exceeds the room below V_off (~2.6-2.9 V), so the bottom
+>    rails while the top has ~2 V spare.
+>
+> **Checked against measurement.** At 2 % duty the pulse is 192 ns plus a ~700 ns recovery tail
+> (3 x the TIA's 235 ns time constant), giving f = 0.093 and `V_off = 2.59/0.907 = 2.86 V`.
+> **Measured off-level: 3540 codes = 2.85 V.**
+>
+> V_off rises with duty — roughly 3.2-3.4 V at 12 % and ~3.8 V at 25 % — which is why the top
+> eventually reads 4095. **That is the ADC clipping, with the op-amp still ~1.4 V from its rail.**
+>
+> ### The bottom clipping still matters, and this is the reason
+>
+> It is tempting to dismiss it since the useful signal sits higher up. It cannot be dismissed:
+> U13/U12A is a **synchronous demodulator**, correlating the signal against the carrier across
+> the whole period, pulse included. **A ball reflects extra light during the LED's on-time — and
+> if the TIA is already railed at 0 V through that interval, the extra light produces no extra
+> output.** The detector is blind at exactly the moment the ball signal exists.
+>
+> So CR-15 survives, at half its original size: the ceiling numbers below are correct, the
+> mechanism is correct, and only the "both rails" characterisation was instrument artifact.
+
 > ### ✅ Confirmed as a DESIGN property, 2026-08-18
 >
 > Board 2, independently assembled, run through the identical duty sweep with no optical baffle:
@@ -859,7 +895,7 @@ urgent or academic.
 > | 3 % | **8** - 3680 railed | 98 - 3791 linear |
 > | 4 % | 5 - 3775 railed | 5 - 3798 railed |
 > | 6 % | 4 - 3981 railed | 4 - 4095 both rails |
-> | 8 % / 10 % / 12 % / 25 % | 3 - **4095** both rails | - |
+> | 8 % / 10 % / 12 % / 25 % | 3 - **4095** bottom railed; top is the ADC ceiling, not the op-amp | - |
 >
 > **Highest linear duty: board 1 = 3 %, board 2 = 2 %.** Same ceiling within one measurement
 > step, and the crosstalk swing at 2 % agrees closely (2.51 V vs 2.69 V).
@@ -982,3 +1018,107 @@ Secondary options, both with real costs:
 
 `capture 0x04 400 500000` at the intended operating duty: no sample at 4095 or near 0.
 Then `capture 0x20 400 500000` should show the carrier gone from ADC5, not merely reduced.
+
+---
+
+## CR-16 — 🔴 The analog chain runs 0-5.2 V into a 3.3 V ADC
+
+### Why
+
+Every op-amp in the detect chain (U11, U12) is an **OPA4323 on +5VA**, rail-to-rail, so each
+output can swing **0 to 5.2 V**. The RP2350's ADC full scale is **3.3 V**.
+
+| node | signal range | ADC sees |
+|---|---|---|
+| `TIA_Out` (ADC2) | 0 - 5.2 V, idles 2.59 V | 0 - 3.3 V |
+| `Net-(U12B-OUT2)` (ADC5 via R102) | 0 - 5.2 V, idles near 0 V | 0 - 3.3 V |
+
+**Roughly 36 % of the available range is invisible to the firmware.** On the TIA monitor it is
+worse than that: the node idles at 2.59 V with 2.61 V of headroom above, and the ADC can see
+only 0.71 V of it.
+
+### It is not a passive limit — clipping corrupts the reference
+
+Above ~3.6 V the protection diode conducts into +3V3 through the 1 kOhm series resistor:
+
+```
+(5.2 - 3.6) / 1 kOhm = 1.6 mA  ->  through R27 (33 Ohm to ADC_AVDD)  ->  ~53 mV of droop
+```
+
+**The ADC's own reference sags whenever a monitored signal clips.** At a 104 kHz carrier that
+happens every 9.6 us while the ADC samples every 2 us, so during any beam-on capture the
+reference is being disturbed continuously. Readings taken near a clipping event are not
+trustworthy in either direction.
+
+### What this cost
+
+**It invalidated a chunk of the CR-15 investigation.** Beam-on ADC2 captures were read as
+showing the op-amp railing at BOTH extremes. The upper "rail" was the ADC at 3.3 V; the op-amp
+was linear with ~1.4 V still in hand. Confirmed on a logic analyser in analog mode at 50 MS/s,
+where TP7's top looks clean and only the bottom rails.
+
+It also caps the detect path: `ADC_CH_DETECT` can only measure up to 3.3 V of a signal that
+reaches 5.2 V, so **the usable dynamic range is dTP9 <= 228 mV at the as-built x14.5 gain**,
+set by the ADC rather than by anything in the analog design.
+
+And the comparator inherits the same asymmetry: `Threshold_DC` is generated by a GPIO PWM DAC
+and therefore reaches only **0 - 3.3 V**, while the signal it is compared against swings to
+5.2 V. **The upper 1.9 V of the signal cannot be thresholded at all.**
+
+### Options
+
+| Option | Cost |
+|---|---|
+| **Run the detect chain from +3V3** instead of +5VA | Cleanest match to the ADC, but reduces headroom for the crosstalk that CR-15 is already fighting |
+| **Scale the ADC taps** - a divider ahead of ADC2 and ADC5 | Two resistors each. Costs signal-to-noise and needs the firmware scale factors updated in the same commit |
+| **Reference the ADC to a higher rail** | Not available; ADC_AVDD is tied to +3V3 |
+| **Accept it and document the ceiling** | What we do today, but it must then be stated everywhere a measurement is taken |
+
+⚠ **Whichever is chosen, `detect.h`'s DETECT_SAT_CODE and the dTP9 clip table in
+BENCH_P3_DETECT.md must change in the same commit**, or the firmware will keep flagging
+saturation at the wrong level.
+
+### Verify
+
+With the beam at 25 % duty, scope `TIA_Out` and compare against `capture 0x04`. The scope
+should show the off-level around 3.8 V while the ADC reads 4095. If they agree, the fix worked.
+
+---
+
+## CR-17 — 🟡 The detection decision node has no test point
+
+### Why
+
+`Net-(U12B-OUT2)` is the signal the comparator actually thresholds and the node the ADC
+refinement measures. It is the single most important node in the detection chain, and it is
+**the only one in that chain with no test point**:
+
+```
+U15.3 (+ input) -- Net-(U12B-OUT2) -- U12.7
+                                   |- R101.2  (27K feedback)
+                                   |- R102.2  (1K to ADC5)
+
+U15.2 (- input) -- Threshold_DC -- TP8        <- has a test point
+```
+
+So the **threshold** can be probed but the **signal it is compared against** cannot. Today the
+only access is a resistor pad (R102 pad 2 or R101 pad 2) identified by continuity to U15 pin 3,
+or U12 pin 7 on a TSSOP-14.
+
+For comparison, TP3 exists for `Net-(U7-E1)` and TP4 for `CurrentSense_ADC` - both less
+central to the board's purpose.
+
+### The change
+
+**One test point on `Net-(U12B-OUT2)`.** Same 1.0 mm THT pad as TP1-TP10, placed near TP8 so
+the two comparator inputs can be probed together with a two-channel scope.
+
+That single addition makes the detection decision directly observable: signal, threshold, and
+the margin between them, live.
+
+### Why it matters more than a convenience
+
+ADC5 is this node **through R102 with a D14 clamp**, i.e. a copy truncated at 3.3 V (CR-16). So
+without this test point there is **no way to observe the true comparator input at all** - not
+by firmware, not on the bench. Every conclusion about detection margin currently rests on a
+clipped copy.
