@@ -1019,6 +1019,100 @@ Secondary options, both with real costs:
 `capture 0x04 400 500000` at the intended operating duty: no sample at 4095 or near 0.
 Then `capture 0x20 400 500000` should show the carrier gone from ADC5, not merely reduced.
 
+### Mitigation options - ranked
+
+> ⚠ **Everything below assumes the coupling is OPTICAL.** The resistor substitution has not
+> been run yet. If the path turns out to be beam-current coupling, an aperture buys nothing
+> and this ranking is void. **Run that test first.**
+
+#### The framing that ranks them
+
+**Crosstalk and ball signal are the same light** - 850 nm, same emitter, same detector. So
+nothing that scales *both* improves detection; it only moves where the chain clips. Options
+fall into two categories, and only one of them is a fix:
+
+| category | what it does |
+|---|---|
+| **Change the ratio** (geometry) | the only real fix |
+| **Restore linearity** (gain, duty, attenuation) | makes the chain usable again, ratio unchanged |
+
+#### 1. Aperture or field stop over D12 - the only ratio fix ⭐
+
+Crosstalk and signal differ in **direction**, not wavelength or amplitude. Crosstalk is
+near-field leakage from an emitter millimetres away; the ball is at a specific distance and
+angle. **An aperture restricting D12's acceptance angle to where the ball actually is
+attenuates off-axis crosstalk far more than on-axis signal.**
+
+This is the only intervention that improves the quantity that matters. Everything else below
+just buys headroom.
+
+#### 2. Lower R80 (Rf) - the best linearity fix, and close to free
+
+Currently 470 kOhm. Reducing it scales crosstalk and signal down together, restoring
+linearity without touching the ratio.
+
+**It costs almost nothing in SNR, because shot noise dominates.** With the measured ~8 uA of
+crosstalk photocurrent:
+
+```
+shot noise (8 uA)      sqrt(2qI)      = 1.60 pA/rtHz
+R80 thermal (470 kOhm) sqrt(4kT/Rf)   = 0.19 pA/rtHz     <- 8.5x smaller
+```
+
+Signal and shot noise both scale with Rf at the output, so **shot-limited SNR is unchanged**.
+Only Rf's own thermal contribution degrades, and it is 8.5x below the floor.
+
+**Bonus: bandwidth.** Rf x Cf sets the TIA time constant. 470 kOhm x 0.5 pF = 235 ns, which is
+longer than the light pulse at low duty - so at 2 % only ~56 % of the amplitude ever appears.
+Drop to 100 kOhm and tau falls to ~50 ns, so even a 192 ns pulse settles fully.
+
+⚠ **But it changes the compensation, and C68/C70 must be revisited in the same change.**
+Stability wants roughly `Cf >= sqrt(Cin / (2*pi*Rf*GBW))`. With ~20 pF of input capacitance and
+the OPA4323's 8 MHz GBW:
+
+| Rf | Cf required | Cf fitted |
+|---|---|---|
+| 470 kOhm | ~0.9 pF | **0.5 pF** - already marginal |
+| 100 kOhm | ~2.0 pF | 0.5 pF - **badly under-compensated** |
+
+The board may already be under-compensated at 470 kOhm. **Scope TP7 for ringing on the pulse
+edges before changing anything** - if it peaks today, that is worth knowing independently.
+
+*(Cin is an estimate. Confirm D12's junction capacitance from the VBPW34FAS datasheet at the
+actual reverse bias, which is 36 V when the supply is set correctly.)*
+
+#### 3. Lower duty - diagnostic tool, not an operating point
+
+Restores linearity, but costs optical power **and** makes settling worse: at 2 % the 192 ns
+pulse is shorter than the 235 ns time constant, so amplitude is lost as well as light. Useful
+for characterisation. Not somewhere to operate.
+
+#### 4. ND filter on the photodiode - worse than lowering Rf, twice over
+
+**First problem: most ND filters are not neutral at 850 nm.** "Neutral density" means neutral
+across the **visible** spectrum. Absorptive glass, gelatin and most photographic ND filters
+become substantially **transparent in the near-IR** - an ND8 giving 3 stops at 550 nm can be
+close to ND1 at 850 nm. Without transmission data at 850 nm specifically, you may be
+attenuating nothing. **This is the same trap as black plastic that is not opaque in the IR.**
+
+**Second problem: it costs SNR where lowering Rf does not.** An ND filter reduces the
+*photocurrent*, so it reduces shot noise too - and shot-limited SNR scales as **sqrt(T)**. Cut
+the light 4x and lose 2x in SNR. Lowering Rf leaves the photocurrent untouched and is
+SNR-neutral for the same linearity gain.
+
+⚠ Also: a **reflective** (metallic-coated) ND could bounce light back toward the LED and create
+new coupling paths.
+
+#### Recommended combination
+
+**Aperture for the ratio, plus a modest R80 reduction (with C68/C70 revisited) for headroom** -
+keeping duty at 25 % so the optical power is retained.
+
+⚠ **Whatever is fitted - aperture, baffle or filter - mount it clear of the board.** D12's
+cathode sits at 36 V through R77, and bare foil laid across it destroyed U11B on board 1
+(`PROGRESS.md` section 11).
+
+
 ---
 
 ## CR-16 — 🔴 The analog chain runs 0-5.2 V into a 3.3 V ADC
