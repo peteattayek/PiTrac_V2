@@ -357,18 +357,41 @@ measured rather than assumed. **Quiet-baseline σ at ADC5 is 0.55–0.65 mV.**
 > harmonics that reach up there. A source landing within a few Hz of the carrier demodulates
 > to a slow beat that looks exactly like a real signal.
 >
-> Board 2 shows candidate evidence: **16–21 % of samples are bursts to 72 codes at 5–30 Hz,
-> and they are 3× worse with the room lights on.** σ(all) is 6.16 mV dark / 9.15 mV lit —
-> **10× the quiet baseline.** The alternative explanation is motion in the beam, which is the
-> detector working correctly.
+> Board 2 showed exactly this shape and it turned out **not** to be the lighting.
+
+#### ✅ RESOLVED 2026-08-21 — the "bursty noise" was the beam returning off the room
+
+Covering **D11's output aperture** so no light leaves the board, everything else identical:
+
+| | D11 open | **D11 covered** |
+|---|---|---|
+| σ (three captures) | 6.49 / 10.37 / 14.03 mV | **2.62 / 3.39 / 2.91 mV** |
+| peak | 56 / 66 / 77 codes | **28 / 29 / 33 codes** |
+| excess kurtosis | −0.3 / −0.3 / +3.0 | **+0.1 / +0.5 / +0.1** |
+| reproducible? | no, 2× spread | **yes, 30 %** |
+
+**Stop the light leaving and the bursts stop.** The lock-in was passing genuine
+carrier-modulated light returning off the room — the detector working correctly, not a fault.
+
+🔵 **The kurtosis was the tell.** Impulsive *noise* has **positive** excess kurtosis (heavy
+tails). Two captures ran at **−0.3** — a flattened, near-bimodal distribution, which is the
+signature of **a modulated signal filling the range**. Compute the fourth moment before
+calling something noise.
+
+> ### 🔴 σ_noise is not a constant, and §3.6 depends on it
 >
-> **Discriminator — do this before `scan carrier`:** lights on, beam on, **scene genuinely
-> static** (step away, nothing moving), three repeat captures.
-> Reproducible burst statistics → the lighting. Wildly varying → it was motion.
+> Three values on one board in one session:
 >
-> ⚠ **Consequence for §3.6:** `scan carrier` exists to find the quietest carrier frequency, so
-> **run it under the lighting the machine will actually operate in.** A frequency chosen on a
-> dark bench is not optimised against the interference that matters.
+> | condition | σ at ADC5 |
+> |---|---|
+> | nothing returning (quiet population) | **0.65 mV** |
+> | D11 covered — the cover itself reflects back at close range | **2.91 mV** |
+> | open to the room | **6.5–14 mV** |
+>
+> **It is set by the optical background, not by the electronics.** `scan carrier` divides by
+> it, so a frequency ranked on a bench is ranked against the wrong denominator.
+> **Run `scan carrier` in the final geometry and lighting.** Treat 2.91 mV as a bench
+> reference for repeatability checks only — never as *the* noise floor.
 
 ⚠ **At 10 ksps the carrier aliases to 4166 Hz** (and 2f to 1668 Hz), clearly visible at
 ~2.6 mV. Harmless, but it means **10 ksps is the right rate for flicker and the wrong rate for

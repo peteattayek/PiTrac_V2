@@ -355,6 +355,9 @@ See `tools/openocd_pi5.cfg`.
 | 8/21/2026 | ✅ **LOCK-IN AMBIENT REJECTION PROVEN** | **~48 dB at 120 Hz** | ✅ `capture 0x20 2000 10000` (200 ms = 24 mains cycles), beam on 25 %, TRACK, labelled lights-off vs lights-on. **120 Hz component: 0.12 mV dark, 0.32 mV lit.** Against the beam-off baseline of **162 mV p-p** that is **~250×, ≈48 dB** of rejection. (I had predicted ~64 dB; the shortfall is worth noting but the residual is ~7 % of σ and not a limiting term.) **Mains flicker is a solved problem** — this was the central premise of the whole synchronous-detection design and it is now measured, not assumed |
 | 8/21/2026 | ✅ **True quiet-baseline σ at ADC5** | **0.55–0.65 mV** | ✅ The 1344/2000 (dark) and 1418/2000 (lit) samples that sit at 9–10 codes have σ = **0.81 / 0.68 codes**. That is **3–4× quieter than the 2.19 mV** the 800 µs capture suggested, because that short window happened to sit inside a burst. **This is the floor the design achieves when nothing is happening** |
 | 8/21/2026 | ⚠ **BUT the noise is bursty, not Gaussian** | **16–21 % of samples >20 codes, peaks to 72** | ⚠ **σ(all) is 6.16 mV dark / 9.15 mV lit — 10× the quiet baseline — and it is all impulsive.** Bursts last tens of ms with quiet gaps between; spectrum is **5–30 Hz, monotonically falling**, and 3× larger with the lights **on** (10 Hz: 9.74 vs 3.32 codes). **σ_noise is therefore NOT yet cleanly measured**, and `scan carrier`'s SNR denominator would currently include whatever this is. 🔴 **Resolve before `scan carrier`** |
+| 8/21/2026 | ✅ **BURST SOURCE CLOSED — it is the beam returning off the room** | **cover D11 → σ 10.30 mV falls to 2.91 mV** | ✅ **Three captures with D11's output aperture covered, everything else identical.** σ: **6.49/10.37/14.03 → 2.62/3.39/2.91 mV**. Peak: **77 → 33 codes.** And the distribution changes character completely — **excess kurtosis −0.3 / −0.3 / +3.0 (open) → +0.1 / +0.5 / +0.1 (covered)**, i.e. from wildly non-Gaussian to **essentially Gaussian**. ✅ **Stop the light leaving the board and the bursts stop. The hypothesis is confirmed.** |
+| 8/21/2026 | 🔵 **The negative kurtosis was the tell, and I missed it first time** | **−0.3 means SIGNAL, not noise** | 🔵 Impulsive *noise* has **positive** excess kurtosis (heavy tails). Two of the three open captures ran at **−0.3**, which is a *flattened / bimodal* distribution — the signature of a **modulated signal filling the range**, not of noise. **The detector was working correctly the whole time**; it was reporting light. ⚠ I called this "bursty noise" for two rounds before computing the fourth moment that would have said otherwise on day one |
+| 8/21/2026 | ⚠ **σ_noise is not a constant — it is set by the optical background** | **0.65 / 2.91 / 6.5–14 mV** | ⚠ Three different numbers on one board in one session: **0.65 mV** (quiet population, nothing returning), **2.91 mV** (D11 covered — the cover itself reflects light back into D12 at close range, and shot noise goes as √I), **6.5–14 mV** (open to the room). 🔴 **Consequence for §3.6: there is no bench σ_noise worth quoting.** `scan carrier` divides by this, so it **must be run in the final geometry and lighting** or its SNR ranking is against the wrong denominator. The 2.91 mV figure is a usable *bench reference* only |
 | 8/21/2026 | ✅ **Operator motion RULED OUT as the burst source** | **bursts got *worse* with the operator away** | ✅ Three repeat captures, lights on, operator as far from the beam as possible: **52.6 %, 43.0 %, 19.6 %** of samples above 20 codes, against 20.6 % with them standing at the bench. Peaks to **77 codes**. The motion hypothesis predicted the opposite, so it is dead |
 | 8/21/2026 | ✅ **The quiet floor is the reproducible part** | **σ = 0.61–0.70 mV across all 5 captures** | ✅ 0.83 / 0.75 / 0.87 codes here, 0.81 / 0.68 earlier — **both lighting conditions, operator near and far.** This is the genuine electronic noise floor and it is rock solid. ❌ **σ(all), by contrast, is NOT reproducible: 6.49 / 10.37 / 14.03 mV** — a 2× swing between captures taken seconds apart. Whatever drives the bursts varies on a seconds timescale |
 | 8/21/2026 | 🔵 **The bursts are strictly one-sided POSITIVE** | **min = 9 codes in all three, no floor pile-up** | 🔵 Checked specifically for a bipolar signal clipped at the ADC's 0 V rail — **it is not that.** Zero samples below 8 codes against a 9–10 code baseline, while excursions reach 77. **More light only.** Electrical coupling could push either sign; **an optical return can only add light.** Combined with the operator result this points at **the beam reflecting off the room and returning to D12** — which the lock-in passes faithfully because it is genuinely modulated at the carrier. ⚠ **Not yet proven; see the discriminator row** |
@@ -590,28 +593,20 @@ firmware/
 > Mains flicker is a solved problem and the synchronous-detection premise holds. The true
 > quiet-baseline σ at ADC5 is **0.55–0.65 mV**, 3–4× better than first thought.
 >
-> 🔴 **The one thing blocking `scan carrier`: the noise is bursty, not Gaussian.**
-> 16–21 % of samples sit above 20 codes with peaks to 72, in bursts of tens of ms at
-> **5–30 Hz**, and they are **3× worse with the room lights on**. σ(all) is 10× the quiet
-> baseline. Until this is identified, `scan carrier`'s SNR denominator is measuring it.
+> ✅ **The "bursty noise" is closed, and it was not noise.** Covering D11's output aperture
+> drops σ from 10.30 mV to **2.91 mV**, peaks from 77 to 33 codes, and excess kurtosis from
+> −0.3 to +0.1 — from wildly non-Gaussian to essentially Gaussian. **It was the beam
+> returning off the room**, which the lock-in passes faithfully because it is genuinely
+> modulated at the carrier. The detector was working correctly throughout.
 >
-> **Operator motion is ruled out** — three static captures made it *worse* (52.6 / 43.0 /
-> 19.6 % of samples above 20 codes vs 20.6 % with the operator at the bench). The excursions
-> are **strictly one-sided positive**, and an optical return can only add light where
-> electrical coupling could go either way.
+> ⚠ **The lasting consequence: σ_noise is not a constant.** Three values on one board in one
+> session — **0.65 mV** (nothing returning), **2.91 mV** (D11 covered), **6.5–14 mV** (open to
+> the room). It is set by the optical background, not by the electronics.
+> 🔴 **So `scan carrier` must run in the final geometry and lighting**, or it ranks carrier
+> frequencies against the wrong denominator. There is no bench σ_noise worth quoting.
 >
-> **Leading hypothesis: the beam is reflecting off the room and returning to D12**, and the
-> operator was previously blocking that path. The lock-in passes it faithfully because it is
-> genuinely modulated at the carrier.
->
-> 🔴 **Next test — cover D11's OUTPUT APERTURE** (tape-wrapped foil or the carbon-black
-> baffle) so no light leaves the board, and repeat. Optical return vanishes; electrical
-> coupling does not. ⚠ **Cover D11, not D12, and nothing bare-metal near either — see §11.**
->
-> 🔵 **And if it is room return, it may not be a fault.** Light modulated at the carrier is
-> what the detector exists to report; a reflective room is *background*. That argues
-> `scan carrier` should run in the final geometry and lighting rather than that this be
-> chased away on the bench. See the 8/21 rows in §6.
+> ✅ **Nothing blocks §3.4 any more.** `cal demod` and `cal model` average synchronously over
+> many cycles, so the room return averages down and does not corrupt a phase fit.
 >
 > ---
 >
