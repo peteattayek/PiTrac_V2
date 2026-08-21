@@ -339,6 +339,41 @@ fakes a large offset.
 directly at the overhead lights. That is closer to the intended operating environment than a
 shaded bench.
 
+#### ✅ Result, board 2, 2026-08-21 — rejection confirmed
+
+| | 120 Hz at ADC5 |
+|---|---|
+| beam **off** (no lock-in), lights on | **162 mV p-p** |
+| beam **on**, lights off | 0.12 mV |
+| beam **on**, lights on | **0.32 mV** |
+
+**≈ 250×, about 48 dB.** The central premise of the synchronous-detection design is now
+measured rather than assumed. **Quiet-baseline σ at ADC5 is 0.55–0.65 mV.**
+
+> ### 🔴 The rejection is frequency-selective, and that is easy to forget
+>
+> A lock-in rejects what is **far from the carrier**. It does nothing about ambient energy
+> **near 104 kHz** — and LED drivers, electronic ballasts and switch-mode supplies all have
+> harmonics that reach up there. A source landing within a few Hz of the carrier demodulates
+> to a slow beat that looks exactly like a real signal.
+>
+> Board 2 shows candidate evidence: **16–21 % of samples are bursts to 72 codes at 5–30 Hz,
+> and they are 3× worse with the room lights on.** σ(all) is 6.16 mV dark / 9.15 mV lit —
+> **10× the quiet baseline.** The alternative explanation is motion in the beam, which is the
+> detector working correctly.
+>
+> **Discriminator — do this before `scan carrier`:** lights on, beam on, **scene genuinely
+> static** (step away, nothing moving), three repeat captures.
+> Reproducible burst statistics → the lighting. Wildly varying → it was motion.
+>
+> ⚠ **Consequence for §3.6:** `scan carrier` exists to find the quietest carrier frequency, so
+> **run it under the lighting the machine will actually operate in.** A frequency chosen on a
+> dark bench is not optimised against the interference that matters.
+
+⚠ **At 10 ksps the carrier aliases to 4166 Hz** (and 2f to 1668 Hz), clearly visible at
+~2.6 mV. Harmless, but it means **10 ksps is the right rate for flicker and the wrong rate for
+anything carrier-related.** Use the 500 ksps capture for that.
+
 ---
 
 ## 3.4 Demod phase calibration
