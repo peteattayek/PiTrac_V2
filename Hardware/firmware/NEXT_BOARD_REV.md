@@ -1019,11 +1019,32 @@ Secondary options, both with real costs:
 `capture 0x04 400 500000` at the intended operating duty: no sample at 4095 or near 0.
 Then `capture 0x20 400 500000` should show the carrier gone from ADC5, not merely reduced.
 
-### Mitigation options - ranked
+### ✅ MECHANISM CONFIRMED OPTICAL, 2026-08-19
 
-> ⚠ **Everything below assumes the coupling is OPTICAL.** The resistor substitution has not
-> been run yet. If the path turns out to be beam-current coupling, an aperture buys nothing
-> and this ranking is void. **Run that test first.**
+Established with improved baffles: **the vast majority of the coupling is optical.** The
+resistor substitution was not needed. The mitigation ranking below therefore applies as
+written, and the aperture option is the one that matters.
+
+> ### 🔴 A large part of it was the OPERATOR'S HAND
+>
+> A hand held in front of the board reflects the LED straight back into D12. **This is what
+> made the earlier baffle comparisons uninterpretable** - the no-baffle control moved 320
+> codes between sessions (339 then 19 at 2 % duty) with nothing nominally changed, and a hand
+> at a varying distance is precisely a variable reflector.
+>
+> **Consequences for every optical measurement on this board:**
+>
+> - **Keep hands, arms and torso clear of the optical path while capturing.** Trigger captures
+>   from the keyboard and stay back.
+> - Anything reflective in front of the board is part of the experiment: bench surfaces, the
+>   scope, a coffee cup.
+> - This is a strong argument for the **aperture / field stop** mitigation, which rejects
+>   off-axis returns by construction rather than relying on the operator's discipline.
+>
+> It also explains, in hindsight, the drift that was blamed on thermal state and ambient light.
+> Neither was wrong as a mechanism; this one was simply larger.
+
+### Mitigation options - ranked
 
 #### The framing that ranks them
 
