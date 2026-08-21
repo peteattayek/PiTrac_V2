@@ -127,32 +127,72 @@ bool cal_demod_phase(uint32_t freq_hz, uint32_t n_points, uint32_t cycles,
     // sweep throws away 63 points and is hostage to one noisy sample; the
     // fundamental DFT bin uses all of them, is immune to a single outlier, and
     // gives sub-step resolution for free.
-    double I = 0, Q = 0, I2 = 0, Q2 = 0;
+    double I = 0, Q = 0, I2 = 0, Q2 = 0, I3 = 0, Q3 = 0;
     for (uint32_t i = 0; i < n_points; i++) {
         double a = 2.0 * M_PI * i / n_points;
         I += d[i] * cos(a);      Q += d[i] * sin(a);
         I2 += d[i] * cos(2 * a); Q2 += d[i] * sin(2 * a);
+        I3 += d[i] * cos(3 * a); Q3 += d[i] * sin(3 * a);
     }
-    double mag1 = hypot(I, Q), mag2 = hypot(I2, Q2);
+    double mag1 = hypot(I, Q), mag2 = hypot(I2, Q2), mag3 = hypot(I3, Q3);
     out->amplitude = (float)(2.0 * mag1 / n_points);
     out->h2_ratio  = (mag1 > 0.0) ? (float)(mag2 / mag1) : 1.0f;
+    out->h3_ratio  = (mag1 > 0.0) ? (float)(mag3 / mag1) : 1.0f;
+
+    // How much of the sweep is pinned against the ADC rail. This is the direct
+    // observation; the harmonic ratios are the same statement made indirectly.
+    // Kept separate because it needs no fitting and cannot be argued with.
+    {
+        uint32_t nsat = 0;
+        for (uint32_t i = 0; i < n_points; i++)
+            if (fabsf(d[i]) > 0.97f * ADC_FULL_SCALE) nsat++;
+        out->sat_frac = (float)nsat / (float)n_points;
+    }
 
     double theta0 = atan2(Q, I);                 // radians, peak location
     if (theta0 < 0) theta0 += 2.0 * M_PI;
     out->best_ticks = (int32_t)((theta0 / (2.0 * M_PI)) * (top + 1u) + 0.5);
     out->best_ticks %= (int32_t)(top + 1u);
 
-    // Quadrature null: the response 90 degrees away should be ~0. This is the
-    // bench doc's own sanity check, and h2_ratio is the same statement made
-    // quantitative -- a clean cosine is what a real lock-in response looks like.
+    // Quadrature null: the response 90 degrees away should be ~0.
+    //
+    // Anchor it to the FITTED peak, not to best_i. On a clipped sweep the grid
+    // argmax is degenerate -- dozens of points share the maximum and best_i is
+    // whichever the loop happened to see first -- so a null taken 90 degrees
+    // from it is measured from an arbitrary place. That is what produced the
+    // 2026-08-21 reading of -4086 against an expected ~0.
     {
-        uint32_t qi = (best_i + n_points / 4u) % n_points;
+        int32_t  qt = (out->best_ticks + (int32_t)((top + 1u) / 4u)) % (int32_t)(top + 1u);
+        uint32_t qi = ((uint32_t)qt * n_points) / (top + 1u);
+        if (qi >= n_points) qi = n_points - 1u;
         out->quad_null = d[qi];
     }
 
     // A response that is not a clean cosine is not a lock-in response, and
     // committing a phase from it would be committing to an artifact.
-    out->valid = (out->amplitude > 1.0f) && (out->h2_ratio < 0.25f);
+    //
+    // 2026-08-21: this test used to be `amplitude > 1 && h2_ratio < 0.25`, and
+    // it accepted a sweep that was 84 % hard against the ADC rail. Three of the
+    // four terms below would each have caught that on their own:
+    //
+    //   sat_frac   0.84  vs 0.10 -- the direct observation
+    //   h3_ratio   0.306 vs 0.15 -- symmetric clipping, which h2 cannot see
+    //   amplitude  5128  vs 4095 -- a fitted amplitude ABOVE full scale is
+    //                               impossible for a real signal. It happens
+    //                               because a square wave of height A has a
+    //                               fundamental of 4A/pi = 1.27A.
+    //   quad_null  -4086 vs ~0   -- computed and PRINTED, but never actually
+    //                               enforced. It failed loudly and was ignored.
+    //
+    // The last one is the one worth remembering: the check existed, ran, and
+    // reported failure, and the code still committed the phase.
+    bool ok_amp   = (out->amplitude > 1.0f) && (out->amplitude <= ADC_FULL_SCALE);
+    bool ok_h2    = (out->h2_ratio  < CAL_H2_MAX);
+    bool ok_h3    = (out->h3_ratio  < CAL_H3_MAX);
+    bool ok_sat   = (out->sat_frac  < CAL_SAT_MAX);
+    bool ok_null  = (fabsf(out->quad_null) < CAL_QUAD_NULL_MAX * out->amplitude);
+
+    out->valid = ok_amp && ok_h2 && ok_h3 && ok_sat && ok_null;
     return out->valid;
 }
 
@@ -172,8 +212,11 @@ bool cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts,
         printf("-- model point %lu/%lu: %lu Hz\n",
                (unsigned long)(i + 1), (unsigned long)npts, (unsigned long)f);
         if (!cal_demod_phase(f, 32, 6, CAL_CHOP_HZ_DEFAULT, &r)) {
-            printf("   REJECTED (amplitude %.1f, h2 %.2f) -- not a clean cosine\n",
-                   (double)r.amplitude, (double)r.h2_ratio);
+            printf("   REJECTED -- amplitude %.1f, sat %.0f %%, h2 %.3f, h3 %.3f, null %.1f\n",
+                   (double)r.amplitude, (double)(r.sat_frac * 100.0f),
+                   (double)r.h2_ratio, (double)r.h3_ratio, (double)r.quad_null);
+            if (r.sat_frac >= CAL_SAT_MAX || r.h3_ratio >= CAL_H3_MAX)
+                printf("      clipping -- reduce the light before re-running the model\n");
             continue;
         }
         fs[n] = (double)f;

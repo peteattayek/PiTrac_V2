@@ -444,6 +444,36 @@ ADC5. Faster, but easy to rail — the ×14.5 stage clips at ΔTP9 ≈ 228 mV.
 **Sanity check either way:** the response should fall to ~0 at +90° from the peak
 (quadrature null). If it does not, you are not seeing the real lock-in response.
 
+> ### 🔴 The first run, 2026-08-21, saturated — and the guards let it through
+>
+> **84 % of the 64-point sweep sat at ±4086 codes** (full scale 4095). The response was a
+> **square wave, not a cosine**: fitted amplitude **5128 codes, above full scale**, which is
+> impossible for a real signal and is exactly what a square gives (fundamental = 4A/π = 1.27A).
+>
+> **Why the purity check missed it — worth understanding, not just fixing.**
+> `h2_ratio` scored **0.012** against a 0.25 bar and passed. **Symmetric clipping produces only
+> ODD harmonics** — an ideal square wave has h2/h1 = **0 exactly**. The even-harmonic test was
+> looking in the one place where clipping is guaranteed to leave no trace. Measured
+> **h3/h1 = 0.306** against a square's 0.333.
+>
+> And the **quadrature null reported −4086 where ~0 was required, printed it, and the phase
+> committed anyway** — `valid` never referenced it.
+>
+> ✅ Both fixed in firmware: `h3_ratio` (limit 0.15), `sat_frac` (limit 10 %), amplitude ≤ full
+> scale, and the null now enforced at 15 % of amplitude and anchored to the *fitted* peak
+> rather than the grid argmax, which is degenerate when the top is flat.
+>
+> 🔴 **If it says the signal is too big, reduce the LIGHT, not the gain.** U12B is already at
+> its **minimum** 14.5 — R98 is DNP and fitting it only *raises* gain. In order of preference:
+> **move the reflector further away**, use a **grey card rather than white**, or add an **ND
+> filter over D12**.
+>
+> ✅ **Clipping preserves zero crossings**, so a saturated sweep can still give the right phase
+> — the 8/21 run's 66 ticks was confirmed by its own crossings (427 / 1147 vs 426 / 1146
+> predicted) and by the independent `cal model` (65.4 ticks at 104166 Hz). **Treat that as a
+> lucky escape and re-measure**, because the amplitude, the null and the SNR are all worthless
+> from a clipped sweep even when the phase survives.
+
 Record `demod_phase_ticks` in `PROGRESS.md` §6.
 
 ---

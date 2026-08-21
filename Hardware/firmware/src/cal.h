@@ -28,16 +28,40 @@
 // 3.4 -- demod phase at ONE carrier frequency.
 // ---------------------------------------------------------------------------
 
+// Why there are three purity numbers here and not one.
+//
+// The original version validated on h2_ratio alone, and 2026-08-21 showed that
+// is blind to the exact failure it was written to catch. A sweep that had 84 %
+// of its points hard against the ADC rail -- a square wave, not a cosine --
+// scored h2/h1 = 0.012 and sailed through a 0.25 bar.
+//
+// The reason is elementary once seen: SYMMETRIC CLIPPING PRODUCES ONLY ODD
+// HARMONICS. An ideal square wave has h2/h1 = 0 exactly and h3/h1 = 1/3. So the
+// even-harmonic test is not merely weak here, it is looking in the one place
+// where clipping is guaranteed to leave no trace. The measured sweep scored
+// h3/h1 = 0.306 against a square wave's 0.333.
+//
+// h2 is still worth keeping -- it catches ASYMMETRIC distortion, which is a
+// different fault (one rail hit, or a rectifying nonlinearity). The two
+// harmonics answer different questions.
 typedef struct {
     uint32_t freq_hz;
     int32_t  best_ticks;    // from the cosine fit, wrapped into [0, TOP]
     int32_t  argmax_ticks;  // raw grid maximum, as a human cross-check
     float    amplitude;     // codes, fitted
     float    quad_null;     // response 90 deg from the peak; should be ~0
-    float    h2_ratio;      // |2nd harmonic| / |fundamental|: cosine purity
+    float    h2_ratio;      // |2nd| / |fundamental|: ASYMMETRIC distortion
+    float    h3_ratio;      // |3rd| / |fundamental|: SYMMETRIC CLIPPING. 1/3 = square
+    float    sat_frac;      // fraction of sweep points against the ADC rail
     bool     warm;          // was the beam at thermal plateau?
     bool     valid;
 } cal_demod_t;
+
+// Purity bars. A clean cosine sits near zero on both harmonic ratios.
+#define CAL_H2_MAX        0.25f   // asymmetric distortion
+#define CAL_H3_MAX        0.15f   // symmetric clipping (square wave = 0.333)
+#define CAL_SAT_MAX       0.10f   // fraction of points allowed against the rail
+#define CAL_QUAD_NULL_MAX 0.15f   // |quad null| as a fraction of amplitude
 
 // Sweeps phase across a full carrier period, chopping the beam at each point.
 // Blocking, roughly n_points * cycles / chop_hz seconds (64 x 8 / 20 = ~26 s).

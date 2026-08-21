@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 #define CLI_MAX_LINE 96
 #define CLI_MAX_ARGS 8
@@ -553,11 +554,22 @@ static void dispatch(int argc, char **argv) {
             adc_engine_set_mode(ADC_MODE_IDLE);
             printf("\nfit      : %ld ticks   (grid argmax %ld)\n",
                    (long)r.best_ticks, (long)r.argmax_ticks);
-            printf("amplitude: %.1f codes\n", (double)r.amplitude);
-            printf("quad null: %.1f codes  (should be ~0 at 90 deg from the peak)\n",
-                   (double)r.quad_null);
-            printf("h2/h1    : %.3f  (cosine purity; >0.25 is not a lock-in response)\n",
-                   (double)r.h2_ratio);
+            printf("amplitude: %.1f codes%s\n", (double)r.amplitude,
+                   (r.amplitude > ADC_FULL_SCALE)
+                       ? "   *** ABOVE FULL SCALE -- impossible for a real signal ***" : "");
+            printf("saturated: %.0f %% of sweep points against the rail  (limit %.0f %%)%s\n",
+                   (double)(r.sat_frac * 100.0f), (double)(CAL_SAT_MAX * 100.0f),
+                   (r.sat_frac >= CAL_SAT_MAX) ? "  *** FAIL ***" : "");
+            printf("quad null: %.1f codes  (want |null| < %.0f %% of amplitude = %.1f)%s\n",
+                   (double)r.quad_null, (double)(CAL_QUAD_NULL_MAX * 100.0f),
+                   (double)(CAL_QUAD_NULL_MAX * r.amplitude),
+                   (fabsf(r.quad_null) >= CAL_QUAD_NULL_MAX * r.amplitude) ? "  *** FAIL ***" : "");
+            printf("h2/h1    : %.3f  (asymmetric distortion, limit %.2f)%s\n",
+                   (double)r.h2_ratio, (double)CAL_H2_MAX,
+                   (r.h2_ratio >= CAL_H2_MAX) ? "  *** FAIL ***" : "");
+            printf("h3/h1    : %.3f  (SYMMETRIC CLIPPING, limit %.2f; square wave = 0.333)%s\n",
+                   (double)r.h3_ratio, (double)CAL_H3_MAX,
+                   (r.h3_ratio >= CAL_H3_MAX) ? "  *** FAIL ***" : "");
             printf("warm     : %s\n", r.warm ? "yes" : "NO -- see above");
             cfg_mut()->cal_warm = r.warm ? 1u : 0u;
             if (ok) {
@@ -565,9 +577,18 @@ static void dispatch(int argc, char **argv) {
                 printf("phase <- %ld ticks. Record it in PROGRESS.md section 6.\n",
                        (long)r.best_ticks);
             } else {
-                printf("NOT COMMITTED: the response is not a clean cosine, so this is an\n"
-                       "  artifact rather than a lock-in peak. Check the reflector, the\n"
-                       "  HPF mode and that the beam is actually on.\n");
+                printf("NOT COMMITTED -- see the *** FAIL *** lines above.\n");
+                if (r.sat_frac >= CAL_SAT_MAX || r.h3_ratio >= CAL_H3_MAX ||
+                    r.amplitude > ADC_FULL_SCALE) {
+                    printf("  THE SIGNAL IS TOO BIG. The response is clipping into a square\n"
+                           "  wave, so the peak is flat and its location is not measurable.\n"
+                           "  Reduce the LIGHT, not the gain -- U12B is already at its minimum\n"
+                           "  14.5 (R98 is DNP, and fitting it only raises gain). In order of\n"
+                           "  preference: move the reflector further away, use a darker one\n"
+                           "  (grey card, not white), or add an ND filter over D12.\n");
+                } else {
+                    printf("  Check the reflector, the HPF mode and that the beam is on.\n");
+                }
             }
             return;
         }
