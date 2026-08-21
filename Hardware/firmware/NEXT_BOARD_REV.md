@@ -29,7 +29,7 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 | **CR-11** | Net `Strobe_GND` is not ground — rename it | 🟢 Low | Rename | A name that invites clipping a scope ground to Q11's drain |
 | **CR-16** | **Analog chain runs 0-5.2 V into a 3.3 V ADC** | 🔴 High | Rail or scale | **36 % of every signal is invisible to firmware**, and clipping corrupts the ADC reference |
 | **CR-17** | No test point on the comparator input node | 🟡 Med | 1 pad | The detection decision node cannot be probed; TP8 gives the threshold but not the signal |
-| **CR-15** | **LED→PD crosstalk saturates the TIA above ~2–4 % duty** | 🔴 **Blocker** | Baffle (mech) | **Phase 3 cannot proceed.** Front end rails, LPF slew-limits, 313 mV of carrier lands on ADC5 |
+| **CR-15** | LED→PD crosstalk saturates the TIA | 🟡 **Mitigated** | Baffle (mech) | ✅ **Fixed on the bench 2026-08-19** — linear to 25 % duty with good baffles and hands clear. Board fix still wanted; the workaround relies on operator discipline |
 | **CR-12** | Beam LED thermal path caps sustained duty at ~20 % | 🔴 High | **Vias + bigger sink** (fanless target) | Beam runs at 2/3 optical power while armed → worse Phase 3 SNR |
 
 ---
@@ -849,7 +849,60 @@ urgent or academic.
 
 ---
 
-## CR-15 — 🔴 Beam coupling saturates the TIA above ~2-3 % duty — **CONFIRMED ON TWO BOARDS**
+## CR-15 — 🟡 Beam coupling saturates the TIA — **MITIGATED ON THE BENCH 2026-08-19**
+
+> ### ✅ FIXED with baffling — linear to 25 % duty
+>
+> Duty sweep with good baffles and hands clear of the optical path. `capture 0x04 400 500000`:
+>
+> | duty | min | max | swing | rails? |
+> |---|---|---|---|---|
+> | 2 % | 3084 | 3253 | 169 codes = 136 mV | no |
+> | 4 % | 2750 | 3285 | 535 = 431 mV | no |
+> | 8 % | 2373 | 3374 | 1001 = 807 mV | no |
+> | 12 % | 1891 | 3418 | 1527 = 1231 mV | no |
+> | **25 %** | **2076** | **3606** | 1530 = 1233 mV | **no** |
+>
+> **No saturation at any duty.** Pulse depth below the off-level fell from **2.58 V to
+> 0.132 V at 2 % — about 20x.**
+>
+> Three independent checks that the measurement is sound:
+>
+> - **The servo signature tracks the model.** V_off = 2.59 + f x dV predicts the rise, and the
+>   measured off-levels are 2.617 / 2.641 / 2.688 / 2.733 / 2.876 V for 2/4/8/12/25 %, against
+>   2.589 V with the beam off.
+> - **The excursion stops growing after 12 %** (1527 vs 1530 codes at 12 % and 25 %). Once the
+>   pulse exceeds the TIA's 235 ns time constant it settles fully, and amplitude is then set by
+>   *peak* photocurrent - which Phase 2 independently showed is flat against duty.
+> - Captures are stable to a code or two, where the pre-baffle "control" moved 320 codes
+>   between sessions.
+>
+> ⚠ **Low-duty numbers understate the excursion.** 500 ksps against 104.1667 kHz is exactly
+> 4.8 samples per period, so the sampling is coherent and only **24 distinct phase points** are
+> ever visited. At 2-4 % the pulse (192-384 ns) is far shorter than the 2 us sample interval,
+> so the true bottom is rarely caught. **At 25 % it does not apply** - the settled 2.4 us pulse
+> is wider than the interval - so the 2076 figure is trustworthy, which is the one that matters.
+>
+> ### CR-16 is now the binding constraint, not this one
+>
+> | | margin at 25 % duty |
+> |---|---|
+> | min 2076 -> op-amp rail (0 V) | 1.67 V |
+> | max 3606 -> **ADC ceiling (3.3 V)** | **0.39 V** <- tightest |
+> | max 3606 -> op-amp rail (5.2 V) | 2.30 V |
+>
+> Exactly as predicted: the ADC clips before the op-amp rails. 0.39 V is not much, so a
+> brighter target or more ambient could still clip **ADC2**. That is the health monitor rather
+> than the detection path, so it is a nuisance rather than a blocker - but read future TIA
+> captures with it in mind.
+>
+> **Priority dropped from red to yellow.** The bench is unblocked and Phase 3 can proceed. The
+> board change is still worth making, because the fix currently depends on baffling and on
+> operator discipline about hands.
+
+### (original finding, retained)
+
+## CR-15 (original) — Beam coupling saturates the TIA above ~2-3 % duty — CONFIRMED ON TWO BOARDS
 
 > ### ⚠ CORRECTION 2026-08-19 — only the BOTTOM clipping is real
 >
