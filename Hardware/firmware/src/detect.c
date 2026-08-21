@@ -555,9 +555,15 @@ bool detect_comparator(void) { return gpio_get(PIN_D_COMPARATOR) != 0; }
 //          2M is ~20 uV. It does not move.
 //   HOLD   the node is open, so C81 integrates the switch leakage.
 //
-// MEASURED 2026-08-17 on this board: HOLD drifts ~11 mV/s at ADC5, TRACK ~1.9,
-// for a ratio of about 6. Working back, 11 mV/s / 14.5 gain x C81 330 nF implies
+// MEASURED, board 1 2026-08-17: HOLD drifts ~11 mV/s at ADC5, TRACK ~1.9, for a
+// ratio of about 6. Working back, 11 mV/s / 14.5 gain x C81 330 nF implies
 // ~250 pA of TMUX1219 off-leakage.
+//
+// MEASURED, board 2 2026-08-21: HOLD ~2.3 mV/s -> ~52 pA, separation 2.9x. Same
+// polarity, ~5x less leakage. THIS IS WHY THE RATIO IS NOT THE CRITERION: two
+// good boards gave 6x and 2.9x for the same correct answer. What was identical on
+// both is that the repeats of a level agreed (0.1-0.2 mV on board 2) while the
+// levels differed by 17.8 mV -- a rank test, which is what conclusive() uses.
 //
 // The original comment here predicted ~44 mV/s from an assumed 1 nA. That was 4x
 // pessimistic -- TI specs this part's leakage in the low hundreds of pA at room

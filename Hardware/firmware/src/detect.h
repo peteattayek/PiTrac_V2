@@ -81,10 +81,18 @@ float detect_threshold_vref(void);
 //
 // So HOLD is a genuine open circuit, not a second filter corner. The U12B input
 // DC level is undefined there and walks on switch leakage and op-amp bias.
-// MEASURED 2026-08-17: ~11 mV/s at ADC5, implying ~250 pA of switch leakage into
-// C81. That is the effect detect_hpf_test() measures, and it is also why ARMED
-// (which means HOLD) cannot be held open indefinitely -- the baseline is both
-// frozen AND walking.
+// MEASURED on two boards, and it is a RANGE, not a constant:
+//   board 1 (2026-08-17)  ~11  mV/s at ADC5  -> ~250 pA into C81
+//   board 2 (2026-08-21)  ~2.3 mV/s at ADC5  -> ~52  pA into C81
+// Both are inside TI's spec for a precision switch, and switch leakage roughly
+// doubles per 10 C, so do not encode either number as a threshold anywhere.
+// This drift is the effect detect_hpf_test() measures.
+//
+// It does NOT constrain arming, which is what the planning notes feared. At
+// 2.3 mV/s the baseline takes ~43 s to walk 100 mV at ADC5 (~9 s at board 1's
+// rate), while a ball transit is 1-10 ms -- so the walk during a shot is ~23 uV.
+// The worry was wrong by three to four orders of magnitude. Arming well ahead of
+// a shot is safe; only an arm-and-forget of many seconds is worth a thought.
 //
 // POLARITY RESOLVED 2026-08-17. TMUX1219 truth table: SEL=0 -> S1, SEL=1 -> S2.
 // S1 is the R96/GND leg, so GPIO33=0 is TRACK and GPIO33=1 is HOLD. The netlist
@@ -140,8 +148,8 @@ typedef struct {
 // The discriminator is the ABSOLUTE steady-state baseline, not a drift rate:
 // TRACK is DC-coupled to ground through R96 2M, so after settling ADC5 must sit
 // at ~0 (op-amp offset only). HOLD is a genuine open, so C81 integrates the
-// switch leakage and the baseline walks away from 0 without bound -- roughly
-// 11 mV/s at ADC5 as measured on this board.
+// switch leakage and the baseline walks away from 0 without bound -- 2.3 to
+// 11 mV/s at ADC5 across the two boards measured so far.
 //
 // Each level is measured TWICE, alternating, and the repeats are compared. That
 // is not redundancy: it is the specific check that catches an ordering artifact,

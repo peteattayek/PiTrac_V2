@@ -246,32 +246,37 @@ the fault: TP7 off alone → servo or bias; TP9 ≠ TP10 → an LPF stage.
 
 ## 3.3 Beam ON, no target
 
-> ### 🔴 STOP HERE — this is where the board currently blocks (2026-08-17)
+> ### ✅ CLEARED 2026-08-19 — was the CR-15 block, now passes to 25 %
 >
-> **The TIA saturates on beam coupling above ~3 % duty.** Measured with `capture 0x04 400 500000`:
+> **This section blocked Phase 3 for two days and no longer does.** The TIA saturated on beam
+> coupling above ~3 % on board 1 and ~2 % on board 2 — two independent boards within one duty
+> step, which established it as a **design** property. **The coupling was optical**, and better
+> baffling plus keeping hands out of the beam removed it:
 >
-> | duty | TIA_Out codes | |
-> |---|---|---|
-> | 2 % | 597 … 3709 | linear |
-> | **3 %** | 98 … 3791 | **linear, bottom 79 mV off the rail** |
-> | 4 % | **5** … 3798 | bottom railed |
-> | 6 %, 8 % | 4 … **4095** | both rails |
+> | duty | board 2, baffled | swing | |
+> |---|---|---|---|
+> | 2 % | 3084 … 3253 | 136 mV | linear |
+> | 12 % | 1891 … 3418 | 1231 mV | linear |
+> | **25 %** | **2076 … 3606** | **1233 mV** | **linear — operating point** |
 >
-> Knock-on: a full-scale square into the demodulator slew-limits the LPF's OPA4323 sections
-> (1.5 V/µs needs 3.3 µs for a 5 V step against a 9.6 µs carrier period), **a slew-limited
-> filter stops filtering**, and **313 mV of carrier lands on ADC5**. Any comparator threshold
-> below ~250 mV chatters at 104 kHz.
+> Worst case (overhead lights on, photodiode aimed at them): min 1993 / max 3573, still no
+> saturation, and within 5 % of the dark result at 12 % and 25 %.
 >
-> **§3.4 onward cannot produce trustworthy numbers until this is fixed** — `scan carrier` SNR
-> would be dominated by the feedthrough, which is the exact quantity it exists to compare.
+> ⚠ **The mitigation is mechanical and depends on operator discipline**, so `NEXT_BOARD_REV.md`
+> **CR-15 stays open at 🟡** — the board fix is still wanted. Re-run the sweep on every build;
+> it is now the baffle acceptance test (`BRINGUP_NEW_BOARD.md` §8).
 >
-> Full analysis, the open mechanism question, and the acceptance test: **`NEXT_BOARD_REV.md`
-> CR-15**. The mechanism (optical crosstalk vs beam-current coupling) is **not yet settled** —
-> the drive itself is exonerated (U9 measured exact, 210/210 edges at 100.000 µs).
+> ⚠ **CR-16 now binds tighter than CR-15.** At 25 % there is **0.39 V of margin to the ADC's
+> 3.3 V ceiling** against 1.67 V to the op-amp rail. The 5 V analog chain, not the TIA, is what
+> limits usable signal from here on.
 >
-> ⚠ **Before running any optical test here, read `PROGRESS.md` §11.** A foil-over-D12 test shorted
-> 36 V into the TIA summing node. D12's cathode is at VIR through R77 — nothing conductive goes
-> near it without knowing what it must not touch.
+> ⚠ **Two confounds cost a bench session each — do not repeat them.** A hand in front of the
+> board reflects 850 nm into D12 and moved a control reading 339 → 19 codes. And most black
+> plastics are near-transparent at 850 nm, so an untested "opaque" baffle proves nothing.
+>
+> 🔴 **Before running any optical test here, read `PROGRESS.md` §11.** A foil-over-D12 test
+> shorted 36 V into the TIA summing node and destroyed U11B. D12's cathode is at VIR through
+> R77 — nothing conductive goes near it without knowing what it must not touch.
 
 
 ```
@@ -291,6 +296,48 @@ capture 0x04 4000 500000     # ch2, free-running
 ```
 and take min/max/RMS over many periods — that gives carrier amplitude without needing
 coherence, which is enough for a health check.
+
+⚠ **Undersampling makes low duties untrustworthy.** 500 ksps ÷ 104.1667 kHz is exactly **4.8**,
+so only **24 distinct carrier phases** are ever visited and the capture's start phase varies
+run to run. Below ~12 % the pulse is shorter than the 2 µs sample interval and the recorded
+minimum is largely luck. **Compare boards and settings at 12 % and 25 %, not at 2 %.**
+
+### The lock-in proof — and the ADC5 noise floor
+
+Two different measurements that people conflate. **Run both; they need different rates.**
+
+**(a) σ_noise, the denominator of every `scan carrier` SNR figure.** Beam on, HPF in TRACK, no
+target:
+
+```
+hpf track
+capture 0x20 400 500000
+```
+
+Board 2, 2026-08-21: **mean 9.2 mV, σ 2.19 mV, p-p 12.1 mV.** The mean landing on the TRACK
+settled offset (9.3 mV from `hpf test`) to within 0.1 mV is the useful part — it says the HPF
+is removing the whole static beam-coupling DC with the beam running.
+
+**(b) Ambient rejection.** This is what the lock-in exists for: with the beam **off** the demod
+is static and mains flicker reaches ADC5 at **162 mV p-p**; with it running the flicker should
+collapse by ~64 dB.
+
+🔴 **Do NOT use the 500 ksps capture for this.** 400 samples at 500 ksps is **800 µs — one
+tenth of a single mains half-cycle** — so it cannot resolve 120 Hz even in principle. This
+mistake was made on 2026-08-21 and produced two captures differing 6.4× with no way to
+attribute the difference. Use ~200 ms:
+
+```
+capture 0x20 2000 10000      # 200 ms = 24 cycles of 120 Hz
+```
+
+Run it **lights-on and lights-off, labelled**, and let the scene sit still for **≥3 s** before
+each — the HPF's τ is 0.66 s, so any change within ~2 s leaves the node still settling and
+fakes a large offset.
+
+**A stronger version of this test** than the doc originally specified: point the photodiode
+directly at the overhead lights. That is closer to the intended operating environment than a
+shaded bench.
 
 ---
 

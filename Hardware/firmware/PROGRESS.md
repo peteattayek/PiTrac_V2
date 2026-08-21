@@ -345,6 +345,13 @@ See `tools/openocd_pi5.cfg`.
 | 8/17/2026 | **HPF SEL polarity (GPIO33)** | **GPIO33=0 is TRACK** | ✅ **CLOSED. Confirmed two independent ways.** TMUX1219 truth table (SEL=0 → S1, and S1 is the R96/GND leg), and `hpf test` **shaded**: level 0 gave +22.8 / +19.1 mV (consistent, near zero) vs level 1 at +67.8 / +88.8 mV — displaced *and still climbing between visits*, which is a floating node continuing to integrate. Separation 3.7×. **The bench doc's original `gpio 33 1` = TRACK was backwards.** `HPF_SEL_TRACK` = 0. ⚠ **The first two runs were UNSHADED and reported ORDER-DEPENDENT / INVERTED — see the flicker row above; the answer only appears with the photodiode covered** |
 | 8/17/2026 | **HOLD baseline drift (superseded)** | **~11 mV/s at ADC5** | TRACK ~1.9 mV/s, ratio ~6. Implies **~250 pA** of TMUX1219 off-leakage into C81 — **4× lower than the 1 nA I predicted**, so the test's separation was 6× not the ~20× expected and the 4× conclusiveness bar only just cleared. Lengthen the window rather than tightening the bar: a floating node's drift grows with time, a pinned one's does not |
 | 8/17/2026 | **Phase 3 bring-up steps 1-4** | **all pass** | ✅ Boots; PIO on **block 2, GPIOBASE 16, SM 0** (A2 allocation confirmed on silicon); `D_Comparator` reads high with the rail down as predicted (U15 unpowered, R103 pulls up); threshold DAC correct on a DMM at 0/25/50/75 %; `adc 2` = **2.5884 V** vs the expected 2.59; 5V_IN 5.207 V, ring RUNNING |
+| 8/21/2026 | ✅ **`hpf test` on board 2 — CONFIRMED, and clean** | **2.9× separation** | ✅ GPIO33=0 → +0.0093 / +0.0092 V; GPIO33=1 → +0.0271 / +0.0269 V. **The repeats are the result worth recording, not the ratio:** the two visits to a level agree to **0.1 and 0.2 mV** against **17.8 mV between levels**, so `order_effect` is false by a factor of ~100. Compare the earlier ORDER-DEPENDENT runs at 1.2× and 1.4×. **Polarity matches the compiled `HPF_SEL_TRACK` — no code change.** Third independent confirmation (board 1 bench, TMUX1219 truth table, board 2 bench). Conditions that made it work: photodiode shaded, board at steady temperature, hands clear for the full 32 s |
+| 8/21/2026 | **HOLD leakage, board 2** (supersedes the 8/17 row) | **≤ 2.3 mV/s at ADC5 → ~52 pA** | 🔵 HOLD p-p **8.9 mV** over a 3 s window vs TRACK's 0.8–2.4 mV noise floor, so drift ≤ (8.9−2)/3 ≈ 2.3 mV/s. Back through ×14.5 and C81 330 nF → **~52 pA** of TMUX1219 off-leakage, vs board 1's ~250 pA. Both are inside TI's spec for a precision switch and leakage roughly doubles per 10 °C, so **treat this as a 50–250 pA range, not a constant** |
+| 8/21/2026 | ✅ **F6 CLOSED — how long HOLD stays usable** | **tens of seconds** | ✅ The open question from planning was whether a floating C81 drifts too fast to arm ahead of a shot. At 2.3 mV/s it takes **~43 s** to walk 100 mV at ADC5 (~9 s even at board 1's 250 pA). **A ball transit is 1–10 ms → ≤ 23 µV of walk.** The concern was wrong by three to four orders of magnitude. Arming well before a shot is safe; only an arm-and-forget of many seconds needs thought |
+| 8/21/2026 | ✅ **ADC5 noise floor, beam ON 25 %, TRACK** | **σ 2.19 mV, mean 9.2 mV** | ✅ `capture 0x20 400 500000`. **The mean lands on the TRACK settled offset (9.3 mV from `hpf test`) to within 0.1 mV** — the HPF is removing the entire static beam-coupling DC, which is exactly its job and the first direct evidence it works with the beam running. p-p 12.1 mV, no spectral structure above ~1.3 codes. **This is the σ_noise that denominates every `scan carrier` SNR figure** |
+| 8/21/2026 | ⚠ **Second capture unexplained — 6.4× higher** | **mean 58.7 mV, σ 4.52 mV** | ⚠ **The two captures were not labelled lights-on vs lights-off, so the ambient-rejection figure cannot be extracted.** Something added ~50 mV of in-band signal and doubled σ. **Do not read this as a rejection failure** — the HPF's τ is 0.66 s, so *any* scene change within ~2 s of the capture (lights switching, a hand withdrawing) leaves the node still settling and would produce exactly this. Re-run labelled, with ≥3 s of stillness before each capture |
+| 8/21/2026 | 🔵 **2nd harmonic of the carrier at ADC5** | **~5 codes ≈ 4 mV at 208.33 kHz** | 🔵 Present in the 58.7 mV capture, absent from the quiet one. The top **two** FFT bins are 207.50 and 208.75 kHz — the pair straddling exactly 2 × 104.166 kHz — which is hard to get by chance. **2f is the signature of genuine carrier-frequency light being demodulated** (chopped DC ambient lands at f and *odd* harmonics, not 2f). ⚠ **It cannot have come down the signal path:** the 4th-order 15.39 kHz LPF sits *after* the demodulator and gives −90 dB at 208 kHz, which would need 9.4 V pre-LPF to leave 4 mV at ADC5. So it is **coupling around the filter** — PCB or supply, from the demod clock. Harmless at 0.12 % of full scale; **watch it, do not raise a CR yet.** Confirm with a longer 500 ksps capture (finer bins) before drawing conclusions from one 400-sample window |
+| 8/21/2026 | ⚠ **Correction to my own step-2 instruction** | **800 µs cannot see 120 Hz** | ⚠ I specified `capture 0x20 400 500000` as the ambient-rejection test. **That window is 800 µs — a tenth of one mains half-cycle** — so it cannot resolve flicker even in principle, and the 8/17 baseline it was meant to be compared against was taken at `4000 125000` (32 ms). **For flicker use ~200 ms**: `capture 0x20 2000 10000`. Keep the 500 ksps capture as well, but only for σ and carrier harmonics |
 | | Beam path width (mm) | | `detect path <mm>`. No velocity is reported until set |
 | | Pi shutdown duration | | **Phase 8.2.** Set `PI_SHUTDOWN_MIN_HOLDOFF_MS` ≈ 2× this. It is 15 s on an assumption today |
 
@@ -548,18 +555,30 @@ firmware/
 
 ## 10. Next session — start here
 
-> ### 🔴 RESUME POINT — Phase 3 bench BLOCKED by CR-15, board in a latched state (2026-08-17)
+> ### ✅ RESUME POINT — board 2 live, Phase 3 unblocked, §3.4 is next (2026-08-21)
 >
-> **Read §11 first — the board is not in a clean state.** The DC servo is latched at its
-> positive rail and TP7 reads 0 V. Nothing is believed damaged; it needs a long power-down.
+> **Board 2 is healthy and configured. Board 1 is set aside** pending a U11 replacement
+> (OPA4323IPWR, TSSOP-14, LCSC C22419728) — see §11 for how it died.
 >
-> **Phase 3 bench progress before the block:** boot ✅, PIO block 2 @ GPIOBASE 16 ✅, threshold
-> DAC vs DMM ✅, static health ✅ (`adc 2` = 2.5884 V vs 2.59 expected), **`hpf test` → TRACK =
-> GPIO33 low** ✅ (confirmed twice — empirically and against the TMUX1219 datasheet), `cfg save` ✅.
+> **Complete on board 2:** rails ✅ (after the PSU current-limit trap, §6), `adc5vcal` →
+> scale **1.0617** ✅, **`hpf test` CONFIRMED — GPIO33 = 0 is TRACK**, 2.9× separation with
+> the repeats agreeing to 0.1–0.2 mV ✅, `cfg save` → slot A seq 3 ✅, **CR-15 mitigated —
+> linear to 25 % duty** with good baffles and hands clear ✅, and ADC5 quiet in TRACK with
+> the beam on: mean 9.2 mV (= the TRACK offset exactly), σ 2.19 mV ✅.
 >
-> 🔴 **Then blocked at §3.3:** the TIA saturates on beam coupling above ~3 % duty (CR-15). Until
-> that is fixed, §3.4 onward cannot produce trustworthy numbers — 313 mV of carrier reaches ADC5
-> and any comparator threshold under ~250 mV would chatter at 104 kHz.
+> **Next is §3.4 `cal demod`.** It needs a **static reflector** and a **warm beam**
+> (5 min at 25 % — optical output falls 25–45 % cold→plateau while the electrical
+> readings barely move, so a carrier chosen cold is wrong warm).
+>
+> **Two config fields are still unset, and both gate Phase 4:**
+> `path 0.00 mm` (nothing reports velocity until `detect path <mm>`) and
+> `phase mdl: not fitted` (needs `cal model`).
+>
+> ⚠ **Open from the 2026-08-21 session.** The two ADC5 captures intended as the
+> ambient-rejection proof **were not labelled** lights-on vs lights-off, and they differ
+> **6.4× in mean** (9.2 mV vs 58.7 mV). The lock-in rejection figure is therefore still
+> unmeasured. **Re-run labelled, and at a rate that can actually resolve 120 Hz** — an
+> 800 µs window cannot see mains flicker at all. See the 8/21 rows in §6.
 >
 > ---
 >
