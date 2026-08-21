@@ -353,7 +353,12 @@ distance.
 
 ### Method A (preferred): chopped beam
 
-HPF in **track** mode (`gpio 33 1`). Chop the carrier on/off at ~5 Hz, well inside the HPF
+HPF in **track** mode — type **`hpf track`**, which drives GPIO33 **LOW**. ⚠ An earlier
+revision of this line said `gpio 33 1`; that is **HOLD** and is backwards. Polarity was
+settled three ways (TMUX1219 truth table, `hpf test` on two boards): **GPIO33 = 0 is TRACK.**
+Use the `hpf` command rather than raw `gpio` — it is the one place the constant lives.
+
+Chop the carrier on/off at ~5 Hz, well inside the HPF
 passband. Sample ADC5 synchronously and compute `mean(beam on) − mean(beam off)` over ~10
 cycles. That differential ∝ cos(phase error), and it rejects ambient drift for free.
 
@@ -374,7 +379,8 @@ is a different circuit rather than a dark reference. If you chop by hand, chop t
 
 ### Method B (quick): frozen HPF
 
-`gpio 33 0` (HOLD) with the reflector present, then sweep phase. Held DC shifts do reach
+**`hpf hold`** (GPIO33 **HIGH**) with the reflector present, then sweep phase. ⚠ Same
+correction as above — an earlier revision had this as `gpio 33 0`, which is TRACK. Held DC shifts do reach
 ADC5. Faster, but easy to rail — the ×14.5 stage clips at ΔTP9 ≈ 228 mV.
 
 **Sanity check either way:** the response should fall to ~0 at +90° from the peak
@@ -480,15 +486,15 @@ on
 beam freq 104166
 beam duty 25          # NOT 30 -- see CR-12
 adcmode idle
-gpio 33 1          # HPF TRACK
+hpf track          # HPF TRACK -- drives GPIO33 LOW, not high
 ```
 
 Scope **+5 V** and **ADC5** together, then toggle `beam on` / `beam off` and capture both.
 
 | Step | HPF | What to record |
 |---|---|---|
-| 1 | `gpio 33 1` (**TRACK**) | ΔV at +5 V, and the ADC5 excursion. The HPF should remove most of it. |
-| 2 | `gpio 33 0` (**HOLD**) | Same step. **This is the armed case.** |
+| 1 | `hpf track` (**TRACK** = GPIO33 **0**) | ΔV at +5 V, and the ADC5 excursion. The HPF should remove most of it. |
+| 2 | `hpf hold` (**HOLD** = GPIO33 **1**) | Same step. **This is the armed case.** |
 | 3 | — | Coupling ratio = ΔADC5 / ΔV_rail. **Compare against the predicted 7.25.** |
 
 **The TRACK-vs-HOLD difference is the Q8 effect isolated** — same stimulus, same optical

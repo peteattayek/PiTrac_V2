@@ -375,7 +375,7 @@ curvature. **If it reports `pure_delay`, distrust the measurement**, not the net
 | Standby current | 32 mA | *not recorded* | |
 | Rail-up idle current | 129 mA @ 5.2 V | *not recorded* | |
 | U9 clamp width | 122.68 µs | *not recorded* | |
-| Beam temp at 25 % duty | 87.5 °C plateau | ⚠ *not recorded — do this* | |
+| Beam temp at 25 % duty | 87.5 °C plateau | ⚠ **98 °C at 10 min** (sink 78 °C) | |
 | `hpf test` | CONFIRMED, TRACK = 0 | **CONFIRMED, TRACK = 0**, 2.9× ✅ | |
 | HOLD leakage into C81 | ~250 pA (11 mV/s) | **~52 pA** (2.3 mV/s) | |
 | ADC5 σ, beam on 25 %, TRACK | — | **2.19 mV** ✅ | |
@@ -383,10 +383,14 @@ curvature. **If it reports `pure_delay`, distrust the measurement**, not the net
 
 ⚠ **The board 2 gaps above are real, not clerical.** Two of them matter:
 
-- **Beam temp at 25 % duty** is the one to close first. CR-12 measured board 1's junction at
-  **123–133 °C against a 145 °C maximum at 30 %**, and that margin depends on *this* board's
-  heatsink mounting, paste and airflow — it does not transfer. Board 2 has now run 25 % duty
-  repeatedly with no thermal check at all.
+- ⚠ **Beam temp — now measured on board 2, and it is worse than board 1.** 98 °C at the base
+  after 10 min at 25 % (board 1: 87.5 °C), heatsink 78 °C (board 1: 68.1 °C). Junction works
+  out at **114–122 °C against the 145 °C maximum** — 23–31 °C of margin, where board 1 had
+  33–41. **Do not run board 2 above 25 %**, and re-read at 20–30 min for a real plateau: CR-12
+  saw the temperature still climbing +4 °C over the second five minutes.
+  **The mounting is not the problem** — the base→heatsink gradient is 20.0 K against board 1's
+  19.4 K, so paste and clamping are as good. It is all heatsink→ambient, which means **airflow
+  is the lever**: CR-12 puts 2–3× airflow at 24.5 → 14.7 K/W total.
 - **Standby and rail-up idle current** are the baselines that make a future leak visible. The
   80 mA reading from the PSU-limit incident is *not* a valid baseline — it was taken with VIR
   parked at 27 V.
