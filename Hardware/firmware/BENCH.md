@@ -16,9 +16,29 @@ Step-by-step, with the exact CLI commands. **Record every measurement in
 - **`PULSE_LIMIT_DISABLE` (GPIO27) stays 0.** It defeats the strobe hardware
   watchdog. There is deliberately no CLI path to it.
 
-**Status: every phase in this document — 0, 0.5, 1, 1b and 1c — is ✅ complete on the first
-board (2026-07-31).** Results are recorded inline below. The procedures stay here as-written
-so a second board can be brought up the same way. **Next: `BENCH_P2_BEAM.md`.**
+**Status: every phase in this document — 0, 0.5, 1, 1b and 1c — is ✅ COMPLETE.** First proved
+on **board 1 (2026-07-31)**; re-run on **board 2 (2026-08-21)** and passed again. Results are
+recorded inline below.
+
+⚠ **Board 1 is out of service** — U11B died on 2026-08-17 (foil across D12; `PROGRESS.md` §11).
+**Board 2 is the live board.** Everything below still applies to it and to any board after it.
+
+> ### Bringing up a NEW board? Use `BRINGUP_NEW_BOARD.md` instead.
+>
+> It is the condensed, ordered re-run of only the parts that are specific to a *board* rather
+> than to the *design*. This document is the full reasoning; that one is the checklist. Come
+> back here when something does not match.
+
+**Next: `BENCH_P2_BEAM.md`.**
+
+## How to read the procedures below
+
+Every phase opens with a **board state** table — what must be connected, what must be off, and
+what the CLI should already be reporting. Set the board to exactly that before starting.
+
+⚠ **`off` now also turns the beam off** (fixed 2026-08-24). Before that, `beam_enabled()`
+survived a rail-down and the next `on` relit D11 with no `beam on`, no duty ramp and no
+cold-LED warning. If you are on an older build, type `beam off` explicitly.
 
 **LED reference** (used throughout):
 
@@ -113,6 +133,18 @@ mode with no button press. Works whenever the firmware is running.
 **Do this before any firmware writes GPIO15.** This is the first time the board
 sees real power. All measurements are DMM/scope — the CLI plays no part.
 
+### Board state
+
+| | |
+|---|---|
+| Firmware | flashed, but **irrelevant** — the CLI plays no part in this phase |
+| **J2 jumper** | **varies by step — that is the procedure.** Off for a/b, on for c/d, off again for e |
+| PSU | **0.3 A limit** for step b, **2 A** from step c |
+| Pi | 🔴 **not connected**, and not until Phase 7c |
+| Beam | off (nothing drives it yet) |
+| **Power button** | 🔴 **do not press it during 0.5** — it drives GPIO15 high on top of the J2 short. Harmless, but it muddies what you are measuring. |
+| Gear | DMM, scope |
+
 **Two things to know before you start:**
 
 1. **J2 bypasses the firmware entirely.** It shorts the latch gate to GND, so the
@@ -160,10 +192,21 @@ J2 removed. Only now does firmware get to touch the latch.
 
 ## Phase 1 — power button and latch
 
-**Power:** PSU 5.2 V / 2 A into J1. **J2 removed. No Pi.**
+### Board state
 
-If the Adafruit 481 panel button isn't wired yet, test by shorting
-**J7.3 → J7.4 (GND)** with a jumper.
+| | |
+|---|---|
+| PSU | 5.2 V, **2 A limit**, into J1 |
+| **J2 jumper** | 🔴 **REMOVED.** The whole point of Phase 1 is that *firmware* closes the latch; J2 would bypass it. |
+| Pi | 🔴 **not connected** |
+| Rail | starts **down** (STANDBY) |
+| Beam | off |
+| USB | connected for the CLI — and for 1.1 you need **both** USB and the PSU |
+| Gear | DMM, scope |
+| Button | panel button on J7, or short **J7.3 → J7.4 (GND)** with a jumper if it is not wired yet |
+
+**Expect at rest:** yellow LED slow-blinking, `stat` reading `STANDBY`, `latch: 0`,
+`railsready 0`.
 
 > **The MCU is already running before you press anything — that is by design.**
 > Apply power to J1 and the yellow LED starts its slow standby blink immediately,
@@ -500,7 +543,19 @@ which is the point of that test), "Pi never halts" runs the full **60 s** timeou
 
 ## Phase 1c — Panel indicators (J7)
 
-**Prereq:** Phase 1. **Power:** PSU 5.2 V. Requires the panel button wired to J7.
+### Board state
+
+| | |
+|---|---|
+| Prereq | Phase 1 passed |
+| PSU | 5.2 V |
+| **Panel** | 🔴 **the button and both LEDs must be wired to J7** — this phase is about them |
+| Pi | not connected |
+| Rail | **up** for the LED tests — both panel LEDs are fed from the **switched** +5 V and are physically dark in STANDBY |
+| Beam | off |
+
+⚠ **`panel demo` and `panel pattern` need the rail up.** Testing indicators in STANDBY proves
+nothing: J7.1 and J7.5 are the switched rail, so the LEDs cannot light regardless of firmware.
 
 | J7 | Signal | Drive |
 |---|---|---|

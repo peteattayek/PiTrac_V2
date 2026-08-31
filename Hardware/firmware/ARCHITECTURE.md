@@ -6,9 +6,11 @@ sequencer, with the cores only setting things up and reading results.
 
 This document audits every function against that goal, records what is already
 compliant, and flags the places where the current code or the .md pseudocode falls
-short. **Three of the findings are real problems, not stylistic preferences** — see
-A1, A2 and **A7**. A7 is a hardware collision found on 2026-07-31 and it will surface
-in Phase 6b; board-level fix proposed as CR-01 in `NEXT_BOARD_REV.md`.
+short. **Three of the findings were real problems, not stylistic preferences** — A1, A2 and
+**A7**. ✅ **A1 and A2 were both fixed 2026-08-14** and A2 has since run on silicon (PIO2
+SM0, GPIOBASE 16). 🔴 **A7 is the only one still open:** a hardware collision found on
+2026-07-31 that will surface in Phase 6b; board-level fix proposed as CR-01 in
+`NEXT_BOARD_REV.md`.
 
 ---
 

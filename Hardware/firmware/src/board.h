@@ -131,6 +131,10 @@
 //
 // Nothing else in the firmware may compare against PIN_HPF_TOGGLE's raw level.
 #define HPF_SEL_TRACK        0    // level that selects S1 (the 2M/GND leg)
+
+// C81, the hold capacitor. Used to turn the measured HOLD drift rate into a
+// leakage current, which is the number that actually bounds the armed window.
+#define HPF_C81_F            330e-9f
 #define HPF_SEL_HOLD         (!HPF_SEL_TRACK)
 
 // --- Misc -------------------------------------------------------------------
@@ -419,6 +423,28 @@
 #define STROBE_HW_LIMIT_US_ASSUMED 122    // U9 measured; VERIFY ON U5 in Phase 6a.1
 #define STROBE_SW_MAX_US           100    // meets .md S15 at 10 m/s; 0.82 x HW limit
 #define STROBE_MIN_GAP_US          150    // let the VIR bulk caps breathe between pulses
+
+// Per-burst charge ceiling, in millicoulombs. BENCH_P6_STROBE 6a.3 has referred
+// to this constant since it was written; it did not exist until 2026-08-28.
+//
+// Charge per burst is (pulses x width x current). At the design 10 pulses and
+// 9 A, the .md S15 schedule gives:
+//
+//   ball    width    charge      vs 6.0 mC
+//   90 m/s   11 us   0.99 mC     fine
+//   50 m/s   20 us   1.80 mC     fine
+//   20 m/s   50 us   4.50 mC     fine, 25 % margin
+//   10 m/s  100 us   9.00 mC     *** OVER -- the interlock must SHED pulses ***
+//
+// So the slow-ball row is the only one that trips it, and shedding there is the
+// designed behaviour rather than an error: a slow ball crosses the frame over a
+// longer window, so dropping pulses costs sample density, not coverage.
+//
+// 🔴 UNVALIDATED. The 6.0 figure is a thermal budget for the LED bank that has
+// never been checked against the real bank, and 6a.3's job is to confirm the
+// interlock actually sheds at 10 m/s. Do not raise it to make a test pass.
+#define BURST_CHARGE_MAX_MC        6.0f
+#define BURST_PULSES_NOMINAL       10u    // S15 assumes 10 per burst, 9 gaps
 
 // ===========================================================================
 // Pi 5 SOFT-SHUTDOWN â€” polarity decision

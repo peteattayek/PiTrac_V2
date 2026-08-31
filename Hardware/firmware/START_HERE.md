@@ -99,9 +99,9 @@ at the bottom of the window.
 and a new file at `firmware/build/pitrac.uf2`.
 
 **The firmware builds clean** (SDK 2.3.0, toolchain 15_2_Rel1, no warnings) — roughly
-73 KB of 2 MB flash and 35 KB of 520 KB RAM. If *your* first build throws errors it is
-almost certainly the toolchain or the import step, not the code; see Troubleshooting at
-the bottom.
+124 KB of 2 MB flash and 86 KB of 520 KB RAM as of 2026-08-24. If *your* first build throws
+errors it is almost certainly the toolchain or the import step, not the code; see
+Troubleshooting at the bottom.
 
 **Faster than the IDE button**, once it has configured itself once:
 ```
@@ -298,10 +298,17 @@ up once you're iterating; the buttons get old around the twentieth cycle.
 | `BENCH.md` | Phases 0 → 1c: toolchain, rails, latch, Pi shutdown, panel |
 | `BENCH_P2_BEAM.md` | Phase 2 — beam carrier and demod phase lock |
 | `BENCH_P3_DETECT.md` | Phases 3 & 4 — photodiode chain and trigger selection |
+| 🔵 **`BRINGUP_NEW_BOARD.md`** | **Bringing up a NEW board? Start there, not here.** It is the ordered per-board driver |
 | `BENCH_P5_P7_MIC_CAMERA.md` | Phases 5 & 7 — mic (USB power only) and cameras |
 | `BENCH_P6_STROBE.md` | Phase 6 — ⚠ 9 A, linear-mode FET. Read fully before powering. |
 | `BENCH_P8_PI.md` | Phase 8 — real Pi integration |
 | `ARCHITECTURE.md` | What runs on PIO/PWM/DMA vs the CPU |
 | `SETUP.md` | Toolchain detail and the manual install path |
 
-**Current status: phases 0 through 1c are complete on hardware. Phase 2 is next.**
+**Current status (2026-08-28): phases 0 through 2 are complete and closed. Phase 3 §3.1–3.5
+are complete on boards 2 and 3; §3.6b is next.** See `PROGRESS.md` §10 for the resume block —
+it is always more current than this line.
+
+🔵 **Bringing up a newly assembled board? Use `BRINGUP_NEW_BOARD.md`, not this document.**
+This one teaches the toolchain from nothing; that one is the ordered per-board driver, and
+`PROGRESS.md` §0.5 says which steps are per-board and which were settled once.

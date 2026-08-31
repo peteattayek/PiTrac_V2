@@ -21,6 +21,8 @@
 #include "detect.h"
 #include "pio_alloc.h"
 #include "config_store.h"
+#include "shot.h"
+#include "service.h"
 #include "cli.h"
 
 #include "pico/stdlib.h"
@@ -35,38 +37,6 @@
 _Static_assert(NUM_BANK0_GPIOS >= 48,
     "Built for the wrong chip variant. This board is an RP2354B (RP2350B core, "
     "48 GPIOs). Delete the build/ directory and re-run cmake â€” see START_HERE.md.");
-
-// ---------------------------------------------------------------------------
-// Status LEDs. D6 red (GPIO18) and D5 yellow (GPIO19) are on the always-on
-// +3V3 rail, so they work on USB power with the +5V latch open â€” which is what
-// makes them the only usable feedback for phases 0 and 1. The panel LEDs on J7
-// are fed from the switched rail and cannot indicate standby.
-//
-//   yellow slow blink   standby, healthy
-//   yellow solid        rails up (bench or running)
-//   yellow fast blink   shutting down
-//   red    fast blink   fault latched (code readable over the CLI)
-// ---------------------------------------------------------------------------
-static void leds_update(void) {
-    uint32_t t = to_ms_since_boot(get_absolute_time());
-    bool slow = (t % 2000) < 100;
-    bool fast = (t % 300)  < 150;
-
-    if (fault_current() != FAULT_NONE) {
-        gpio_put(PIN_LED_RED, fast);
-        gpio_put(PIN_LED_YELLOW, 0);
-        return;
-    }
-    gpio_put(PIN_LED_RED, 0);
-
-    switch (power_fsm_state()) {
-        case PS_STANDBY:        gpio_put(PIN_LED_YELLOW, slow); break;
-        case PS_SHUTTING_DOWN:  gpio_put(PIN_LED_YELLOW, fast); break;
-        case PS_RUNNING:
-        case PS_BENCH_RUNNING:  gpio_put(PIN_LED_YELLOW, 1);    break;
-        default:                gpio_put(PIN_LED_YELLOW, (t % 1000) < 500); break;
-    }
-}
 
 int main(void) {
     // FIRST. Before stdio, before peripherals, before anything. Every output
@@ -94,6 +64,7 @@ int main(void) {
     // Takes GPIO44 from SIO to PWM at duty 0. Leaves GPIO33 low and GPIO46 as
     // the input safe_state() already configured.
     detect_init();
+    shot_init();
 
     // AFTER beam_init() and detect_init(), because beam_init() writes the
     // compile-time default carrier and would overwrite anything applied earlier.
@@ -105,20 +76,40 @@ int main(void) {
     sleep_ms(500);
     cli_init();
 
-    // NOTE: the hardware watchdog is deliberately NOT enabled yet.
+    // The watchdog stays OFF by default. Decided 2026-08-31, after arming it
+    // by default cost a reflash cycle and two bench sessions.
     //
-    // A watchdog reset resets the pads, GPIO15 goes high-Z, R12 pulls it low,
-    // and the Pi's power is yanked with no warning â€” a firmware crash becomes a
-    // hard power cut. The policy decided in Phase 1b is to enable the reset
-    // action only while the Pi is down. Wiring that up is a Phase 1b/8 task;
-    // until then, running without it is the safer of the two wrong answers.
+    // The Phase 1b policy -- armed only while no Pi is powered -- is about
+    // protecting a Pi from a hung MCU. On the bench there is no Pi, so what it
+    // actually buys is a reset when the firmware hangs, and on this board a
+    // reset DROPS THE LATCH. That is not a recovery; it is a power cut in the
+    // middle of whatever was being measured, and a hang is already obvious to
+    // an operator sitting in front of the board.
+    //
+    // It also interacts with the bootrom: reset_usb_boot() reaches BOOTSEL
+    // through the watchdog's own scratch registers, so an armed watchdog broke
+    // `bootsel` outright until both commands learned to disarm it.
+    //
+    // WHERE IT EARNS ITS PLACE IS PHASE 6. A hang with 9 A running through a
+    // linear-mode FET is a genuinely different risk from a hang on the bench,
+    // and that is the point to arm it -- deliberately, in the strobe code,
+    // rather than as an ambient default nobody remembers is on.
+    //
+    // `wdog on` arms it for a session. Phase 8 will want it re-evaluated as the
+    // FSM enters and leaves PS_RUNNING; the hook is pitrac_watchdog_enable()
+    // and the decision belongs in power_fsm.c next to those transitions.
+    pitrac_watchdog_enable(false);
 
+    // The superloop is deliberately two lines. pitrac_service() IS the
+    // background work -- the FSM, the detect FIFO, the indicators -- and every
+    // blocking command path reaches the same function through pitrac_yield_ms().
+    //
+    // That is the whole point: it is not possible for a yield to service less
+    // than the superloop does, because there is only one definition of it. See
+    // service.h for what used to happen instead.
     for (;;) {
-        power_fsm_step();
-        cli_service();
-        detect_service();  // drain the PIO transit FIFO and coalesce chatter
-        leds_update();     // on-board D5/D6, always-on +3V3
-        panel_update();    // off-board J7 indicators, switched +5V
+        pitrac_service();
+        cli_service();     // NOT in pitrac_service() -- it would re-enter dispatch
         tight_loop_contents();
     }
 }

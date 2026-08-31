@@ -7,6 +7,7 @@
 #include "adc_engine.h"
 #include "power_fsm.h"
 #include "pio_alloc.h"
+#include "service.h"
 
 #include "hardware/pwm.h"
 #include "hardware/gpio.h"
@@ -514,7 +515,7 @@ void detect_threshold_set_duty(float duty) {
     s_thr_level = (uint16_t)(duty * (float)(DAC_TOP + 1u) + 0.5f);
     if (s_thr_level > DAC_TOP) s_thr_level = (uint16_t)DAC_TOP;
     pwm_set_chan_level(s_slice_thr, s_chan_thr, s_thr_level);
-    sleep_ms(DAC_SETTLE_MS);
+    pitrac_yield_ms(DAC_SETTLE_MS);
 }
 
 void detect_threshold_set_volts(float v) {
@@ -565,6 +566,12 @@ bool detect_comparator(void) { return gpio_get(PIN_D_COMPARATOR) != 0; }
 // both is that the repeats of a level agreed (0.1-0.2 mV on board 2) while the
 // levels differed by 17.8 mV -- a rank test, which is what conclusive() uses.
 //
+// MEASURED, board 3 2026-08-31: HOLD ~2.5 mV/s -> ~55 pA, separation 2.3x -- the
+// LOWEST separation of the three, on a perfectly good board, which is the rank
+// test earning its keep. Repeats agreed to 0.3 mV against 17.4 mV between levels.
+// A beam-step droop had previously suggested 1.16 nA for this board; that was an
+// artifact of measuring with the beam on. See PROGRESS 8/31.
+//
 // The original comment here predicted ~44 mV/s from an assumed 1 nA. That was 4x
 // pessimistic -- TI specs this part's leakage in the low hundreds of pA at room
 // temperature, which is what a *precision* switch is for. The direction of the
@@ -588,7 +595,7 @@ static void sample_baseline(uint32_t window_ms, float *out_mean, float *out_drif
 
     uint32_t t0 = to_ms_since_boot(get_absolute_time());
     while (to_ms_since_boot(get_absolute_time()) - t0 < window_ms) {
-        sleep_ms(50);
+        pitrac_yield_ms(50);
         if (!adc_ring_avg(ADC_CH_DETECT, 256, &code)) continue;
         float v = adc_code_to_volts(code);
         if (v < lo) lo = v;
@@ -611,7 +618,7 @@ void detect_hpf_test(hpf_test_t *out, uint32_t window_ms) {
     for (int rep = 0; rep < 2; rep++) {
         for (int lvl = 0; lvl < 2; lvl++) {
             gpio_put(PIN_HPF_TOGGLE, lvl);
-            sleep_ms(HPF_TEST_SETTLE_MS);      // >= 7 tau. See the header.
+            pitrac_yield_ms(HPF_TEST_SETTLE_MS);      // >= 7 tau. See the header.
             sample_baseline(window_ms, &out->mean_v[lvl][rep], &out->drift_v[lvl][rep]);
         }
     }
@@ -720,5 +727,5 @@ void detect_threshold_sweep(threshold_sweep_t *out, float lo, float hi, uint16_t
 
     pwm_set_chan_level(s_slice_thr, s_chan_thr, restore);
     s_thr_level = restore;
-    sleep_ms(DAC_SETTLE_MS);
+    pitrac_yield_ms(DAC_SETTLE_MS);
 }

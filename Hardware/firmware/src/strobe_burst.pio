@@ -1,11 +1,19 @@
-﻿; SPDX-License-Identifier: GPL-3.0-or-later
+; SPDX-License-Identifier: GPL-3.0-or-later
 ; Copyright (C) 2026 PiTrac contributors
 ;
-; strobe_burst.pio â€” Phase 6 burst engine for PIO0 SM0, driving GPIO25 (Strobe_Pulse).
+; strobe_burst.pio -- Phase 6 burst engine for PIO0 SM0, driving GPIO25 (Strobe_Pulse).
 ;
-; NOT IN THE BUILD YET. Added to CMakeLists (pico_generate_pio_header) when Phase 6
-; starts. Written now because the program itself is measurement-independent â€” only
-; the *schedule* fed to it depends on the clamp width measured in 6a.
+; ASSEMBLED BUT NOT LINKED. CMakeLists runs pioasm over this file on every build,
+; so it cannot rot -- but no .c includes the generated header yet, so it emits no
+; code. Phase 6 turns it on by including strobe_burst.pio.h and loading it into
+; PIO0 SM0 (see pio_alloc.h).
+;
+; Written ahead of its phase because the program itself is measurement-independent
+; -- only the *schedule* fed to it depends on the clamp width measured in 6a.
+;
+; 2026-08-28: adding it to the build immediately caught a UTF-8 BOM and mojibaked
+; punctuation that pioasm rejects outright. It had been unbuildable since the day
+; it was written, and would have failed on Phase 6's first build instead of here.
 ;
 ; ---------------------------------------------------------------------------
 ; Contract
@@ -24,7 +32,7 @@
 ; ---------------------------------------------------------------------------
 ; What this program does NOT do, deliberately
 ; ---------------------------------------------------------------------------
-; It does not enforce a maximum pulse width. That is U5's job â€” a 74LVC1G123
+; It does not enforce a maximum pulse width. That is U5's job -- a 74LVC1G123
 ; monostable in hardware, which clamps every high phase regardless of what the
 ; PIO, the DMA, or a crashed core ever asks for. Duplicating the limit here would
 ; create a second source of truth and tempt someone to "fix" the discrepancy by
@@ -39,7 +47,7 @@
 ; ---------------------------------------------------------------------------
 ; Each loop iteration is 1 cycle (1 us). The set/pull/mov instructions around the
 ; loops add a fixed few cycles per phase. The host must subtract that overhead
-; when building the schedule â€” see STROBE_PIO_OVERHEAD_US in strobe.c. Measure it
+; when building the schedule -- see STROBE_PIO_OVERHEAD_US in strobe.c. Measure it
 ; on the logic analyzer in 6a.2 rather than trusting this comment.
 ;
 
@@ -82,7 +90,7 @@ static inline void strobe_burst_program_init(PIO pio, uint sm, uint offset, uint
     float div = (float)clock_get_hz(clk_sys) / 1000000.0f;
     sm_config_set_clkdiv(&c, div);
 
-    // All 32 bits out, no autopull â€” `pull block` is explicit so the sentinel
+    // All 32 bits out, no autopull -- `pull block` is explicit so the sentinel
     // and the FIFO-empty stall are both well defined.
     sm_config_set_out_shift(&c, false, false, 32);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);   // deeper TX FIFO, 8 words

@@ -65,4 +65,22 @@ panel_pattern_t panel_pattern_for_state(void);
 // it stays false and the ready LED is dark.
 void panel_set_ready(bool ready);
 
+// The ON-BOARD status LEDs: D6 red (GPIO18) and D5 yellow (GPIO19).
+//
+// These are a different thing from everything else in this file. The J7 panel
+// LEDs run from the SWITCHED +5 V rail and are physically dark in STANDBY;
+// D5/D6 are on the always-on +3V3, which is what makes them the only usable
+// feedback for phases 0 and 1 and the only indication that a board with an open
+// latch is alive at all.
+//
+//   yellow slow blink   standby, healthy
+//   yellow solid        rails up (bench or running)
+//   yellow fast blink   shutting down
+//   red    fast blink   fault latched (code readable over the CLI)
+//
+// Lives here rather than in main() so that pitrac_service() can drive it: a
+// long command must not freeze the indicators mid-blink, because a frozen LED
+// reads as a hung board.
+void panel_onboard_update(void);
+
 #endif // PITRAC_PANEL_H

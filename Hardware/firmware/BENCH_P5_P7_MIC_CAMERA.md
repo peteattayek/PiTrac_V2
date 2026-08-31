@@ -4,6 +4,31 @@ Two independent phases sharing a document because neither is large.
 
 ---
 
+> ## 🔴 FIRMWARE STATUS, audited 2026-08-25
+>
+> | | Exists today? |
+> |---|---|
+> | **Phase 5 bring-up** (`adc 7`, `capture 0x80`, `tools/scope.py`) | ✅ **yes — runnable now** |
+> | Mic onset detection (high-pass, energy window, trigger) | ❌ not written |
+> | Mic-as-veto logic in the firing path | ❌ not written |
+> | **Phase 7 handshake** (`wait_both`, `t_cam`, FIRING FSM, `CAM_TIMEOUT` fault) | ❌ not written |
+> | PIO camera handshake (A3) | ❌ not written; `src/` has only `detect.pio` |
+> | I²S digital mic (J5) | ❌ not written, and deliberately deferred |
+>
+> **Phase 5's bring-up section is the one part of this document you can run today**, and it
+> needs nothing but USB power. Everything else is an acceptance procedure for firmware that
+> has to be written first. If a command below is not in `help`, it does not exist yet.
+
+## How to read the procedures below
+
+Every procedure opens with a **board state** table. Set the board to exactly that state before
+running the commands.
+
+⚠ **`off` now also turns the beam off** (fixed 2026-08-24). On older builds `s_on` survived a
+rail-down and the next `on` relit D11 unasked.
+
+---
+
 # Phase 5 — Impact microphone
 
 **Prereq: none beyond Phase 0.** The mic front-end runs on the **always-on +3.3VA rail**,
@@ -30,20 +55,65 @@ the analog section is as drawn:
 | Gain | 200k/30k = **6.67** (inverting) |
 | Output bias | 1.65 V → **mid-scale ≈ 2048** |
 
-## Bring-up
+## Bring-up — ✅ runnable today, on USB power alone
+
+### Board state
+
+| | |
+|---|---|
+| Power | **USB only.** No bench supply, no latch, no Pi. The mic front-end runs on the always-on +3.3VA rail. |
+| Rail | **down** — do *not* type `on`; it is not needed and `adc5v` will refuse on USB anyway |
+| Beam | **off** |
+| ADC | `adcmode idle` (ch7 is in the idle set `{1,2,5,7}`) |
+| Gear | none. A laptop with `tools/scope.py` makes it far easier to read. |
+
+### Step 1 — the quiescent point
 
 ```
-adc 7 256                      # expect ~2048 / ~1.65 V, quiet room
-capture 0x80 8000 250000       # 32 ms window
+adc 7 256
+```
+
+**Expect ~2048 codes / ~1.65 V** in a quiet room. That is the LMV321's output bias, and it
+should be stable to a few codes.
+
+🔴 **If it sits near 0 or near 4095**, the amplifier is railed — check U17's bias network
+before going further. A railed amp will still produce plausible-looking transients.
+
+### Step 2 — a window you can look at
+
+```
+capture 0x80 8000 250000
+```
+
+8000 samples at 250 ksps = a **32 ms** window on ch7. Plot it:
+
+```
 python tools\scope.py --port COM7 --channel 7 --samples 8000 --volts
 ```
 
-| Test | Expect |
-|---|---|
-| Quiet room | flat at mid-scale, small noise band |
-| Clap | sharp transient, decaying ring |
-| Tap on the enclosure | strong, structure-borne |
-| Ball into a net near the board | the real signal — capture several for reference |
+*(`--channel 7` sets the mask to 0x80 for you. Substitute your COM port.)*
+
+### Step 3 — the four stimuli
+
+Run the capture for each and keep the CSV (`--csv`):
+
+| Test | Expect | What it tells you |
+|---|---|---|
+| Quiet room | flat at mid-scale, small noise band | the noise floor you will threshold against |
+| Clap | sharp transient, decaying ring | the amp responds and does not rail |
+| Tap on the enclosure | strong, structure-borne | mechanical coupling — this is also the **false-trigger** path |
+| **Ball into a net near the board** | the real signal | **capture several; this is the reference set the onset detector gets tuned against** |
+
+### What you are looking for
+
+| | good | bad |
+|---|---|---|
+| quiet baseline | within a few codes of 2048 | offset or drifting = bias network |
+| clap peak | a clear transient, **not clipped at 0 or 4095** | clipping means the ×6.67 gain is too high for your geometry |
+| ring-down | decays within a few ms | a long ring is enclosure resonance, and it will widen your veto window |
+
+⚠ **Keep the clipped/unclipped judgement.** The onset detector's threshold is meaningless if
+the signal it is tuned on was already railed.
 
 ## Onset detection
 
@@ -77,41 +147,99 @@ it is a quality upgrade, not a prerequisite.
 ports and are configured over I²C by the ams driver. But a surprising amount is testable
 without either.
 
-## ⚠ 7.0 — Resolve the 1.8 V I/O question FIRST
+## 🔴 7.0 — The 1.8 V I/O question. ANSWERED, and the answer is bad.
 
-**This can damage hardware and must not be discovered empirically.**
+⚠ **This section used to say "get the schematic and establish what sits between the header and
+the sensor pins." That was answered on 2026-08-14 from the datasheet** — see the Q6 block near
+the end of this document for the full analysis. The short version:
 
-J4 drives 3.3 V logic through only 220 Ω into what may be a 1.8 V sensor domain. Get the
-specific sensor-board schematic and establish what sits between the module header and the
-sensor pins — level translation, series protection, or nothing.
+**The Mira220's digital I/O is a 1.8 V domain with no 3.3 V tolerance** (DS000642 v9-00:
+VDD18 = 1.70/1.80/1.90 V, VIH max specified as VDD18 itself, VOH min = 1.44 V). Both
+directions fail, and **the 220 Ω resistors fix neither** — they limit current, they shift no
+levels.
 
-Two directions, both need answering:
-
-| Direction | Question |
+| Direction | Verdict |
 |---|---|
-| **Out** (D_Cam_Trigger) | Will 3.3 V through 220 Ω damage a 1.8 V input? Budget for a divider or level shifter. |
-| **In** (Cam_Strobe 0/1) | Does the sensor's strobe output swing high enough? **A 1.8 V output will not register without translation.** RP2350 V_IH is **2.0–2.31 V** on a 3.3 V rail depending on which spec line you take (a flat 2.0 V, or 0.7 × VDD = 2.31 V). Use **2.31 V** as the design floor — it is the conservative reading and it is what `PROGRESS.md` Q10 uses, so the two docs agree. 1.8 V fails against either. |
+| **In** (Cam_Strobe 0/1) | ❌ **Dead on arrival.** The sensor's output ceiling is 1.80 V against an RP2350 VIH of ~2.15 V. The strobes will never read high, so the 7b/7c handshake cannot work without translation. |
+| **Out** (D_Cam_Trigger) | ❌ 3.3 V through 220 Ω injects **3.6 mA** into the sensor's ESD clamp — 6× the I/O rail's own 0.6 mA draw, lifting VDD18 out of spec. **The destructive case is driving J4 with the camera unpowered**, which back-powers VDD18 through the diode. |
 
-Do not connect J4 to a camera until both are answered.
+**Fix: `NEXT_BOARD_REV.md` CR-09**, now unblocked and 🔴 — a real translator on all three
+signals plus a 1.8 V reference at J4, which the current pinout does not provide (pins 1/2/5/6
+are all GND).
+
+### 🔴 The one thing still unknown, and it decides everything
+
+**J4 lands on the camera board's header, not on raw sensor pins.** If that board already level
+shifts, CR-09 may reduce to nothing.
+
+**Get the camera board's schematic before connecting J4 to anything.** Until you have it:
+
+- 🔴 **Do not connect J4 to a camera.**
+- 🔴 **Never drive D_Cam_Trigger high with the camera unpowered.**
+- ✅ **7a is unaffected** — it jumpers J4 to itself with no camera present, so it stays valid
+  and is still the right first step.
 
 ## 7a — Loopback, no Pi, no cameras
 
-**Jumper J4.3 (D_Cam_Trigger) → J4.7 (Cam_Strobe_0) and → J4.8 (Cam_Strobe_1).**
+✅ **Safe with no camera attached, and unaffected by the 1.8 V problem** — the jumpers connect
+J4 to itself, so no 1.8 V domain is involved.
+
+### Board state
+
+| | |
+|---|---|
+| **Cameras** | 🔴 **NOT connected.** That is what makes this safe. |
+| Pi | not connected |
+| Rail | **up** (`on`) — GPIO10 is a 3V3 output but the FIRING path needs the rail |
+| Beam | **off** |
+| **Jumpers** | **J4.3 (D_Cam_Trigger) → J4.7 (Cam_Strobe_0)** and **→ J4.8 (Cam_Strobe_1)** |
+| Probes | scope on **J4.3** |
+| Pins | GPIO10 = trigger out, GPIO8 = strobe_0 in, GPIO9 = strobe_1 in |
 
 This simulates a camera whose shutter opens instantly, and exercises the entire
-`wait_both(...)` handshake, the `t_cam` measurement, the timeout/abort path, and the
-FIRING state machine — with zero Pi and zero cameras.
+`wait_both(...)` handshake, the `t_cam` measurement, the timeout/abort path, and the FIRING
+state machine — with zero Pi and zero cameras.
+
+### Step 1 — static check before any firing
+
+```
+pins
+```
+
+**Expect GPIO8 and GPIO9 to follow GPIO10.** With the jumpers in and the trigger idle, all
+three read the same level. Toggle the trigger and they should move together.
+
+🔴 **If GPIO8/9 do not follow, stop** — the jumpers are wrong or R19/R24 are open, and every
+test below would report a timeout for the wrong reason.
+
+### Step 2 — the three tests
 
 | Test | Method | Pass |
 |---|---|---|
 | Handshake completes | both jumpers fitted | FIRING proceeds, `t_cam` ≈ 0 |
-| Timeout path | remove one jumper | `CAM_TIMEOUT` fault, trigger drops, no burst |
+| Timeout path | **remove one jumper** | `CAM_TIMEOUT` fault, trigger drops, **no burst** |
 | Trigger polarity | scope J4.3 | rising edge on request, falling on release |
+
+⚠ **The timeout test is the important one.** A handshake that completes proves the happy path;
+only the timeout proves the abort path drops the trigger *without* firing the strobe.
 
 ## 7b — Delayed-response simulation
 
-Drive Cam_Strobe_0/1 from a function generator or a spare Pico with a programmable
-**50 / 150 / 300 µs** delay after the trigger edge.
+### Board state
+
+| | |
+|---|---|
+| **Cameras** | 🔴 **still NOT connected** |
+| Rail | up |
+| Beam | off |
+| **Stimulus** | a function generator or a spare Pico driving Cam_Strobe_0/1, **at 3.3 V logic** |
+| Jumpers | **removed** — the generator drives J4.7/J4.8 instead |
+
+⚠ **Drive the strobe inputs at 3.3 V from the generator, not 1.8 V.** This phase tests the
+firmware's timing, not the level problem; using 1.8 V here just reproduces 7.0's failure and
+tells you nothing new.
+
+Drive Cam_Strobe_0/1 with a programmable **50 / 150 / 300 µs** delay after the trigger edge.
 
 - Verify `t_cam` is measured accurately at each delay
 - Verify `delay_us(max(0, first_delay_us - t_cam))` behaves at the boundary
@@ -134,6 +262,17 @@ Drive Cam_Strobe_0/1 from a function generator or a spare Pico with a programmab
 > involved. Budget: one SM out of eight free.
 
 ## 7c — Real cameras, Pi seated
+
+### Board state
+
+| | |
+|---|---|
+| **Gate** | 🔴 **`BENCH_P8_PI.md` §8.0 must be fully ticked first** |
+| **Q6 / CR-09** | 🔴 **the camera board's schematic must be in hand.** If it does not level shift, do not connect J4 — fit CR-09 first. |
+| PSU | 5.2 V, **limit ≥ 5 A** — a Pi 5 alone pulls 3 A in bursts |
+| Pi | seated on J8 |
+| **SW2** | 🔴 **taped over** |
+| Cameras | connected to the Pi's CSI ports and to J4 |
 
 **Phase 1b passed 2026-07-31**, so that gate is cleared. Two things now govern instead:
 

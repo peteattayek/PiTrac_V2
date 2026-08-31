@@ -51,13 +51,29 @@ typedef struct {
     float    path_mm;              // beam width, for velocity
     uint8_t  hpf_sel_track;        // measured by `hpf test`. 0xff = never run.
     uint8_t  cal_warm;             // were the cal figures taken warm?
-    uint8_t  phase_pure_delay;
+    uint8_t  phase_pure_delay;     // STORED VERDICT. Recomputed on restore when
+                                   //   cal_duty is known -- see cli_init().
     uint8_t  _pad0;
+
+    // The beam duty the phase and the model were calibrated at. WITHOUT THIS THE
+    // RESTORED PHASE IS NOT INTERPRETABLE: phase_ticks carries a geometric term,
+    //
+    //     phase_ticks = t_chain_ticks - (duty/2) * (TOP+1)
+    //
+    // so a phase measured at 25 % is wrong by (TOP+1)*(0.25-D)/2 at any other
+    // duty -- 166 ticks at the 2 % power-on default. 0 means "not recorded",
+    // which is what an older saved record reads as.
+    //
+    // Carved out of `reserved` on 2026-08-25 rather than appended, because
+    // slot_valid() compares `size` against sizeof(pitrac_cfg_t): growing the
+    // struct would invalidate every existing saved record and silently revert
+    // the board to defaults.
+    float    cal_duty;
 
     // ---- Phase 8 halt telemetry, reserved ----
     uint32_t telemetry[16];
 
-    uint8_t  reserved[128];
+    uint8_t  reserved[124];
     uint32_t crc32;                // over the record up to this field
 } pitrac_cfg_t;
 

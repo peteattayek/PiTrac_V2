@@ -53,6 +53,8 @@ add_executable(pitrac
     src/panel.c
     src/beam.c
     src/pio_alloc.c
+    src/service.c
+    src/shot.c
     src/detect.c
     src/cal.c
     src/config_store.c
@@ -64,6 +66,12 @@ target_include_directories(pitrac PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
 # Generated PIO headers land in the build dir, which is already on the include
 # path for this target -> #include "detect.pio.h"
 pico_generate_pio_header(pitrac ${CMAKE_CURRENT_LIST_DIR}/src/detect.pio)
+
+# Phase 6's burst engine. ASSEMBLED but not yet included by any .c, so it costs
+# nothing at link time and emits no code -- pico_generate_pio_header only
+# produces a header. The point is that pioasm checks it on every build, so a
+# program written months before its phase cannot rot unnoticed.
+pico_generate_pio_header(pitrac ${CMAKE_CURRENT_LIST_DIR}/src/strobe_burst.pio)
 
 target_link_libraries(pitrac
     pico_stdlib

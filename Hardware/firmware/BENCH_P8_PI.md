@@ -1,11 +1,38 @@
 # Phase 8 — Real Pi 5 integration and clean-shutdown acceptance
 
-**Prereq:** Phases 1b (including the **Q10 rework**) and 2–7 passed.
-**Power:** PSU 5.2 V, **current limit ≥ 5 A** — a Pi 5 alone can pull 3 A in bursts.
-**Gear:** scope (2 channels minimum), DMM, a Pi 5 with a **backed-up** SD card.
+**Prereq:** Phase 1b passed, and phases 2–7 done. **Power:** PSU 5.2 V, **current limit
+≥ 5 A** — a Pi 5 alone can pull 3 A in bursts. **Gear:** scope (2 channels minimum), DMM, a
+Pi 5 with a **backed-up** SD card.
+
+⚠ **Corrected 2026-08-25:** this line used to read "Phases 1b (including the **Q10 rework**)".
+**The Q10 rework is not a gate** — `PROGRESS.md` Q10 measured it on 2026-07-31 and demoted it
+to optional defence-in-depth. Every reset also opens the +5 V latch, so the spurious request
+reaches a Pi that is losing its rail in the same instant; the level failure is a footnote to
+the power cut, not an independent hazard. The mitigation that matters is the `reset`/`bootsel`
+CLI guard, which is already implemented.
 
 This is the first time a Pi 5 is ever seated on J8. Everything before this point
 exists to make this step boring.
+
+---
+
+> ## FIRMWARE STATUS, audited 2026-08-25
+>
+> | | Exists today? |
+> |---|---|
+> | Power FSM, latch, USB guard, sustained-supply monitor | ✅ **yes, and proven** — full Phase 1b matrix passed against a simulated Pi |
+> | Pi soft-shutdown handshake, both timeouts, RPI5_ON fallback | ✅ yes |
+> | `reset` / `bootsel` guard while a Pi is powered | ✅ yes |
+> | `pisim` for simulating a Pi | ✅ yes |
+> | **8.6 halt telemetry** (`PS_RUNNING` watching for an unrequested Pi drop, a `hist` command) | ❌ **not written** — see the prerequisite block in 8.6 |
+>
+> **8.0 through 8.5 are runnable as soon as phases 2–7 are done.** 8.6 is a firmware
+> requirement written up as a bench section; it needs code before it can be tested.
+
+## How to read the procedures below
+
+Every section opens with a **board state** table. Set the board to exactly that state first.
+🔴 **On this phase, "board state" includes a Pi with a backed-up card and tape over SW2.**
 
 ---
 
@@ -18,6 +45,9 @@ exists to make this step boring.
 | ☐ | **Q6 resolved** — Mira220 1.8 V I/O question, if cameras are connected | `PROGRESS.md` Q6 |
 | ☐ | SD card imaged and the image verified restorable | — |
 | ☐ | `PI_SHUTDOWN_ACTIVE_LOW` still 1, `gpio-shutdown` overlay params written to the Pi | 8.1 below |
+| ☐ | **Phases 2–7 complete.** As of 2026-08-25: Phase 2 ✅, Phase 3 §3.1–3.4 ✅ (3.5–3.7 open), Phases 5/6/7 **have no firmware** | `PROGRESS.md` §5 |
+| ☐ | **Camera board schematic in hand** if J4 is connected — the Mira220 1.8 V problem is real and unresolved | `BENCH_P5_P7` §7.0 |
+| ☐ | **SW2 taped over** | below |
 | ○ | *Optional:* Q10 10 kΩ pull-up fitted. Defence-in-depth — **not a gate** | `BENCH.md` Q10 |
 
 > The latch **is** the Pi's power switch. A firmware bug here corrupts a
@@ -80,6 +110,31 @@ journalctl -b | grep -i shutdown
 
 ## 8.2 — Does the Pi's header 3V3 drop at halt? (Q4)
 
+### Board state
+
+| | |
+|---|---|
+| PSU | 5.2 V, limit **≥ 5 A** |
+| Rail | **up and latched**, Pi fully booted to userspace |
+| State | `stat` should read **`RUNNING`** |
+| Beam | **off** — irrelevant here and one less load |
+| SW2 | **taped over** |
+| Gear | **DMM on J8.1** (Pi header 3V3) |
+
+### Step 1 — confirm the starting state
+
+```
+stat
+```
+
+**Expect:** `state : RUNNING`, `pi : present 1  3v3 1  userspace 1  isdown 0`.
+
+🔴 **If it reads `BENCH_RUNNING`, the board thinks there is no Pi** — the detect window
+expired. That is Q11 (see 8.3) and you should measure it before continuing, because in
+`BENCH_RUNNING` a button press is a hard power cut on a booting Pi.
+
+### Step 2 — halt and measure
+
 The FSM's "Pi is down" indicator is `!PI_3V3_SENSE || !RPI5_ON`. Which of the two
 actually fires decides whether the design is resting on a real signal or on a
 fallback.
@@ -116,6 +171,17 @@ after the latch closes. If a real Pi takes longer than that to raise its header
 press is a hard `FORCE_OFF` — a power cut on a booting Pi. The late-detect
 promotion in `BENCH_RUNNING` is a backstop for exactly this, but the window
 should be right on its own.
+
+### Board state
+
+| | |
+|---|---|
+| PSU | 5.2 V, limit **≥ 5 A** |
+| Rail | 🔴 **DOWN to start** — this measures the latch *closing*, so begin in STANDBY |
+| Board temp | 🔴 **cold.** Rails down for a minute first; a warm restart is faster and would flatter the number. |
+| Pi | seated, powered only through the latch |
+| Beam | off |
+| SW2 | taped over |
 
 **Setup:**
 
@@ -185,7 +251,23 @@ actively asserting — a static DMM reading answers it.
 
 ## 8.5 — Clean-shutdown acceptance
 
-The actual acceptance test for the whole power subsystem.
+The actual acceptance test for the whole power subsystem. **Budget an hour** — 20 full boot
+and shutdown cycles is not a quick check.
+
+### Board state
+
+| | |
+|---|---|
+| PSU | 5.2 V, limit **≥ 5 A**, and **left alone for the whole run** |
+| Rail | starts **down** |
+| Pi | seated, **card backed up and the backup verified restorable** |
+| Beam | **off** for the whole run — it is 0.79 A of extra load and no part of this test |
+| SW2 | 🔴 **taped over.** Twenty cycles is exactly when a reflex reach happens. |
+| Gear | scope or `stat` for the latch timing |
+
+⚠ **Do not reflash between cycles.** A reflash resets the RP2354, which is a hard power cut to
+the Pi — that is the one thing this test exists to avoid, and doing it mid-run invalidates the
+count.
 
 ```bash
 # On the Pi, before starting:

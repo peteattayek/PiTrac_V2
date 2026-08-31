@@ -81,9 +81,10 @@ float detect_threshold_vref(void);
 //
 // So HOLD is a genuine open circuit, not a second filter corner. The U12B input
 // DC level is undefined there and walks on switch leakage and op-amp bias.
-// MEASURED on two boards, and it is a RANGE, not a constant:
+// MEASURED on three boards, and it is a RANGE, not a constant:
 //   board 1 (2026-08-17)  ~11  mV/s at ADC5  -> ~250 pA into C81
 //   board 2 (2026-08-21)  ~2.3 mV/s at ADC5  -> ~52  pA into C81
+//   board 3 (2026-08-31)  ~2.5 mV/s at ADC5  -> ~55  pA into C81
 // Both are inside TI's spec for a precision switch, and switch leakage roughly
 // doubles per 10 C, so do not encode either number as a threshold anywhere.
 // This drift is the effect detect_hpf_test() measures.
@@ -93,6 +94,11 @@ float detect_threshold_vref(void);
 // rate), while a ball transit is 1-10 ms -- so the walk during a shot is ~23 uV.
 // The worry was wrong by three to four orders of magnitude. Arming well ahead of
 // a shot is safe; only an arm-and-forget of many seconds is worth a thought.
+//
+// A beam-step droop is NOT a substitute for this measurement, and reading one as
+// leakage once produced a 20x-high answer for board 3 (see PROGRESS 8/31). With
+// the beam on, ADC5 carries the demodulated signal, and a few tenths of a percent
+// of LED output falling as CR-12 warms swamps the leakage entirely.
 //
 // POLARITY RESOLVED 2026-08-17. TMUX1219 truth table: SEL=0 -> S1, SEL=1 -> S2.
 // S1 is the R96/GND leg, so GPIO33=0 is TRACK and GPIO33=1 is HOLD. The netlist
@@ -149,7 +155,9 @@ typedef struct {
 // TRACK is DC-coupled to ground through R96 2M, so after settling ADC5 must sit
 // at ~0 (op-amp offset only). HOLD is a genuine open, so C81 integrates the
 // switch leakage and the baseline walks away from 0 without bound -- 2.3 to
-// 11 mV/s at ADC5 across the two boards measured so far.
+// 11 mV/s at ADC5 across the three boards measured so far. The rate is REPORTED
+// by the CLI, not assumed: it is a property of the individual part and roughly
+// doubles per 10 C.
 //
 // Each level is measured TWICE, alternating, and the repeats are compared. That
 // is not redundancy: it is the specific check that catches an ordering artifact,

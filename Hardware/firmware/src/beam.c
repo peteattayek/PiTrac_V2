@@ -3,6 +3,7 @@
 #include "beam.h"
 #include "board.h"
 #include "power_fsm.h"
+#include "service.h"
 
 #include "hardware/pwm.h"
 #include "hardware/gpio.h"
@@ -298,13 +299,13 @@ void beam_ramp_duty(float target, uint32_t step_ms) {
         d += step;
         if (d > target) d = target;
         beam_set_duty(d);
-        sleep_ms(step_ms);
+        pitrac_yield_ms(step_ms);
     }
     while (d > target + 0.0005f) {
         d -= step;
         if (d < target) d = target;
         beam_set_duty(d);
-        sleep_ms(step_ms);
+        pitrac_yield_ms(step_ms);
     }
     beam_set_duty(target);
 }

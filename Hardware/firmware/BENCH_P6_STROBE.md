@@ -4,8 +4,45 @@
 MOSFET deliberately operated in **linear mode**. Read the whole document before powering
 anything.
 
-**Prereq:** Phase 1. Independent of phases 2–5 — it can be done any time after the latch
-works. **Pi:** not connected. **Gear:** scope, logic analyzer, FLIR, PSU (limit 3 A).
+**Prereq:** Phase 1, **plus A7 resolved** (see 6b). Otherwise independent of phases 2–5.
+**Pi:** not connected. **Gear:** scope, logic analyzer, FLIR, PSU (limit 3 A).
+
+---
+
+> ## 🔴 FIRMWARE STATUS, audited 2026-08-25 — NONE OF THIS EXISTS YET
+>
+> **There is no strobe firmware.** Not partially written, not untested — absent. Before any
+> of 6a–6d can be run, someone has to write it. The audit:
+>
+> | This document asks for | Reality in `src/` |
+> |---|---|
+> | Commanding a pulse width | **no `strobe` command**, no strobe module |
+> | "Load the PIO burst program" | `src/strobe_burst.pio` exists but is **not in `CMakeLists.txt`** — only `detect.pio` is passed to `pico_generate_pio_header()`, so it is never assembled |
+> | "DMA-feed a schedule" | no DMA path, no schedule structure |
+> | `compute_schedule()` unit test | **the function does not exist** |
+> | `BURST_CHARGE_MAX_mC` interlock | **the constant does not exist in `board.h`** |
+> | Ramping Gate_PWM | **no `gate` command** |
+> | "capture the ADC0 plateau in BURST mode" | `adcmode burst` exists and selects ch0; nothing fires a pulse to plateau |
+>
+> ✅ **What DOES exist and is usable today:** `adcmode burst` (ADC ring on ch0 at 500 ksps),
+> `capture 0x01 ...` for ADC0, `pins`, and the `board.h` constants
+> `STROBE_HW_LIMIT_US_ASSUMED` (122), `STROBE_SW_MAX_US` (100), `STROBE_MIN_GAP_US` (150),
+> `STROBE_SENSE_V_PER_A` (0.135).
+>
+> **So the honest running order is: write the firmware, then 6a.** The sections below are the
+> acceptance procedure for that firmware, not a procedure you can start today. Each step names
+> the command it *will* need; if a command below is not in `help`, it has not been written.
+
+---
+
+## How to read the procedures below
+
+Every sub-phase opens with a **board state** table. Set the board to exactly that state before
+running the commands, and check it again after any fault or reset.
+
+⚠ **`off` now also turns the beam off** (fixed 2026-08-24). Before that, `s_on` survived a
+rail-down and the next `on` relit D11 with no `beam on`. If you are on an older build, type
+`beam off` explicitly.
 
 ---
 
@@ -49,7 +86,28 @@ cold-to-warm drift at 9 A, and that is normal.
 Zero current flows. Completely safe, so be thorough here — everything you can prove now
 is something you are not debugging at 9 A.
 
-**Probe Q10's gate** (at R64). Note **TP3 is Q9's gate** — the DC setpoint — not the pulse.
+### Board state
+
+| | |
+|---|---|
+| **J3 (LED bank)** | 🔴 **DISCONNECTED.** This is what makes 6a safe. |
+| PSU | 5.2 V, **limit 3 A** |
+| Rail | **up** (`on`) |
+| **Gate_PWM (GPIO28)** | 🔴 **0** — no current setpoint, so even a wiring error drives nothing |
+| **GPIO27 `PULSE_LIMIT_DIS`** | 🔴 **0**, and stays 0. Verify with `pins` before every session. |
+| Beam | **off** (`beam off`) — unrelated to this phase and one less variable |
+| Pi | **not connected** |
+| Probes | **Q10's gate, at R64.** ⚠ **TP3 is Q9's gate** — a DC level, not the pulse. If you see pulses at TP3, something is wrong. |
+
+### Step 0 — confirm the watchdog is not defeated
+
+```
+pins
+```
+
+**Expect GPIO27 = 0.** 🔴 **If it is 1, stop.** Nothing in phases 0–6c has any reason to set
+it, the CLI refuses to touch it, and it is written 0 in exactly one place (`safe_state()`).
+A 1 here means something is very wrong.
 
 ### 6a.1 Measure the U5 clamp — before anything else
 
@@ -63,11 +121,15 @@ Command 200 µs and 1 ms pulses and record where U5 truncates.
   resistors and ±10 % capacitors the band is **109–136 µs**. Measure it; do not assume U9's
   exact value.
 
-**Set from the measurement, not from the .md:**
+**`board.h` already carries values derived from U9 — confirm or correct them against U5:**
 ```c
-#define STROBE_HW_LIMIT_US_ASSUMED  <measured>
-#define STROBE_SW_MAX_US            <0.85 × measured>
+#define STROBE_HW_LIMIT_US_ASSUMED 122    // U9 measured 2026-08-13; VERIFY ON U5 HERE
+#define STROBE_SW_MAX_US           100    // meets .md S15 at 10 m/s; 0.82 x the HW limit
 ```
+⚠ **These are not placeholders any more.** An earlier revision of this document showed them as
+`<measured>`, which is stale — Phase 2c set them. **What is still open is whether U5 agrees
+with U9.** If U5 comes in below ~118 µs the margin tightens; below 100 µs, `STROBE_SW_MAX_US`
+must come down and the §15 slow-ball rows *do* need re-deriving.
 
 **Why this is first:** if the 100 µs software limit were *above* the hardware limit, every
 slow-ball pulse would be silently truncated by hardware rather than controlled by firmware,
@@ -123,7 +185,36 @@ it is the only row that exceeds it, at 9 mC. The 20 m/s row (4.5 mC) passes with
 
 ## 6b — Gate DAC only, still no LED bank
 
-> ### 🔴 Do this before configuring the gate DAC — finding A7
+### Board state
+
+| | |
+|---|---|
+| **J3 (LED bank)** | 🔴 **STILL DISCONNECTED** |
+| **A7** | 🔴 **MUST BE RESOLVED FIRST — see the block below. This is a gate, not a warning.** |
+| Rail | **up** |
+| GPIO27 | **0** |
+| Beam | **off** |
+| Probes | **TP3** (Q9 gate, the DC setpoint) and **TP2** (+12 V) |
+
+### Step 1 — ramp the setpoint
+
+Ramp Gate_PWM 0 → full while scoping **TP3**.
+
+| Expect | |
+|---|---|
+| TP3 | **3 × the filtered DAC voltage, 0 → ~9.9 V** |
+| TP2 (+12 V) | **holds** — the budget is only ~5 mA from R15 |
+
+### What you are looking for
+
+| Symptom | Meaning |
+|---|---|
+| TP3 tracks 3× the DAC, smooth | ✅ the gate chain is healthy |
+| **Ringing at TP3 on a pulse edge** | 🔴 gate-loop stability problem — look at R63 and layout **before going further** |
+| Steady DC at TP3 during bursts | ✅ correct — Q9 does not switch, Q10 does |
+| TP2 sagging | the +12 V budget is exceeded; check R15 |
+
+> ### 🔴 A7 — resolve this BEFORE configuring the gate DAC. It is a gate, not a note.
 >
 > **`GPIO28` (Gate_PWM) and `GPIO12` (the panel ready LED) are the same PWM channel** —
 > slice 6A on RP2350B. Note that is the same **channel**, not just the same slice. Two
@@ -145,33 +236,45 @@ it is the only row that exceeds it, at 9 mC. The 20 m/s row (4.5 mC) passes with
 > See the PWM SLICE MAP in `board.h`. Two other pairs collide but are safe as long as
 > **GPIO15 (the latch) and GPIO27 (the watchdog defeat) never go on PWM.**
 
-Ramp Gate_PWM 0 → full, scope **TP3**.
-
-| Expect | |
-|---|---|
-| TP3 | 3 × the filtered DAC voltage, 0 → ~9.9 V |
-| TP2 (+12 V) | holds — the budget is only ~5 mA from R15 |
-
-Steady DC at TP3 even during bursts is correct. **Ringing at TP3 on a pulse edge** means a
-gate-loop stability problem — look at R63 and layout before going further.
+⚠ **A7 status, audited 2026-08-25: still open.** `ARCHITECTURE.md` lists it as the only one
+of A1/A2/A7 not fixed, and `panel.c` still configures slice 6A. **Nothing in the current
+firmware would stop the collision**, because the gate DAC that would collide has not been
+written yet — which means the fix has to land in the same change that adds it.
 
 ---
 
 ## 6c — LED bank connected, current ramp
 
-**PSU limit ~3 A.** The pulses come from the VIR bulk caps; the PSU only sees the average.
+🔴 **This is the first step where real current flows. Everything before it exists to make this
+boring.** Do not start it at the end of a session.
 
-**Scope TP4 *and* read ADC0** so each cross-checks the other:
-- TP4 = **135 mV/A** → 1.215 V at 9 A (0.61 V at 4.5 A single string, 2.43 V at 18 A)
+### Board state
 
-### Procedure
+| | |
+|---|---|
+| **J3 (LED bank)** | **CONNECTED** — for the first time |
+| PSU | 5.2 V, **limit ~3 A.** The pulses come from the VIR bulk caps; the PSU only sees the average. |
+| Rail | **up** |
+| **Gate setpoint** | 🔴 **start at ZERO and ramp up.** Never begin at a guessed setpoint. |
+| GPIO27 | **0** |
+| Beam | **off** |
+| Pi | **not connected** |
+| Probes | **TP4** (current sense) on the scope, **and** read **ADC0** — each cross-checks the other |
+| FLIR | **powered on and pointed at Q9 and HS1 before the first pulse** |
 
-Single **20 µs** pulses, gate setpoint ramping upward from zero:
+**TP4 = 135 mV/A** → 1.215 V at 9 A (0.61 V at 4.5 A single string, 2.43 V at 18 A).
+That is `STROBE_SENSE_V_PER_A` in `board.h`.
 
-1. Fire one pulse, capture the ADC0 plateau in BURST mode
-2. Build the duty → amps LUT
-3. **Stop early if any plateau exceeds 1.2 × target**
-4. Verify with 3 confirmation pulses at the solved setpoint
+### Procedure — single 20 µs pulses, setpoint ramping from zero
+
+1. Set the gate setpoint to **0**.
+2. Fire **one** 20 µs pulse. Capture the ADC0 plateau in BURST mode
+   (`adcmode burst`, then `capture 0x01 ...`).
+3. Read TP4 on the scope for the same pulse. **The two must agree.**
+4. Raise the setpoint one step. Repeat from 2.
+5. 🔴 **Stop early if any plateau exceeds 1.2 × target.**
+6. **FLIR Q9 and HS1 after every burst sequence** — not at the end.
+7. Once the LUT is built, verify with **3 confirmation pulses** at the solved setpoint.
 
 ### What to watch for
 
@@ -201,16 +304,35 @@ Never run repeated bursts faster than the energy interlock allows.
 
 ## 6d — Clamp verification *with* current, once
 
-At a **low setpoint only (~2 A)**, command a 1 ms pulse and scope TP4 to confirm the
-hardware clamp truncates it. Record it.
+### Board state
 
-**Then never do this again** outside a guarded CLI test mode.
+| | |
+|---|---|
+| **Gate setpoint** | 🔴 **LOW ONLY — ~2 A.** This is the whole safety margin for this step. |
+| J3 | connected |
+| GPIO27 | **0** — the point of the test is that the *hardware* clamp works |
+| Probes | TP4 |
+
+### Step
+
+Command a **1 ms** pulse — deliberately far longer than the clamp — and scope TP4 to confirm
+the hardware truncates it at ~122 µs.
+
+**Expect:** TP4 shows a pulse of roughly the measured U5 clamp width, **not** 1 ms.
+
+🔴 **If it shows 1 ms, stop immediately and power down.** The hardware watchdog is not
+working, and every later step assumes it is.
+
+**Record the truncated width. Then never do this again** outside a guarded CLI test mode.
 
 ---
 
 ## Exit criteria
 
-- [ ] **U5 clamp measured**, `STROBE_SW_MAX_US` set from it, §15 table re-derived
+- [ ] **Strobe firmware written** — pulse command, PIO burst engine (`strobe_burst.pio` added
+      to `CMakeLists.txt`), schedule computation, `BURST_CHARGE_MAX_mC` interlock, gate DAC
+- [ ] **U5 clamp measured**, `STROBE_SW_MAX_US` confirmed or corrected against it, §15 table
+      re-derived only if U5 comes in below 100 µs
 - [ ] Commanded widths reproduce at Q10's gate
 - [ ] PIO burst patterns verified on the LA, 1 µs granularity, IRQ on completion
 - [ ] Energy interlock sheds pulses at 10 m/s

@@ -168,3 +168,29 @@ void panel_force_pattern(int pattern) {
 int panel_forced_pattern(void) { return s_force_pat; }
 
 void panel_set_ready(bool ready) { s_ready = ready; }
+
+// ---------------------------------------------------------------------------
+// On-board D5/D6. See the note in panel.h for why these are not the J7 LEDs.
+// Moved here from main() on 2026-08-28 so pitrac_service() can drive them and a
+// long-running command cannot freeze the indicators mid-blink.
+// ---------------------------------------------------------------------------
+void panel_onboard_update(void) {
+    uint32_t t = to_ms_since_boot(get_absolute_time());
+    bool slow = (t % 2000) < 100;
+    bool fast = (t % 300)  < 150;
+
+    if (fault_current() != FAULT_NONE) {
+        gpio_put(PIN_LED_RED, fast);
+        gpio_put(PIN_LED_YELLOW, 0);
+        return;
+    }
+    gpio_put(PIN_LED_RED, 0);
+
+    switch (power_fsm_state()) {
+        case PS_STANDBY:        gpio_put(PIN_LED_YELLOW, slow); break;
+        case PS_SHUTTING_DOWN:  gpio_put(PIN_LED_YELLOW, fast); break;
+        case PS_RUNNING:
+        case PS_BENCH_RUNNING:  gpio_put(PIN_LED_YELLOW, 1);    break;
+        default:                gpio_put(PIN_LED_YELLOW, (t % 1000) < 500); break;
+    }
+}

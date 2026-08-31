@@ -1,25 +1,83 @@
 # New-board bring-up — step by step
 
-**Use this when you have a freshly assembled board and firmware already flashed.**
-Not the same as `START_HERE.md`, which assumes you have never built or flashed anything.
-This is the condensed, ordered re-run of the parts of Phases 0–2 that are **specific to a
-board** rather than to the design.
+# 🔵 THIS DOCUMENT IS THE DRIVER FOR A NEW BOARD. Work top to bottom.
 
-Budget about an hour. Do not skip to Phase 3 — two of these steps are safety gates, and one
-of them protects a Pi.
+**Use this when you have a freshly assembled board and firmware already flashed.** Not the same
+as `START_HERE.md`, which assumes you have never built or flashed anything.
+
+**Budget about two hours**, most of it waiting: two 5-minute beam warm-ups and a 128 s model
+fit. Do not skip ahead — **§4 and §5 are safety gates**, and one of them protects a Pi.
 
 ---
 
-## What carries over, and what does not
+## The one distinction that organises everything
 
-| ✅ Transferable — do NOT redo | ⚠ Per-board — MUST redo |
+Work on this project splits into two kinds, and confusing them wastes bench time in both
+directions — redoing settled physics, or trusting a constant that is actually per-board.
+
+| | **DESIGN VALIDATION — done ONCE, ever** | **PER-BOARD — done EVERY time** |
+|---|---|---|
+| **asks** | *how does this design behave?* | *does THIS board work, and what are ITS constants?* |
+| **lives in** | `BENCH*.md` + the record in `PROGRESS.md` §6 | **this document** |
+| **redo when** | the design changes (a respin, a firmware change) | every assembled board |
+
+**Everything in this document is per-board.** If a step here is ever found to be design-level,
+it belongs in a `BENCH*.md` section and should be deleted from here.
+
+### Already settled — do NOT redo these on a new board
+
+| | established |
 |---|---|
-| GPIO33 polarity: **TRACK is LOW** (TMUX1219 truth table) | Rail integrity |
-| PWM slice collisions, PIO `GPIOBASE` allocation | **ADC +5 V scale — safety gate, see §4** |
-| Q1 mechanism (U9 clamp ≈ K·R·C), Q2 (no duty limit to 250 kHz) | Latch guard + sustained supply monitor |
-| Netlist-derived corner frequencies (`HARDWARE_REFERENCE.md`) | E9 check — different die |
-| CR-15's *analysis* | CR-15's *measurement* — see §8, this is the payoff |
-| The firmware itself | Thermal figures — depend on **this** heatsink mounting |
+| GPIO33 polarity: **TRACK is LOW** | TMUX1219 truth table + 4 independent bench confirmations |
+| **Carrier = 104.1667 kHz, fixed for every board** | design decision 2026-08-28, `PROGRESS.md` §8 |
+| PWM slice collisions, PIO `GPIOBASE` allocation | `ARCHITECTURE.md` A2/A7 |
+| Q1 mechanism (U9 clamp ≈ K·R·C), Q2 (no duty limit to 250 kHz) | Phase 2c / 2d |
+| Ambient rejection ≈ **48 dB**; the lock-in premise | Phase 3.3, board 2 |
+| The "bursty noise" was **beam return off the room**, not a fault | Phase 3.3, board 2 |
+| Netlist-derived corner frequencies | `HARDWARE_REFERENCE.md` |
+| The full Pi soft-shutdown FSM matrix | Phase 1b, simulated Pi |
+| The firmware itself | — |
+
+### Must be measured on every board
+
+| | why it varies | § |
+|---|---|---|
+| Rail integrity, current draw | assembly | 2 |
+| **LM5157 boost SW frequency** | part tolerance; the carrier's ±8 % margin has to cover it | 2 |
+| E9 `pins` check | different die | 3 |
+| **ADC +5 V scale** 🔴 safety gate | ADC gain + divider tolerance | 4 |
+| Latch guard + sustained supply monitor 🔴 | it is what stops a Pi being fed through a 1 A diode | 5 |
+| Beam thermals | *this* heatsink mounting — board 1 87.5 °C, board 2 98 °C | 6 |
+| **U9 clamp width** | 109–136 µs band from 1 % R / 10 % C | 6 |
+| Static detect-chain health | assembly | 7 |
+| `hpf test` polarity + **switch leakage** | leakage spans 52–250 pA across boards | 7 |
+| CR-15 baffle acceptance | optics and operator discipline | 8 |
+| **`cal demod` + `cal model`** | chain delay differs 340–600 ns board to board | 9 |
+| **Threshold DAC vref + comparator offset** | LM393 Vos is ±15 mV per part | 10 |
+
+---
+
+## 0. Which board is this? Record the TIA variant FIRST
+
+🔴 **Do this before anything is energised, and write it in the sign-off table.** Nearly every
+number in `BENCH_P3_DETECT.md` scales with the TIA feedback resistor, and a reworked board that
+is bench-tested against stock numbers will look broken when it is fine — or fine when it is
+broken.
+
+- [ ] **Read R80 and its parallel neighbours under magnification.** Note any rework.
+- [ ] **Read C68 / C70 and note any added capacitor, and WHICH LEG it bridges.**
+
+| | Rf | Cf | TIA pole | lag at 104 kHz | servo corner |
+|---|---|---|---|---|---|
+| **stock** | 470 kΩ | 0.500 pF | 677.3 kHz | 8.74° | 2.267 Hz (τ 70 ms) |
+| **board 3** (154 kΩ ∥ R80, 100 pF on one Cf leg) | **116.0 kΩ** | **0.990 pF** | **1.386 MHz** | **4.30°** | **0.559 Hz (τ 285 ms)** |
+
+⚠ **C68 and C70 are in SERIES.** A cap across *one* leg shorts that leg and leaves the other
+1 pF (Cf ≈ 0.99 pF). A cap across *the pair* gives 100.5 pF and a **13.7 kHz** pole — below the
+carrier. Those two cases differ by 100× and only one of them works, so identify the pads rather
+than assuming.
+
+⚠ **The reworked figures above are CALCULATED.** §9 has the three commands that check them.
 
 ---
 
@@ -69,7 +127,21 @@ lives in.
 - [ ] Fit the **J2 jumper**, apply the bench supply, and confirm the rails come up without
       the firmware being involved: **+5 V**, **VIR 36 V**, **TP2 +12 V**, **+5VA**, **TP6 +2V5**.
 - [ ] Current draw sane, nothing warm, nothing smells.
+- [ ] **Scope the LM5157 SW node.** Decide the R11/C9 snubber (DNP by default — fit only if it
+      rings), **and record the switching frequency**.
 - [ ] Remove J2 again before continuing.
+
+> ### 🔴 Record the boost SW frequency. It has never been written down on any board.
+>
+> The carrier is fixed at **104.1667 kHz**, and its nearest odd harmonics sit **117.5 kHz** and
+> **90.8 kHz** from the LM5157's nominal 1.055 MHz — so the boost can drift **−9.6 % / +7.1 %**
+> before it folds into the 15.39 kHz passband and starts looking like a ball.
+>
+> **That margin is only as good as the part-to-part spread, and nobody has measured it.** The
+> scope is already on the node for the snubber decision; write the number down.
+>
+> 🔵 If the spread across boards approaches ±7 %, that is a **design** finding, not a board
+> finding — see `BENCH_P3_DETECT.md` §3.6.
 
 🔴 **STOP** if any rail is wrong or current is high. A short found here is cheap; the same
 short found by closing the latch is not.
@@ -338,48 +410,277 @@ this is fiddly; that does not make bare metal acceptable.
 
 ---
 
-## 9. Hand-off to Phase 3
+## 9. Demod phase — `cal demod` and `cal model`
 
-At this point the board is bring-up complete. Before `BENCH_P3_DETECT.md` §3.4 will produce a
-number you still need:
+**This is the last thing bring-up owes Phase 3**, and the two commands together take about
+7 minutes of which 5 is warm-up.
 
-- [ ] **`detect path <mm>`** — nothing reports velocity until the beam path width is set.
-- [ ] **`cal model`** — `cfg` shows `phase mdl: not fitted` until it runs.
-- [ ] **A static reflector**, for `cal demod`.
-- [ ] **5 minutes of beam warm-up at 25 %.** Optical output falls **25–45 %** cold→plateau
-      while current moves +1.7 % and power +0.6 % — so every *electrical* reading says nothing
-      is happening. A carrier or threshold chosen cold is wrong warm, and it presents as drift
-      rather than as a calibration error. `scan carrier` refuses to run below 5 minutes.
+### Board state
 
-⚠ **`cal model` has a prediction to check against:** the netlist says the TIA contributes
-**8.7° of lag at 104 kHz rising to 20.3° at 250 kHz**, so the fit should find that much
-curvature. **If it reports `pure_delay`, distrust the measurement**, not the netlist.
+| | |
+|---|---|
+| PSU | 5.2 V, limit ≥ 2.5 A |
+| Rail | **up** |
+| Beam | **ON**, `beam freq 104166`, `beam duty 25`, **warm ≥ 5 min** |
+| HPF | **`hpf track`** |
+| Target | 🔴 **none. Do not put a reflector in front of the board.** |
+| Attenuation over D12 | **stock board: probably needed. 116 kΩ variant: probably not.** See below. |
+
+🔴 **Check the carrier before you start.** `beam` must read `freq 104166 Hz (TOP=1439)`.
+`cal model` sweeps 80–200 kHz; it restores the carrier on builds after 2026-08-24, but an
+older build or a reset mid-sweep leaves it wherever it stopped. The tell is in the sweep
+listing: phases step by (TOP+1)/64, so **22/45/67 = 104 kHz** and **11/23/35 = 200 kHz**.
+
+### Step 1 — get the level in range
+
+**No reflector.** On board 2, D11 → D12 crosstalk plus the floor return alone drove the
+calibration **1.9× past the ADC ceiling** with nothing in front of the board — a reflector only
+makes it worse, and moving or darkening one cannot fix something that is not the reflector.
+
+```
+cal demod
+```
+
+Read `peak` in the output. **Target 50–70 % of full scale.**
+
+| `peak` | do |
+|---|---|
+| `*** ABOVE FULL SCALE ***`, or `saturated` > 10 % | **attenuate light into D12** — a card with a hole in it is best, because the attenuation is geometric and does not depend on the material behaving at 850 nm. Most "opaque" black plastic is near-transparent there. |
+| 50–70 % of full scale | ✅ go on |
+| under ~30 % | you have over-attenuated; take some off |
+
+🔴 **Nothing conductive near D12.** Its cathode is at 36 V through R77, and that is what
+destroyed board 1 (`PROGRESS.md` §11).
+
+### Step 2 — what a good result looks like
+
+| line | want |
+|---|---|
+| `saturated` | **0 %** |
+| `peak` | 50–70 % of full scale |
+| `quad null` | near 0 |
+| `h3/h1` | **≈ the printed intrinsic value** — 0.111 at 25 % duty. Not ≈ 0. |
+| `warm` | yes |
+| committed | `phase <- NNNN ticks` |
+
+Then:
+
+```
+cal model
+```
+
+~128 s. All five points should be accepted, residual **under ~0.1°**, and it should report
+**PURE DELAY**.
+
+### Step 3 — record it, and compare the right quantity
+
+- [ ] `demod_phase_ticks` — board 2 landed **1343–1350** across four runs at 104166 Hz
+- [ ] **chain delay in ns** — this is the number that transfers
+- [ ] model residual, and the pure-delay verdict
+
+⚠ **Compare the DELAY between boards, never `phase_ticks`.** The tick count carries a
+geometric term — `phase_ticks = t_chain_ticks − (duty/2)·(TOP+1)` — so it changes with duty and
+carrier even on an identical board.
+
+| | board 2 (stock 470 kΩ) | **board 3 (116 kΩ) — MEASURED** |
+|---|---|---|
+| `demod_phase_ticks` at 104166 Hz | 1343–1350 | **1311** |
+| chain delay | 553–600 ns | **340 ns** |
+| model residual | 0.07–0.08° | **0.23°** |
+| model vs `cal demod` | 3.9–4.9 ticks | **3.5 ticks** |
+| TIA lag at 104 kHz (calculated) | 8.74° | 4.30° |
+
+🔵 **A large negative tick shift is the acceptance test for a lower-Rf rework**, because the TIA
+pole moves up and the chain needs less offset. Board 3 shifted **−32 ticks** against a predicted
+−17.8. **Right sign, right order, 1.8× too far** — and the excess could not be attributed,
+because board 3 was never calibrated *before* the rework.
+
+🔴 **So: if you rework a board, run `cal demod` BEFORE and AFTER on that same board.** It costs
+26 s and it is the only way to separate the change you made from board-to-board variation. The
+non-TIA part of the delay differed by **95 ns** between boards 2 and 3, which is larger than
+most of what was being measured.
+
+⚠ **If the phase does NOT move at all**, the feedback change did not take effect the way the
+arithmetic says — check which pads the added capacitor bridges before trusting anything
+downstream.
+
+```
+cfg save
+```
+
+- [ ] `cfg` reads back the carrier, the phase and `phase mdl: fitted ... (80000..200000 Hz)`
+
+---
+
+## 10. Threshold DAC and comparator cross-calibration
+
+**Two constants that are genuinely per-part**, and the full reasoning is in
+`BENCH_P3_DETECT.md` §3.5. This is the condensed run.
+
+### Board state
+
+| | |
+|---|---|
+| Rail | up · Beam **ON** 104166 Hz / 25 %, warm · HPF **track** · target as §9 left it |
+
+### Step 1 — polarity check
+
+⚠ **The subcommand word is required.** `threshold 5` is not "set 5 %".
+
+```
+threshold duty 0
+threshold
+```
+- [ ] `D_Comparator(46) = 1` (ABOVE) — threshold 0 V against a ~10 mV quiescent
+```
+threshold duty 5
+threshold
+```
+- [ ] `D_Comparator(46) = 0` (below)
+
+### Step 2 — LOW point
+
+```
+threshold sweep 0 5 64
+```
+- [ ] flip near **0.2–0.3 % duty**. Record duty, TP8 nominal volts, and ADC5 volts.
+
+### Step 3 — HIGH point
+
+🔴 **At the calibrated phase this rails.** Dial it down with `beam phase`, then freeze it:
+
+```
+beam on
+beam phase <peak - ~280>      # board 2 used 1000, board 3 used 1035
+```
+…wait 3 s…
+```
+beam off
+```
+…wait 3 s…
+```
+hpf hold
+beam on
+adc 5 100
+```
+- [ ] reads **2000–2500**. If 4095, lower `beam phase` further and repeat the whole sequence.
+```
+threshold sweep 0 100 64
+```
+- [ ] flip somewhere mid-range. Record duty, TP8 volts, ADC5 volts.
+
+**Put it back:**
+```
+hpf track
+beam phase <the value from §9>
+```
+
+### Step 4 — solve, and the crosstalk check
+
+Two flips solve `ADC5 = vref·duty + Vos`:
+
+| | board 2 | board 3 |
+|---|---|---|
+| DAC **vref** | 3.268 V | 3.256 V |
+| comparator **Vos** | +11.0 mV | +5.4 mV |
+
+- [ ] **vref** should land near **3.25–3.27 V** (compiled default is a nominal 3.300)
+- [ ] **Vos** anywhere inside the LM393's **±15 mV** — it is a per-part offset and boards differ
+
+🔵 Apply vref with `threshold vref <volts>` if you want; **RAM only**, and it is worth ~1 % on a
+threshold that §3.7 tunes empirically anyway.
+
+**Then the crosstalk check — beam OFF:**
+```
+beam off
+hpf track
+```
+…wait 3 s…
+```
+threshold sweep 0 100 64
+```
+- [ ] **`ADC5 movement across the sweep` < ~3 mV.** Ignore the flip line; with the beam off
+      there is nothing meaningful to cross.
+
+⚠ **This must be beam-off.** With the beam on the number is dominated by the optical
+background — board 3 read 12.9 mV lit and **3.2 mV** dark.
+
+```
+cfg save
+```
+
+---
+
+## 11. Hand-off
+
+The board is now bring-up complete and its calibration is persisted. **`cfg` should read back
+the carrier, the phase, the phase model, `hpf sel`, `adc5v` scale and `cal duty`.**
+
+**Next: `BENCH_P3_DETECT.md` §3.6b**, then §3.6's two checks, then §3.7.
+
+Nothing in Phase 3 beyond this point is per-board except **§3.7** (`detect path`, transits and
+the `cal gain` decision). §3.6b and §3.6 are **design verification** — do them once, on one
+board, unless a later board misbehaves.
+
+- [ ] **`detect path <mm>`** — nothing reports velocity until the beam path width is set. It is
+      a §3.7 measurement, not a bring-up one.
+
+⚠ **Carry the 5-minute warm-up habit into Phase 3.** Optical output falls **25–45 %**
+cold→plateau while current moves +1.7 % and power +0.6 %, so every *electrical* reading says
+nothing is happening. `cal demod` only warns; `scan carrier` refuses below 5 minutes.
+
+✅ **Reference values to compare against, board 2 (stock 470 kΩ TIA, 2026-08-24):**
+
+| | board 2 |
+|---|---|
+| **chain delay** at 104 kHz | **~570–590 ns** (`cal demod` prints it directly) |
+| delay drift, 80 → 200 kHz | **small — do not expect a repeatable figure.** Two runs gave −3.5 % and −0.05 % |
+| `pure_delay` verdict | **PURE DELAY**, by a wide margin both times (0.78° and 0.01° against a 5° bar) |
+| `demod_phase_ticks` at 104166 Hz | **1343–1350** across four runs (7 ticks = 1.75°) |
+| model residual | **0.07–0.08°** |
+
+⚠ **Compare the DELAY between boards, never `phase_ticks`.** The tick count carries a
+geometric term — `phase_ticks = t_chain_ticks − (duty/2)·(TOP+1)` — so it changes with duty
+and carrier even on an identical board. The delay is the part that describes the hardware.
+
+⚠ **`pure_delay` is the expected verdict, not a warning sign.** An earlier revision of this
+line said to distrust it; that was wrong and it had been written into the firmware test.
 
 ---
 
 ## Sign-off
 
-| item | board 1 reference | **board 2** (2026-08-21) | next board |
-|---|---|---|---|
-| **PSU current limit set to 2 A** | — | ✅ | |
-| Chip UID | `a764f5332ca5ac53` | *not recorded* | |
-| Silicon revision | A4 | *not recorded* | |
-| E9 `pins` check | all 0 | *not recorded* | |
-| +5V_IN on USB only | 4.85 V | *not recorded* | |
-| +5V_IN on PSU | 5.20 V | **5.207 V** ✅ | |
-| `adc5vcal` scale | 1.0627 | **1.0617** ✅ | |
-| VIR (J2, no load) | 36.0 V | **36.0 V** ✅ | |
-| TP2 +12 V | 12.3 V | *not recorded* | |
-| TP6 +2V5 | 2.59 V | *not recorded* | |
-| TP7 TIA_Out, beam off | 2.59 V | **2.589 V**, 2.4 mV p-p ✅ | |
-| Standby current | 32 mA | *not recorded* | |
-| Rail-up idle current | 129 mA @ 5.2 V | *not recorded* | |
-| U9 clamp width | 122.68 µs | *not recorded* | |
-| Beam temp at 25 % duty | 87.5 °C plateau | ⚠ **98 °C at 10 min** (sink 78 °C) | |
-| `hpf test` | CONFIRMED, TRACK = 0 | **CONFIRMED, TRACK = 0**, 2.9× ✅ | |
-| HOLD leakage into C81 | ~250 pA (11 mV/s) | **~52 pA** (2.3 mV/s) | |
-| ADC5 σ, beam on 25 %, TRACK | — | **2.19 mV** ✅ | |
-| **Max linear duty (CR-15)** | **~3 %** | **≥ 25 % with baffles** ✅ | |
+| § | item | board 1 | **board 2** (08-21) | **board 3** (08-28) | next board |
+|---|---|---|---|---|---|
+| 0 | 🔴 **TIA variant — Rf, and Cf incl. WHICH LEG** | stock 470 kΩ / 0.500 pF | stock 470 kΩ / 0.500 pF | **116.0 kΩ / 0.990 pF** (154 k∥R80, 100 pF on one Cf leg) | |
+| 1 | **PSU current limit set to 2 A** | — | ✅ | ✅ | |
+| 1 | Chip UID | `a764f5332ca5ac53` | *not recorded* | `6d6fda754e367a40` | |
+| 1 | Silicon revision | A4 | *not recorded* | *not recorded* | |
+| 2 | VIR (J2, no load) | 36.0 V | **36.0 V** ✅ | *not recorded* | |
+| 2 | TP2 +12 V | 12.3 V | *not recorded* | *not recorded* | |
+| 2 | TP6 +2V5 | 2.59 V | *not recorded* | *not recorded* | |
+| 2 | 🔴 **LM5157 boost SW frequency** | *not recorded* | *not recorded* | *not recorded* | |
+| 3 | E9 `pins` check | all 0 | *not recorded* | *not recorded* | |
+| 4 | +5V_IN on USB only | 4.85 V | *not recorded* | *not recorded* | |
+| 4 | +5V_IN on PSU | 5.20 V | **5.207 V** ✅ | **5.210 V** ✅ | |
+| 4 | 🔴 **`adc5vcal` scale** | 1.0627 | **1.0617** ✅ | **1.0620** ✅ | |
+| 5 | Standby current | 32 mA | *not recorded* | *not recorded* | |
+| 5 | Rail-up idle current | 129 mA @ 5.2 V | *not recorded* | *not recorded* | |
+| 6 | **U9 clamp width** | 122.68 µs | *not recorded* | *not recorded* | |
+| 6 | Beam temp at 25 % duty | 87.5 °C plateau | ⚠ **98 °C at 10 min** (sink 78 °C) | *not recorded* | |
+| 7 | TP7 TIA_Out, beam off | 2.59 V | **2.589 V**, 2.4 mV p-p ✅ | *not recorded* | |
+| 7 | ADC5 σ, beam on 25 %, TRACK | — | **2.19 mV** ✅ | *not recorded* | |
+| 7 | `hpf test` polarity | CONFIRMED, TRACK = 0 | **CONFIRMED, TRACK = 0** ✅ | **CONFIRMED, TRACK = 0** ✅ | |
+| 7 | **HOLD leakage into C81** | ~250 pA (11 mV/s) | **~52 pA** (2.3 mV/s) | **~50–61 pA** (2.2–2.7 mV/s) ✅ | |
+| 8 | **Max linear duty (CR-15)** | **~3 %** | **≥ 25 % with baffles** ✅ | ✅ 25 % | |
+| 9 | **`demod_phase_ticks`** | — | **1343–1350** (4 runs) | **1311** (2 runs, identical) | |
+| 9 | **chain delay, ns** | — | **553–600 ns** | **340 ns** | |
+| 9 | **`cal model` residual / verdict** | — | **0.07–0.08°, PURE DELAY** | **0.26°, PURE DELAY** | |
+| 9 | **D12 attenuation / target** | — | card, ~50–80 % FS | card at ~400 mm, **66 % FS** | |
+| 10 | **DAC vref** | — | **3.268 V** | **3.256 V** | |
+| 10 | **comparator Vos** | — | **+11.0 mV** | **+5.4 mV** | |
+| 10 | GPIO44 crosstalk, **beam off** | — | **1.6 mV** ✅ | **3.2 mV** ⚠ at the bar | |
+| 11 | `cfg save` verified | — | ✅ | ✅ | |
 
 ⚠ **The board 2 gaps above are real, not clerical.** Two of them matter:
 

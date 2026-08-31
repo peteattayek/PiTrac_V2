@@ -1122,6 +1122,52 @@ just buys headroom.
 
 #### 2. Lower R80 (Rf) - the best linearity fix, and close to free
 
+> ### TRIED ON HARDWARE 2026-08-25 (board 3) - CONFIRMED, and it over-delivered
+>
+> **154 kOhm soldered in parallel with R80, and 100 pF C0G across ONE leg of the C68/C70
+> series pair.** Calculated result:
+>
+> | | stock | board 3 |
+> |---|---|---|
+> | Rf | 470 kOhm | **116.0 kOhm** (4.05x less) |
+> | Cf | 0.500 pF | **0.990 pF** |
+> | TIA pole | 677.3 kHz | **1.386 MHz** |
+> | lag at 104.1667 kHz | 8.74 deg | **4.30 deg** |
+> | DC servo corner | 2.267 Hz | **0.559 Hz** (tau 285 ms) |
+>
+> **The compensation ratio is essentially UNCHANGED, which is worth knowing before anyone
+> reads this as a stability fix.** Against the table below (Cin ~20 pF, OPA4323 8 MHz GBW):
+> Cf/Cf_required was **0.5/0.92 = 0.54** stock and is **0.99/1.85 = 0.53** now. Expect
+> **similar overshoot at roughly twice the frequency** (the ~700 kHz ring measured on board 2
+> should move toward ~1.4 MHz), not less ringing.
+>
+> **To actually damp it**, add ~1 pF across the OTHER leg as well: legs of 101 pF and 2 pF give
+> Cf = **1.96 pF** against the 1.85 pF wanted, i.e. maximally flat. That is the change to make
+> if the TP7 edge still peaks.
+>
+> **MEASURED 2026-08-25**, and every quality gate passed (sat 0 %, quad null 0.0,
+> h3 0.101 against an intrinsic 0.111, PURE DELAY, model within 3.5 ticks of `cal demod`):
+>
+> | at 104166 Hz | board 2 (stock) | **board 3** | predicted |
+> |---|---|---|---|
+> | `demod_phase_ticks` | 1343 | **1311** | 1325 |
+> | chain delay | 553 ns | **340 ns** | 435 ns |
+>
+> 🔴 **The phase moved 1.80x further than the pole change alone predicts** - 32 ticks against
+> 17.8. Splitting the TIA's own contribution out leaves a **non-TIA delay of 320 ns on board 2
+> and 225 ns on board 3**, i.e. a 95 ns board-to-board difference in a path nobody has measured
+> (GPIO31 -> U10 -> U9 -> FET -> D11).
+>
+> 🔵 **The experiment could not separate the two**, because board 3 was never calibrated
+> before the rework. **A rework acceptance test needs a BEFORE run on the SAME board** - it
+> costs 26 s. The measurement that would settle it outright is two LA channels on GPIO31 and
+> TP7, read directly.
+>
+> ⚠ **Model quality did drop:** residual 0.23 deg on board 3 against 0.07-0.08 deg on board 2,
+> and the delay now trends +8.4 % across 80-200 kHz where board 2 gave -3.5 % and -0.05 %.
+> Both are inside what the span figure can resolve (see the 8/25 rows in `PROGRESS.md`), but
+> the 3x worse residual is worth watching if more boards get reworked.
+
 Currently 470 kOhm. Reducing it scales crosstalk and signal down together, restoring
 linearity without touching the ratio.
 

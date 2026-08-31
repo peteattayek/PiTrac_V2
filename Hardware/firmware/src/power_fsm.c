@@ -5,6 +5,7 @@
 #include "safe_state.h"
 #include "adc_engine.h"
 #include "detect.h"
+#include "beam.h"
 
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
@@ -193,6 +194,12 @@ static void begin_shutdown(void) {
     // Nothing high-energy may run during teardown, ever.
     // (Detection/strobe lockout hooks land here in phases 3 and 6.)
     // The panel LEDs are owned by panel.c and follow the state automatically.
+    //
+    // The beam is the high-energy thing this comment was written about: ~0.95 A
+    // from +5V at 30 % duty. It goes dark at the START of teardown, not 15 s
+    // later when the Pi finally reports down -- there is no reason to keep
+    // driving D11 through a shutdown, and PI_SHUTDOWN_MAX_WAIT_MS is long.
+    beam_enable(false);
     gpio_put(PIN_SYSTEM_READY, 0);
 
     pi_shutdown_assert(true);
@@ -380,6 +387,19 @@ void power_fsm_step(void) {
     }
 
     case PS_FORCE_OFF:
+        // Before the latch, not after. U10 (MCP1416) and D11 both run from the
+        // SWITCHED +5V rail, so a carrier still toggling on GPIO31 when the rail
+        // goes is 3.3 V logic into an unpowered gate driver -- the same
+        // back-feed condition GPIO33 is driven low for just below.
+        //
+        // This is also what makes `off` mean off. beam.c's s_on is pure firmware
+        // state; nothing here used to clear it, so the slices stayed enabled and
+        // the pads stayed in GPIO_FUNC_PWM across a rail-down. The beam looked
+        // off only because it had no power, and the next `on` relit D11 with no
+        // `beam on`, no duty ramp and no cold-LED warning. Every route to
+        // rail-down lands here, so this covers the button and the escape hatch
+        // and the fault paths, not just the CLI.
+        beam_enable(false);
         gpio_put(PIN_LATCH_CONTROL, 0);
         gpio_put(PIN_SYSTEM_READY, 0);
         // GPIO33 must go low with the rail. U14 (the gated-HPF mux) runs from

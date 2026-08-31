@@ -12,6 +12,25 @@ so nothing happens until you type `beam on`.
 
 ---
 
+**Status: ✅ PHASE 2 COMPLETE — 2026-08-13 on board 1, re-run on board 2 2026-08-21.**
+Q1 (U9 clamp) = **122.68 µs** and Q2 (duty fidelity) = **no limit to 250 kHz** are both closed.
+Carrier stays **104.1667 kHz**. Full results at the end of this document.
+
+⚠ **The operating duty changed after this phase.** Phase 2 ramped and characterised the beam
+at **30 %**; from Phase 3 onward the operating point is **25 %** — CR-12 measured the junction
+at 123–133 °C at 30 % against a 145 °C maximum. The 30 % numbers below are still the correct
+record of what was measured; **do not adopt 30 % as an operating duty.**
+
+⚠ **`off` now also turns the beam off** (fixed 2026-08-24). On older builds the beam state
+survived a rail-down and the next `on` relit D11 unasked.
+
+## How to read the procedures below
+
+Every sub-phase opens with a **board state** table. Set the board to exactly that before
+starting.
+
+---
+
 ## What you are actually bringing up
 
 Two signals that must be *exactly* the same frequency with a controllable phase between
@@ -41,6 +60,18 @@ Two open questions get answered here, and both change downstream code:
 
 Do this first. It is the trickiest code in the project and it costs nothing to prove
 before any current flows.
+
+### Board state
+
+| | |
+|---|---|
+| PSU | 5.2 V, limit **≥ 2.5 A** |
+| **Rail** | 🔴 **UP.** `beam_enable()` hard-refuses unless `power_rails_ready()`, so this cannot be run with the latch open. *(An earlier draft said "rails down"; that was never possible.)* |
+| **Beam duty** | 🔴 **2 %** — this is what makes 2a safe, not the rail state. 0.19 µs high at 104 kHz is nothing thermally. |
+| Carrier | 104166 Hz (or 1 kHz — see the alternative below) |
+| Pi | not connected |
+| Probes | **LA on GPIO31 and GPIO39** |
+| FLIR | not needed at 2 % |
 
 **Setup:** LA on GPIO31 and GPIO39, **rails up** — `beam_enable()` hard-refuses unless
 `power_rails_ready()`, so this test cannot be run with the latch open. (An earlier draft of
@@ -227,8 +258,22 @@ Record in `PROGRESS.md` §6:
 
 ## 2b — The beam LED, ramped
 
-**Now current flows.** Set the PSU limit to 2.5 A and keep the FLIR pointed at
-**R73/R74 (the 0R27 ballast pair) and D11** for the whole ramp.
+🔴 **Now current flows.**
+
+### Board state
+
+| | |
+|---|---|
+| PSU | 5.2 V, **limit 2.5 A**. The beam alone averages ~0.95 A from +5 V at 30 % duty. |
+| Rail | **up** |
+| **Beam duty** | 🔴 **starts at 2 % and ramps.** Never jump straight to the target. |
+| Carrier | 104166 Hz |
+| Pi | not connected |
+| **FLIR** | 🔴 **powered on and pointed at R73/R74 (the 0R27 ballast pair) and D11 for the whole ramp** |
+| Probes | scope — see "Where the scope ground goes" below **before clipping anything** |
+
+⚠ **Ceiling:** 35 % is a *destruction* limit, not an operating point. The Phase 3 operating
+duty is **25 %** (CR-12).
 
 ### The drive chain, verified against the netlist and BOM
 
@@ -382,6 +427,21 @@ TP7 in Phase 3.
 
 ## 2c — Q1: measure the one-shot clamp
 
+### Board state
+
+| | |
+|---|---|
+| PSU | 5.2 V, limit 2.5 A |
+| Rail | **up** |
+| Beam | **`beam clamp` sets it for you** — 1 kHz / 50 %, and it *enables* the beam as it does so |
+| Pi | not connected |
+| Probes | **TP5** (`Strobe_GND`, the shared low-side return) |
+
+⚠ **`beam clamp` turns the LED on immediately** — it reconfigures *and* enables, so you have a
+signal to scope straight away. That is intended, but it means the beam goes live the moment you
+type it. At 1 kHz / 50 % the U9 clamp holds the real LED duty to ~12 %, which is why this is
+safe.
+
 ```
 beam clamp        # sets 1 kHz / 50 %, i.e. a 500 us commanded high phase
 ```
@@ -495,6 +555,21 @@ Still to confirm on **U5** — same part and RC, expect 109–136 µs with toler
 ---
 
 ## 2d — Q2: duty-fidelity sweep
+
+### Board state
+
+| | |
+|---|---|
+| PSU | 5.2 V, limit 2.5 A |
+| Rail | **up** |
+| Beam | **on**, duty set by the procedure below |
+| Pi | not connected |
+| Probes | **TP5** |
+| FLIR | worth keeping on R73/R74 — the sweep holds the beam on for 25 × 3 s |
+
+⚠ **This sweep was run at 30 % duty**, which was the Phase 2 operating point. If you re-run it
+on a new board, **use 25 %** and expect the same answer — Q2's conclusion (no duty-fidelity
+limit up to 250 kHz) is about U9's reset path, not about the duty.
 
 ```
 beam duty 30
