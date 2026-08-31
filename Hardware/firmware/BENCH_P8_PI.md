@@ -65,7 +65,7 @@ This applies to **every** reset source:
 |---|---|
 | `reset` / `bootsel` over the CLI | ✅ Guarded — refuses while a Pi is powered. `force` overrides. |
 | **SW2 (RUN button)** | ❌ **Operator discipline only. Do not press it with a Pi up.** |
-| Hardware watchdog | ⚠ Policy: reset action enabled only while the Pi is down. Honour it. |
+| Hardware watchdog | ✅ **OFF by default since 2026-08-31** — it is armed only when something deliberately arms it (`wdog on`, or Phase 6). The old "enabled while no Pi is powered" policy protected a *Pi* from a hung MCU; on the bench there is no Pi and a reset just drops the latch mid-measurement. `stat` shows the state. |
 | Brownout on +5V_IN | ❌ Unavoidable, and it takes +3V3 down too |
 
 It is a deliberate tradeoff, not a defect: R12's pull-down is what makes the latch

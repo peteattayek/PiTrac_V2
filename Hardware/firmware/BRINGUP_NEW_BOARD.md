@@ -131,14 +131,21 @@ lives in.
       rings), **and record the switching frequency**.
 - [ ] Remove J2 again before continuing.
 
-> ### 🔴 Record the boost SW frequency. It has never been written down on any board.
+> ### 🟡 Record the boost SW frequency while the scope is on the node.
 >
-> The carrier is fixed at **104.1667 kHz**, and its nearest odd harmonics sit **117.5 kHz** and
-> **90.8 kHz** from the LM5157's nominal 1.055 MHz — so the boost can drift **−9.6 % / +7.1 %**
-> before it folds into the 15.39 kHz passband and starts looking like a ball.
+> ⚠ **Downgraded from 🔴 on 2026-08-31.** The concern was that an odd harmonic of the fixed
+> 104.1667 kHz carrier could fold the boost into the 15.39 kHz passband and look like a ball.
+> **That has now been tested directly and it does not happen:** `scan carrier 95000 115000 9`
+> on board 3 put the 7th harmonic **inside** the measured switcher band at three separate
+> points and σ_noise stayed flat (4.57–5.08, 10.8 % spread). The coupling is too weak to matter.
 >
-> **That margin is only as good as the part-to-part spread, and nobody has measured it.** The
-> scope is already on the node for the snubber decision; write the number down.
+> ⚠ **The design-time margin quoted here was also wrong.** It assumed a 1.055 MHz nominal; the
+> only switcher tone found on the +5 V rail is at **801 kHz**, which would have made the margin
+> **−2.3 %**, not −9.6 %. Both numbers are now superseded by the direct measurement above.
+>
+> 🔵 **Still worth writing down**, because it is free while the scope is there, and it is the
+> only way to settle whether that 801 kHz is the LM5157 (L1) or the RP2350's own core buck
+> (L2 → U3.63 `VREG_LX`). See `BENCH_P3_DETECT.md` §3.6 Check 1 for the exact pad.
 >
 > 🔵 If the spread across boards approaches ±7 %, that is a **design** finding, not a board
 > finding — see `BENCH_P3_DETECT.md` §3.6.
@@ -659,7 +666,7 @@ line said to distrust it; that was wrong and it had been written into the firmwa
 | 2 | VIR (J2, no load) | 36.0 V | **36.0 V** ✅ | *not recorded* | |
 | 2 | TP2 +12 V | 12.3 V | *not recorded* | *not recorded* | |
 | 2 | TP6 +2V5 | 2.59 V | *not recorded* | *not recorded* | |
-| 2 | 🔴 **LM5157 boost SW frequency** | *not recorded* | *not recorded* | *not recorded* | |
+| 2 | 🟡 **LM5157 boost SW frequency** | *not recorded* | *not recorded* | ⚠ **801 kHz on the RAIL** (LA, not scope — could be L1 or L2) | |
 | 3 | E9 `pins` check | all 0 | *not recorded* | *not recorded* | |
 | 4 | +5V_IN on USB only | 4.85 V | *not recorded* | *not recorded* | |
 | 4 | +5V_IN on PSU | 5.20 V | **5.207 V** ✅ | **5.210 V** ✅ | |
@@ -670,6 +677,10 @@ line said to distrust it; that was wrong and it had been written into the firmwa
 | 6 | Beam temp at 25 % duty | 87.5 °C plateau | ⚠ **98 °C at 10 min** (sink 78 °C) | *not recorded* | |
 | 7 | TP7 TIA_Out, beam off | 2.59 V | **2.589 V**, 2.4 mV p-p ✅ | *not recorded* | |
 | 7 | ADC5 σ, beam on 25 %, TRACK | — | **2.19 mV** ✅ | *not recorded* | |
+| 3.6b | **Q8 coupling, HOLD (armed)** | — | *not recorded* | 🔴 **×7.43** — FAILS, see PROGRESS Q8 | |
+| 3.6b | **Q8 coupling, TRACK** | — | *not recorded* | ✅ **×3.84 peak, decays τ≈0.75 s** | |
+| 3.6b | **U12B negative clamp** | — | *not recorded* | **21 mV** below quiescent | |
+| 3.6 C2 | **`scan carrier` flatness** | — | *not recorded* | ✅ **PASS** σ 4.57–5.08, 10.8 % spread | |
 | 7 | `hpf test` polarity | CONFIRMED, TRACK = 0 | **CONFIRMED, TRACK = 0** ✅ | **CONFIRMED, TRACK = 0** ✅ | |
 | 7 | **HOLD leakage into C81** | ~250 pA (11 mV/s) | **~52 pA** (2.3 mV/s) | **~50–61 pA** (2.2–2.7 mV/s) ✅ | |
 | 8 | **Max linear duty (CR-15)** | **~3 %** | **≥ 25 % with baffles** ✅ | ✅ 25 % | |

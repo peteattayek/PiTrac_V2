@@ -1,6 +1,6 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// panel.h â€” the two off-board panel indicators on J7.
+// panel.h -- the two off-board panel indicators on J7.
 //
 //   J7.2  PWR_LED-   GPIO11, Q4 sink via R48 47R   -> the Adafruit 481's LED ring
 //   J7.6  RDY_LED-   GPIO12, Q5 sink via R49 220R  -> D7 (BL-BGE1V1) in holder S1

@@ -18,7 +18,7 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 | # | Change | Priority | Effort | If skipped |
 |---|---|---|---|---|
 | **CR-01** | Ready LED and strobe gate DAC share PWM slice 6A | 🔴 High | 1 trace | Firmware workaround exists, but no PWM dimming on the ready LED |
-| **CR-02** | Virtual ground tracks the +5 V rail → false triggers | 🔴 High | 1 part *or* 1 stage | A rail step while armed reads as a ball. `PROGRESS.md` Q8 |
+| **CR-02** | Virtual ground tracks the +5 V rail → false triggers | 🔴 **High — MEASURED ×7.43** | 1 part *or* 1 stage | ✅ **Confirmed on board 3 2026-08-31, at the predicted magnitude.** A 39 mV rail step reads as a ball at a 300 mV threshold; a rail sag *blinds* the detector. `PROGRESS.md` Q8, `BENCH_P3_DETECT.md` §3.6b |
 | **CR-03** | R46/R47 100K → 10K | 🟡 Med | 2 parts | ADC read path stays ~5 % low, needs a firmware fudge factor. Q9 |
 | **CR-04** | 10 kΩ pull-up on J8.37 | 🟡 Med | 1 part | Reset presents an ambiguous level to the Pi. Q10 |
 | **CR-05** | Panel ring LED on always-on power | 🟡 Med | Rework J7 feed | No fault indication whenever the rail is down |

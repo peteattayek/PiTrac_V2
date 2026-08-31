@@ -514,6 +514,14 @@ bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts,
     *best = (cal_scan_point_t){0};
     float best_snr = -1.0f;
 
+    // FLATNESS is the verdict, not the winner. The carrier is FIXED for every
+    // board (see BENCH_P3_DETECT 3.6), so this scan is a verification: does
+    // anything fold into the passband near the operating carrier? A fold shows
+    // as ONE row standing out, not as a gentle ranking -- so track the spread of
+    // sigma_noise and the row that departs from it.
+    float sn_min = 1e30f, sn_max = -1e30f, sn_sum = 0.0f;
+    uint32_t sn_n = 0, sn_max_f = 0;
+
     for (uint32_t i = 0; i < npts; i++) {
         uint32_t f = f0 + (uint32_t)(((uint64_t)(f1 - f0) * i) / (npts - 1));
 
@@ -530,12 +538,15 @@ bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts,
 
         cal_scan_point_t p = { .freq_hz = f, .phase_ticks = ph };
 
+        // 🔴 The settle before each sigma window must outlast the HPF, not the
+        // LPF. See CAL_SIGMA_SETTLE_MS -- 50 ms here made this scan rank the
+        // order of the loop instead of the carrier.
         beam_chop_begin(beam_duty());
-        beam_chop(true);  pitrac_yield_ms(50);
+        beam_chop(true);  pitrac_yield_ms(CAL_SIGMA_SETTLE_MS);
         p.sigma_noise = adc5_sigma(130);
-        beam_chop(false); pitrac_yield_ms(50);
+        beam_chop(false); pitrac_yield_ms(CAL_SIGMA_SETTLE_MS);
         p.sigma_floor = adc5_sigma(130);
-        beam_chop(true);
+        beam_chop(true);  pitrac_yield_ms(CAL_SIGMA_SETTLE_MS);
         p.signal = chopped_diff(6, CAL_CHOP_HZ_DEFAULT);
         beam_chop_end();
 
@@ -550,6 +561,12 @@ bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts,
 
         if (p.snr > best_snr) { best_snr = p.snr; *best = p; }
 
+        if (p.sigma_noise > 0.0f) {
+            if (p.sigma_noise < sn_min) sn_min = p.sigma_noise;
+            if (p.sigma_noise > sn_max) { sn_max = p.sigma_noise; sn_max_f = f; }
+            sn_sum += p.sigma_noise; sn_n++;
+        }
+
         if (pitrac_abort_pending()) {
             printf("# ABORTED after %lu of %lu candidates.\n",
                    (unsigned long)(i + 1), (unsigned long)npts);
@@ -563,18 +580,38 @@ bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts,
            (unsigned long)best->freq_hz, (double)best->snr,
            (long)best->phase_ticks, warm ? "" : "   *** COLD, NOT TRUSTWORTHY ***");
 
-    // Put the carrier and phase back. The winner is a RECOMMENDATION -- adopting
-    // it means editing board.h and re-running cal demod, not leaving the beam
-    // wherever the last scan point happened to land.
+    // Put the carrier and phase back. Leaving the beam wherever the last scan
+    // point landed is the trap `cal model` had until 2026-08-24.
     beam_configure(f_restore, beam_duty(), ph_restore);
     beam_set_duty_ceiling(saved_ceiling);
-    printf("Carrier restored to %lu Hz, phase %ld ticks. The winner above is a\n"
-           "RECOMMENDATION -- to adopt it, set it in board.h and re-run 'cal demod'.\n",
+    printf("Carrier restored to %lu Hz, phase %ld ticks.\n",
            (unsigned long)f_restore, (long)ph_restore);
-    printf("Also read beam_noise_ratio: it is sigma_noise/sigma_floor, i.e. how much\n"
-           "noise the BEAM adds over ambient. That is the boost-harmonic folding this\n"
-           "scan exists to dodge. A candidate with high SNR and a ratio near 1.0 is\n"
-           "genuinely clean; high SNR with a large ratio just got lucky on amplitude.\n");
+    // THE ACTUAL VERDICT.
+    if (sn_n >= 3) {
+        float mean = sn_sum / (float)sn_n;
+        float spread = (mean > 0.0f) ? (sn_max - sn_min) / mean : 0.0f;
+        printf("\nFLATNESS -- this is the result, not the winner above.\n");
+        printf("  sigma_noise  min %.2f  mean %.2f  max %.2f   spread %.0f %%\n",
+               (double)sn_min, (double)mean, (double)sn_max, (double)(spread * 100.0f));
+        if (spread <= 0.25f) {
+            printf("  PASS: flat within 25 %%. Nothing folds into the passband across\n"
+                   "  this band, so the fixed carrier is clear. Record it and move on.\n");
+        } else {
+            printf("  *** %lu Hz stands out at %.2f. Something may fold there.\n"
+                   "  A fold is ONE row departing from a flat set -- check whether an ODD\n"
+                   "  harmonic of that row's carrier lands within the 15.39 kHz LPF of a\n"
+                   "  switcher. See BENCH_P3_DETECT.md 3.6 Check 2.\n",
+                   (unsigned long)sn_max_f, (double)sn_max);
+        }
+    }
+    printf("\nbeam_noise_ratio is sigma_noise/sigma_floor -- how much noise the BEAM\n"
+           "adds over ambient. Read it for FLATNESS, not for closeness to 1.0: a lit\n"
+           "LED cannot add zero noise, and 2-4x is ordinary. A uniform elevation is the\n"
+           "beam's own shot and driver noise; a SPIKE in one row is folding.\n");
+    printf("\nThe carrier is FIXED for every board, so 'BEST by SNR' is diagnostic\n"
+           "only -- do NOT adopt it. Differences of a few %% between rows are the\n"
+           "scatter of sigma_noise, not a better frequency. Record the flatness\n"
+           "result in PROGRESS.md section 6.\n");
     return true;
 }
 

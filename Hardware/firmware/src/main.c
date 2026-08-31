@@ -1,6 +1,6 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// PiTrac "Second Board To Rule Them All" â€” RP2354B firmware
+// PiTrac "Second Board To Rule Them All" -- RP2354B firmware
 //
 // Phase 0  : board bring-up, safe state, CLI, ADC block capture
 // Phase 1  : power button + latch, USB-power guard
@@ -31,12 +31,12 @@
 // Belt and braces against a build configured for the wrong chip variant.
 // RP2354B is an RP2350*B*: 80-pin, 48 GPIOs. If something (an IDE wizard, a
 // stale CMake cache) built this for an RP2350A we would get 30 GPIOs, and every
-// pin from GPIO31 up â€” the beam carrier, the demod clock, the threshold DAC,
-// the comparator, all five ADC channels â€” would quietly not exist.
+// pin from GPIO31 up -- the beam carrier, the demod clock, the threshold DAC,
+// the comparator, all five ADC channels -- would quietly not exist.
 // Fail at compile time instead.
 _Static_assert(NUM_BANK0_GPIOS >= 48,
     "Built for the wrong chip variant. This board is an RP2354B (RP2350B core, "
-    "48 GPIOs). Delete the build/ directory and re-run cmake â€” see START_HERE.md.");
+    "48 GPIOs). Delete the build/ directory and re-run cmake -- see START_HERE.md.");
 
 int main(void) {
     // FIRST. Before stdio, before peripherals, before anything. Every output

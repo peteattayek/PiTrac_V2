@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
 #include "beam.h"
 #include "board.h"
@@ -32,7 +32,7 @@ static inline uint32_t wrap_mod(int64_t v, int64_t m) {
 // slice untouched.
 //
 // The single write is what gives phase lock: both counters start on the same
-// clock edge. Using the SDK's pwm_set_mask_enabled() here would be a bug â€” it
+// clock edge. Using the SDK's pwm_set_mask_enabled() here would be a bug -- it
 // assigns PWM_EN wholesale and would switch off slices 5 and 6, which are the
 // panel LEDs.
 static void beam_slices_enable(bool on) {
@@ -192,7 +192,7 @@ void beam_set_duty(float duty) {
 
     s_duty = duty;
     beam_note_duty(duty);
-    // Live update â€” the compare register can change while the slice runs.
+    // Live update -- the compare register can change while the slice runs.
     pwm_set_chan_level(s_slice_car, s_chan_car, (uint16_t)(duty * (s_top + 1)));
 }
 
@@ -250,7 +250,7 @@ void beam_set_phase(int32_t phase_ticks) {
     s_phase = (int32_t)wrap_mod(phase_ticks, (int64_t)s_top + 1);
 
     // Counters can only be preloaded while stopped, so both slices stop and
-    // restart together â€” preserving the lock. Costs one partial carrier period.
+    // restart together -- preserving the lock. Costs one partial carrier period.
     bool was_on = (pwm_hw->en & (1u << s_slice_car)) != 0;
     beam_slices_enable(false);
     pwm_set_counter(s_slice_car, 0);

@@ -1,6 +1,6 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// beam.h â€” Phase 2: the modulated IR beam and its phase-locked demodulator clock.
+// beam.h -- Phase 2: the modulated IR beam and its phase-locked demodulator clock.
 //
 //   GPIO31  Modulation_PWM   PWM slice 3 ch B  -> U9 74LVC1G123 -> U10 MCP1416 -> Q11 -> D11
 //   GPIO39  Demodulation_PWM PWM slice 7 ch B  -> U13/U12A sign-switching demodulator
@@ -24,7 +24,7 @@
 //    it. There is no disable path on this watchdog by design: a stuck-high
 //    Modulation_PWM yields one clamped flash, not a cooked LED, and no DC beam mode
 //    can exist. Whether the '123 can *recover* fast enough to reproduce 30 % duty at
-//    104 kHz is open question Q2 â€” measure it, do not assume.
+//    104 kHz is open question Q2 -- measure it, do not assume.
 //
 // Electrically the beam is the biggest continuous load on the board: ~3 A peak at
 // 30 % duty is ~0.95 A average from +5V, ~3.15 W in D11 and ~0.73 W in each ballast
@@ -121,7 +121,7 @@ uint32_t beam_duty_stable_ms(void);
 // back through beam_configure(beam_freq_hz(), ...) round-trips TOP through an
 // integer division and can land one count away from where it started.
 //
-// Duty can be changed live â€” the PWM compare register updates without stopping.
+// Duty can be changed live -- the PWM compare register updates without stopping.
 // Phase cannot: the counters have to be preloaded while the slices are disabled,
 // so beam_set_phase() briefly stops and restarts both. That puts one partial
 // period in the carrier, which the demodulator settles out in well under a
@@ -129,7 +129,7 @@ uint32_t beam_duty_stable_ms(void);
 void beam_set_duty(float duty);
 void beam_set_phase(int32_t phase_ticks);
 
-// Enable/disable both slices. Refuses to enable unless the +5V rail is up â€”
+// Enable/disable both slices. Refuses to enable unless the +5V rail is up --
 // U10 (MCP1416) and the LED both run from the switched rail.
 bool beam_enable(bool on);
 bool beam_enabled(void);

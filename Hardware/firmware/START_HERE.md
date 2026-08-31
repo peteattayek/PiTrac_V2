@@ -305,9 +305,11 @@ up once you're iterating; the buttons get old around the twentieth cycle.
 | `ARCHITECTURE.md` | What runs on PIO/PWM/DMA vs the CPU |
 | `SETUP.md` | Toolchain detail and the manual install path |
 
-**Current status (2026-08-28): phases 0 through 2 are complete and closed. Phase 3 §3.1–3.5
-are complete on boards 2 and 3; §3.6b is next.** See `PROGRESS.md` §10 for the resume block —
-it is always more current than this line.
+**Current status (2026-08-31): phases 0 through 2 are complete and closed. Phase 3 §3.1–3.6
+are complete on board 3** — including §3.6b (Q8 measured at **×7.43, FAILS**) and §3.6 Check 2
+(`scan carrier` flatness, **PASS**). **§3.7, the first real transits, is next**, with `detect`
+still never run on board 3. See `PROGRESS.md` §10 for the resume block — it is always more
+current than this line.
 
 🔵 **Bringing up a newly assembled board? Use `BRINGUP_NEW_BOARD.md`, not this document.**
 This one teaches the toolchain from nothing; that one is the ordered per-board driver, and

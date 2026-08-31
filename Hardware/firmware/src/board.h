@@ -1,6 +1,6 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// board.h â€” PiTrac "Second Board To Rule Them All" Rev V1
+// board.h -- PiTrac "Second Board To Rule Them All" Rev V1
 //
 // SINGLE SOURCE OF TRUTH for pins and hardware constants.
 //
@@ -18,7 +18,7 @@
 #include <stdint.h>
 
 // ===========================================================================
-// HARDWARE FACTS THAT CONSTRAIN THE FIRMWARE â€” do not "simplify" these away
+// HARDWARE FACTS THAT CONSTRAIN THE FIRMWARE -- do not "simplify" these away
 // ===========================================================================
 //
 // 1. PIN_PWR_TOGGLE (GPIO14) has NO EXTERNAL PULL-UP. The internal pull-up is
@@ -40,10 +40,10 @@
 //
 // 5. The beam LED is NOT driven directly by the MCU. PIN_MOD_PWM feeds a
 //    74LVC1G123 one-shot (U9) that hardware-clamps every high phase. There is
-//    no disable path on the beam watchdog â€” by design, no DC beam mode exists.
+//    no disable path on the beam watchdog -- by design, no DC beam mode exists.
 //
 // 6. Both one-shots (U5 strobe, U9 beam) run from +3V3, not 5 V. This matters
-//    for the clamp width â€” see STROBE_HW_LIMIT_US_ASSUMED.
+//    for the clamp width -- see STROBE_HW_LIMIT_US_ASSUMED.
 //
 // 7. Panel LEDs on J7 are fed from the SWITCHED +5V rail. They cannot indicate
 //    standby. Use the on-board D5/D6 (always-on +3V3) for pre-latch feedback.
@@ -90,7 +90,7 @@
 
 // --- Strobe -----------------------------------------------------------------
 #define PIN_STROBE_PULSE    25   // out (PIO0) : hardware-clamped pulse gate. R57 1K pulldown.
-#define PIN_PULSE_LIMIT_DIS 27   // out : DANGER â€” defeats the strobe watchdog. TEST ONLY.
+#define PIN_PULSE_LIMIT_DIS 27   // out : DANGER -- defeats the strobe watchdog. TEST ONLY.
 #define PIN_GATE_PWM        28   // out (PWM 6A) : strobe current setpoint DAC
                                  //   *** SHARES SLICE 6A WITH PIN_READY_LED (GPIO12).
                                  //   *** See the PWM SLICE MAP below. Phase 6 blocker.
@@ -101,7 +101,7 @@
                                  //   *** GPIO15 MUST STAY SIO. See the PWM SLICE MAP below.
 #define PIN_HPF_TOGGLE      33   // out : U14 TMUX1219 SEL. Polarity UNVERIFIED -- see below.
 #define PIN_DEMOD_PWM       39   // out (PWM 11B): demod clock, phase-locked to slice 7
-#define PIN_THRESHOLD_PWM   44   // out (PWM 10A): comparator threshold DAC (also ADC4 â€” never sample)
+#define PIN_THRESHOLD_PWM   44   // out (PWM 10A): comparator threshold DAC (also ADC4 -- never sample)
 #define PIN_D_COMPARATOR    46   // in  : ball-detect comparator. EXTERNAL 10K pull-up (R103).
 
 // --- U14 gated HPF: which SEL level selects which path -----------------------
@@ -251,7 +251,7 @@
 // Sits at the midpoint of the two measured values, ~170 mV from each. The
 // original single 4.90 V threshold left only 50 mV above the USB reading -- at
 // the ADC pin that is ~25 mV, or about 31 codes, and the R46/R47 divider's two
-// 1% resistors can contribute Â±50 mV of error at 5 V by themselves. Since
+// 1% resistors can contribute +/-50 mV of error at 5 V by themselves. Since
 // `adc5vcal` is RAM-only and lost on every reset, this guard has to be right
 // UNCALIBRATED on a cold boot, so it needs real margin.
 //
@@ -304,10 +304,24 @@
 // integer level (432), so both duty and demod phase are exact.
 //   f = 150e6 / 1440 = 104166.67 Hz
 //   phase resolution = 1 tick = 6.67 ns = 0.25 deg
-// This is a STARTING POINT, not a final answer â€” the boost runs at a nominal
-// 1.055 MHz with real tolerance, and a square-wave demodulator folds anything
-// near an ODD harmonic n*fc down to |fi - n*fc|. Pick the final carrier with
-// the `scan carrier` CLI command (max measured SNR), not with arithmetic.
+// THIS IS THE FINAL CARRIER. Decided 2026-08-28: one frequency for every board
+// and every user, chosen for uniformity over per-board SNR. A per-board carrier
+// would need a scan, a `cal model` re-fit and a recorded frequency per board,
+// repeated on every replacement -- for a few percent of signal.
+//
+// DO NOT pick a carrier with `scan carrier`'s "BEST by SNR". That command is a
+// VERIFICATION now, not an optimisation, and its SNR column cannot rank
+// frequencies anyway: the scan chops the beam, halving its average duty, so the
+// LED cools through the run and `signal` climbs with ELAPSED TIME. Board 3's
+// nine rows came out pre-sorted -- 1 in 363,000 by chance. See cal.c.
+//
+// The folding concern that motivated the scan is MEASURED CLEAR (2026-08-31).
+// A square-wave demodulator folds anything near an odd harmonic n*fc down to
+// |fi - n*fc|, and the only switcher tone on +5 V is a dithered band at
+// 762.9-833.1 kHz. `scan carrier 95000 115000 9` put 7*fc INSIDE that band at
+// three separate points and sigma_noise stayed flat, so it does not couple.
+// (The 1.055 MHz nominal this comment used to quote was never confirmed and is
+// ~24 % off the measured tone. See BENCH_P3_DETECT.md 3.6.)
 #define CARRIER_TOP_DEFAULT  1439u
 #define CARRIER_LEVEL_30PCT   432u   // 432/1440 = exactly 30.000 %
 #define DEMOD_LEVEL_50PCT     720u
@@ -396,7 +410,7 @@
 #define DAC_SETTLE_MS          20u    // 5 x 2.62 ms dominant pole, rounded up
 
 // ---------------------------------------------------------------------------
-// !! UNVERIFIED â€” MEASURE BEFORE RELYING ON THESE !!
+// !! UNVERIFIED -- MEASURE BEFORE RELYING ON THESE !!
 //
 // The .md quotes 113 us for both 74LVC1G123 one-shots. The datasheet says
 // t_w ~= K * Rext * Cext with K ~= 0.7 at Vcc = 3.3 V (and both one-shots ARE
@@ -447,7 +461,7 @@
 #define BURST_PULSES_NOMINAL       10u    // S15 assumes 10 per burst, 9 gaps
 
 // ===========================================================================
-// Pi 5 SOFT-SHUTDOWN â€” polarity decision
+// Pi 5 SOFT-SHUTDOWN -- polarity decision
 // ===========================================================================
 //
 // The .md pseudocode says pulse(PIN_RPI5_SHUTDOWN, 200ms), which reads as

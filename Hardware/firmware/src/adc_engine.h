@@ -1,9 +1,9 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// adc_engine.h â€” the RP2350 has ONE SAR at 500 ksps aggregate. Everything that
+// adc_engine.h -- the RP2350 has ONE SAR at 500 ksps aggregate. Everything that
 // wants analog has to share it, so allocation is explicit rather than ad hoc.
 //
-// Modes (this resolves an ambiguity the .md leaves open â€” its "Mode A"
+// Modes (this resolves an ambiguity the .md leaves open -- its "Mode A"
 // round-robin over ch1/ch2/ch5/ch7 is wrong for the armed state, because the
 // detect signal and the mic both want to free-run):
 //
@@ -180,7 +180,7 @@ float    adc_get_5vin_scale(void);
 float    adc_default_5vin_scale(void);
 
 // ---------------------------------------------------------------------------
-// Block capture â€” the bench instrument.
+// Block capture -- the bench instrument.
 //
 // Free-runs `chan_mask` into a RAM buffer via DMA, then hands it back for the
 // CLI to dump as CSV. With tools/scope.py on the other end this turns the board
@@ -203,7 +203,7 @@ unsigned        adc_capture_mask(void);
 uint32_t        adc_capture_rate(void);
 
 // True if the ADC FIFO overran during the last capture. An overrun rotates the
-// round-robin channel phase, which silently mislabels every subsequent sample â€”
+// round-robin channel phase, which silently mislabels every subsequent sample --
 // so this is a hard error, not a warning.
 bool adc_capture_overran(void);
 

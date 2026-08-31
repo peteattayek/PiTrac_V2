@@ -1197,12 +1197,32 @@ the vulnerable state is exactly the operating state.
 >
 > 🔵 **The stimulus must change the rail WITHOUT changing the light.** Two ways, both free.
 >
-> **Method A (cleanest) — step the PSU, beam OFF.** Settle in TRACK, `beam off`, `hpf hold`,
-> then turn the bench supply **5.20 V → 5.10 V by hand** and capture. Zero optical change, so
-> whatever moves is Q8. 🔵 **A slow hand-turned ramp is exactly right, not a compromise:** the
-> +2V5 divider is filtered at **31.8 Hz** (R75∥R76 = 5 kΩ with C66 1 µF), so a slow change is
-> the **fully-coupled worst case** — the number this test wants. A fast transient is attenuated
-> by that pole and would flatter the result.
+> **Method A (cleanest) -- step the PSU, beam OFF.** Settle in TRACK, `beam off`, `hpf hold`,
+> then turn the bench supply **by hand, BOTH WAYS: 5.20 -> 5.10 -> 5.20 V**, and capture the
+> whole thing. Zero optical change, so whatever moves is Q8. 🔵 **A slow hand-turned ramp is
+> exactly right, not a compromise:** the +2V5 divider is filtered at **31.8 Hz** (R75||R76 = 5 kΩ
+> with C66 1 µF), so a slow change is the **fully-coupled worst case** -- the number this test
+> wants. A fast transient is attenuated by that pole and would flatter the result.
+>
+> ### 🔴 STEP THE RAIL BOTH WAYS. One direction is unmeasurable.
+>
+> **U12B has ~14 mV of downward headroom and the prediction is 725 mV.** From the netlist:
+> `Net-(U12B-IN2-)` = R98.2 + R100.2 + R101.1, and **both R98.1 and R100.1 go to GND** -- so
+> U12B's gain is taken to **ground**, not to +2V5. U12.4 is +5VA and U12.11 is GND, a **single
+> supply**. With the beam off and the HPF settled the output therefore sits at **~0 V** --
+> `hpf test` measures **+13.75 mV** there. That is its entire downward range.
+>
+> 🔴 **So whichever rail direction drives the comparator input DOWN rails the amplifier after
+> ~14 mV of a predicted 725 mV excursion, and the capture shows a small number for a reason
+> that has nothing to do with Q8.** The p-p noise does *not* collapse when this happens -- the
+> ~80 mV p-p in a 5 MS/s capture is the instrument's own floor, not the node (board 3's capture
+> reads the node **121 mV below ground**, which a single-supply output cannot do) -- so **there
+> is no tell in the data.** Stepping both ways is the only defence.
+>
+> 🔵 **The UP direction is the one that matters anyway.** The comparator triggers on a
+> RISING input, so only the rail direction that pushes the comparator input up can cause a false
+> trigger. Establish the sign here and carry it into Phase 6: it decides whether a strobe burst's
+> **sag** is dangerous or whether its **recovery overshoot** is.
 >
 > **Method B (cross-check) — beam step at the DEMOD NULL.** Set `beam phase` to a quadrature
 > null from your §3.4 sweep, i.e. where the response crossed zero (**board 3: ~225 or ~973**),
@@ -1224,33 +1244,41 @@ the vulnerable state is exactly the operating state.
 | Target | leave it where §3.4 set it — with Method A or B the optical term is removed by the *method*, not by taking the target away |
 | Gear | **scope, 3 channels: +5 V, R102 pad 2 (comparator input — the one that decides), R102 pad 1 (ADC5, the clipped copy).** Neither pad has a test point; see the block above and CR-17. |
 
+> ⚠ **These steps are Method A.** An earlier revision left a `beam on`/`beam off` procedure
+> here, which the box above forbids — and it was followed. **The beam never switches in this
+> test.**
+
 ### Step 1 — TRACK (the HPF should remove it)
 
 ```
-hpf track
 beam off
+hpf track
 ```
-…wait 3 s, arm the scope, then:
-```
-beam on
-```
+…wait 3 s for the 0.66 s HPF to settle (≥ 4 τ), arm the scope, then **by hand**:
 
-**Record:** the ΔV step on +5 V, and the excursion at **R102 pad 2**. Note pad 1 (ADC5) too if
-you have the channel — the difference between them is the D14 truncation.
+**5.20 V → 5.10 V**, pause 2 s, **→ 5.20 V**. Take about 1 s per ramp.
+
+**Record:** the ΔV on +5 V and the excursion at **R102 pad 2**, *for each direction separately*.
+Note pad 1 (ADC5) too if you have the channel — the difference is the D14 truncation.
+
+✅ **Expected: almost nothing.** A ~1 s ramp is well inside the 0.66 s HPF's stopband, so TRACK
+should reject most of it. This step is the **artifact reference** — whatever moves here with the
+HPF rejecting the signal is your measurement floor, and you subtract it from Step 2.
 
 ### Step 2 — HOLD (this is the armed case)
 
 ```
 hpf hold
-beam off
 ```
-…wait 3 s, then:
-```
-beam on
-```
+…wait 3 s, then run **the same bidirectional ramp**.
 
 **Record the same numbers.** ⚠ **Do not linger in HOLD** — the node floats and drifts at
-~2.3 mV/s (board 2), so take the step within a few seconds of switching to HOLD.
+~50–250 pA of switch leakage (2.2–11 mV/s at ADC5 across three boards), so take both ramps
+within a few seconds of switching to HOLD.
+
+🔵 **Step 1 and Step 2 are the same stimulus with only the baseline freeze changed, so
+Step 2 − Step 1 is Q8 isolated *and* the ground artifact cancelled.** That subtraction is the
+whole point of doing both; a HOLD capture on its own cannot separate them.
 
 ### Step 3 — the number
 
@@ -1272,8 +1300,39 @@ and the error is in the safe direction, which is the worst kind.
   🔵 **Compare like with like:** §3.5 gives the threshold as a voltage at the comparator input
   (that is what `vref × duty + Vos` solves for), so pad 2 is the node both numbers live on.
 
-**The TRACK-vs-HOLD difference is the Q8 effect isolated** — same stimulus, same optical
+**The TRACK-vs-HOLD difference is the Q8 effect isolated** -- same stimulus, same optical
 conditions, only the baseline freeze changes.
+
+### 🔴 RESULT -- board 3, 2026-08-31: **FAILS.** Q8 is real and at the predicted size.
+
+| | TRACK | HOLD (armed) |
+|---|---|---|
+| coupling, rising rail | **x3.84 peak** | **x7.43** |
+| does it persist? | **no** -- decays, tau ~ 0.75 s | **yes, permanently** |
+| settled | back to baseline in 3.4 s | +75.0 mV rail -> **+556.9 mV** |
+
+✅ **The ×7.25 analysis was right to 2.5 %**, and ✅ **TRACK works exactly as designed** -- so the
+exposure is the armed window and nothing else.
+
+🔴 **The pass criterion is not close.** "Under 20 % of the §3.5 threshold" would need a
+threshold above **2.8 V** -- 85 % of the DAC's 3.268 V full scale. In practice:
+
+| threshold at the comparator input | rail step that fires it |
+|---|---|
+| 100 mV | **13 mV** |
+| 300 mV | **39 mV** |
+| 1.00 V | **132 mV** |
+
+> ### 🔴 And a rail SAG blinds the detector outright.
+>
+> The coupling is **positive** -- rail up, comparator input up -- so a **falling** rail drives
+> U12B into its negative rail, which is ground. **Measured: it clamps 21 mV below quiescent and
+> then stops**, through a further 120 mV of droop that ×7.43 says should have moved it 870 mV.
+> **While the rail is down, a ball cannot move the comparator input at all.**
+>
+> ⚠ **This is a Phase 6 problem, because strobe bursts sag the rail deliberately.** The sag
+> blinds; the **recovery** is the false-trigger edge. The 500 ms supply-monitor debounce was
+> sized for the sag — nothing yet covers the recovery.
 
 ### If it fails
 
@@ -1342,10 +1401,14 @@ choice is now bad on every board forever.
 
 A square-wave demodulator responds at **odd** harmonics of the carrier, so interference at
 `f_i` folds down to `|f_i − n·f_c|` for odd n. Anything under the **15.39 kHz** LPF corner lands
-in the passband and looks exactly like a ball. The obvious candidate is the LM5157 boost at a
-nominal **1.055 MHz**.
+in the passband and looks exactly like a ball. The obvious candidate is the LM5157 boost.
 
-| n | n·f_c | distance from 1.055 MHz | folds? |
+⚠ **The table below is the DESIGN-TIME analysis, computed 2026-08-28 against an assumed nominal
+of 1.055 MHz. That nominal has since been contradicted by measurement — see the box under it,
+and §6 of `PROGRESS.md`.** It is kept because the *method* is right and it is how you should
+reason about any interferer; the frequency it uses is not.
+
+| n | n·f_c | distance from the ASSUMED 1.055 MHz | folds? |
 |---|---|---|---|
 | 7 | 729.2 kHz | 325.8 kHz | no |
 | **9** | **937.5 kHz** | **117.5 kHz** | no |
@@ -1355,18 +1418,115 @@ nominal **1.055 MHz**.
 **The nearest odd harmonic is 91 kHz away from the boost, against a 15.4 kHz passband.** The
 boost can drift **−9.6 % or +7.1 %** before anything reaches the LPF.
 
+> ### 🔴 THE 1.055 MHz NOMINAL IS IN DOUBT, AND SO IS THIS MARGIN.
+>
+> **Measured on board 3's +5 V rail, 2026-08-31, beam OFF, 1.52 s at 50 MS/s:** a real periodic
+> source at **801.1 kHz**, with harmonics at **1602.9 kHz (2.001×)** and **2404.8 kHz (3.002×)** --
+> exact multiples, so it is a switcher, not a resonance. It is **dithered**, which is why it
+> shows as a smooth ~70 kHz-wide hump rather than a line, and why a peak-picker finds nothing.
+>
+> | | |
+> |---|---|
+> | band where the rail is > 1.5x its local floor | **762.9 - 833.1 kHz** |
+> | centre / spread | **798.0 kHz, ±35.1 kHz (±4.4 %)** |
+> | amplitude on +5 V | 0.173 mV peak |
+>
+> **That is ~24 % below the 1.055 MHz this section assumes**, and it rewrites the margin:
+>
+> | | n·f_c | gap to the boost band | drift before it folds |
+> |---|---|---|---|
+> | **n = 7** | 729.2 kHz | **+33.8 kHz** | 🔴 **−2.3 %** |
+> | n = 9 | 937.5 kHz | +104.4 kHz | +11.1 % |
+>
+> 🔴 **−2.3 %, not −9.6 %.** That is *inside* the dither's own ±4.4 % spread and well inside
+> the part-to-part tolerance of a switching oscillator -- so on this reading **the condition this
+> section calls "a real design issue" is already met.**
+>
+> ⚠ **Attribution is not settled.** There are **two** switchers: the LM5157 (L1, drawing straight
+> off +5 V) and the **RP2350's own core buck** (L2 → U3.63 `VREG_LX` → +1V1, fed from +3V3 behind
+> U2's LDO). The LM5157 is likelier because nothing isolates it from +5 V, but a rail measurement
+> cannot separate them. 🔵 **Settle it with the scope on L1 pad 1** -- seconds of work, and it
+> decides whether the −2.3 % margin is real.
+>
+> ### ✅ RESOLVED EMPIRICALLY 2026-08-31 -- the margin is moot, the coupling is too weak.
+>
+> The `scan carrier 95000 115000 9` sweep **inadvertently ran the worst case.** At the top three
+> points the 7th harmonic of the carrier lands **inside** the measured 762.9-833.1 kHz switcher
+> band -- not near it, *inside* it:
+>
+> | f_c | 7 x f_c | vs switcher band | sigma_noise |
+> |---|---|---|---|
+> | 110.0 kHz | **770.0 kHz** | 🔴 inside | **4.57** -- the LOWEST of the nine |
+> | 112.5 kHz | **787.5 kHz** | 🔴 inside | 4.73 |
+> | 115.0 kHz | **805.0 kHz** | 🔴 inside | 4.71 |
+> | 104.1667 (operating) | 729.2 kHz | 33.8 kHz clear | -- |
+>
+> ✅ **Nothing happened.** sigma_noise across all nine rows was **4.57-5.08, a 10.8 % spread with
+> no outlier**, and the three rows sitting directly on the switcher were among the quietest.
+>
+> 🔵 **So the 0.173 mV of switcher ripple on +5 V does not reach the detector**, and the
+> −2.3 % drift margin above is a paper number rather than an operational risk. Keep the analysis
+> -- it is still the right way to reason about a *larger* interferer, and Phase 6 will load the
+> boost far harder than an idle bench -- but **do not treat −2.3 % as a blocker.**
+
 🔵 **Note what this does *not* let you do.** Odd harmonics are `2·f_c` = **208 kHz** apart, so
 *any* carrier near 100 kHz has one within ±104 kHz of the boost. **You cannot design the
 collision away by choosing a different frequency in this band** — you can only know where you
 sit. That is why this is a verification, not an optimisation.
 
-### Check 1 — measure the actual boost frequency. On every board.
+### Check 1 -- measure the actual boost frequency. On every board.
+
+> ⚠ **De-prioritised 2026-08-31 — do Check 2 first, and this may not be needed.** Check 2 is the
+> *direct* test of the question that matters ("does anything fold in?"), and on board 3 it came
+> back **PASS with the 7th harmonic sitting inside the switcher band**. Check 1 is the
+> *explanation* you need only when Check 2 fails. 🔵 It is still worth recording when a scope
+> is already on the node for the snubber decision, and it is the only way to settle whether the
+> 801 kHz measured on the rail is the LM5157 or the RP2350's core buck.
 
 `BENCH.md` Phase 0.5 step d already puts a scope on the LM5157 SW node to decide the snubber.
-**Record the frequency while you are there** — it has never been written down on any board, and
+**Record the frequency while you are there** -- it has never been written down on any board, and
 it is the number the ±9.6 % margin above has to cover.
 
+#### Where exactly
+
+The SW node is `Net-(D2-A)`: **U1 pins 12/13/14, L1 pad 1, D2 pad 2 (anode), R11 pad 1.**
+
+| pad | why | |
+|---|---|---|
+| **L1 pad 1** | the 4.7 µH inductor -- physically the largest pad on the net | ✅ **use this** |
+| **R11 pad 1** | 🔵 **an EMPTY pad** -- R11 (5R1) and C9 (100 pF) are both **DNP**, so the snubber footprint is bare copper on the SW node with nothing to slip onto | ✅ good alternative |
+| D2 pad 2 | SS26 anode, also large | ok |
+| U1 12/13/14 | WQFN-16 | ❌ don't |
+
+⚠ **L1 pad 2 is +5V, not SW.** Identify pad 1 by continuity to D2's anode.
+
+> ### 🔴 Use a 10× probe with the SHORT ground spring. Not the alligator lead.
+>
+> The node swings **0 → ~36.5 V at ~1 MHz** with fast edges. A 6-inch ground lead has enough
+> inductance to **manufacture ringing that is not on the board** — and this same step is what
+> decides whether to fit the R11/C9 snubber. 🔴 **A long ground lead will make you fit a snubber
+> you do not need,** which is the exact opposite of what the measurement is for.
+>
+> 🔴 **Nothing conductive near D12** — its cathode is at 36 V through R77.
+
+#### Board state and what to expect
+
+`on` is all it takes: **EN/UVLO is a fixed R3/R4 divider off +5 V (~1.65 V), so the boost
+free-runs whenever the rail is up.** No command arms it.
+
+| | |
+|---|---|
+| nominal | **1.055 MHz**, set by **R8 = 20 kΩ** on RT (pin 5) |
+| safe band | **954 kHz – 1130 kHz** (the −9.6 % / +7.1 % margin above) |
+| output | ~36 V — R1/R2 = 150 K/4 K3 on FB gives 1.0 V × 35.9 |
+
+⚠ **Check whether it is switching continuously or in BURSTS before you read the frequency off
+the screen.** At idle the 36 V rail has almost no load, so if the MODE pin has it in a
+PFM/burst mode you will measure the **burst repetition rate**, not `f_SW`. Zoom into a single
+burst and measure edge-to-edge inside it.
+
 - [ ] SW-node frequency, board 1 / 2 / 3 → `PROGRESS.md` §6
+- [ ] Does it ring? amplitude and ring frequency → the R11/C9 snubber decision
 
 🔴 **If the part-to-part spread approaches ±7 %, the margin is not comfortable and this becomes
 a real design issue** — worth a snubber, a spread-spectrum option, or a deliberate carrier move
@@ -1385,12 +1545,39 @@ Nine points across ±10 kHz of the operating carrier, ~5 minutes.
 | what you want | what it means |
 |---|---|
 | `sigma_noise` **flat** across the nine rows | nothing is folding nearby |
-| `beam_noise_ratio` **near 1.0 and flat** | the beam is not adding noise over ambient |
+| `beam_noise_ratio` **flat** across the nine rows | no frequency-specific noise |
 | a **spike** in either | something folds close to the carrier — investigate before shipping |
 
-🔵 **`beam_noise_ratio` is the column that matters here**, not SNR. It is σ_noise ÷ σ_floor,
-i.e. how much noise the *beam* adds over ambient — which is exactly the folding this check
-exists to find. Ignore `BEST by SNR`; it is answering a question you have stopped asking.
+> ⚠ **Read `beam_noise_ratio` for FLATNESS, not for closeness to 1.0.** An earlier revision of
+> this table asked for "near 1.0", which **a lit LED cannot deliver** — turning on an optical
+> signal necessarily adds shot and driver noise over a dark baseline. **Board 3 reads 2.86–3.41
+> and that is a PASS**, because it is uniform. A *uniform* elevation is the beam's own noise; a
+> **spike in one row** is folding. The firmware says this too, since 2026-08-31.
+
+🔵 **Ignore `BEST by SNR`.** It answers a question you have stopped asking, and worse, **it
+cannot answer it**: the scan chops the beam, halving its average duty, so the LED cools through
+the run and `signal` climbs monotonically with *elapsed time* regardless of frequency. On board
+3 all nine rows came out pre-sorted (546.0 → 574.4), which is 1-in-363,000 by chance. **The SNR
+ranking is a clock, not a spectrum.**
+
+### ✅ RESULT — board 3, 2026-08-31: **PASS**, and it tested the worst case by accident
+
+| | |
+|---|---|
+| σ_noise across 95–115 kHz | **4.57 – 5.08**, mean 4.74 — **10.8 % spread, no outlier** |
+| `beam_noise_ratio` | 2.86 – 3.41, flat |
+| verdict | ✅ **nothing folds into the passband anywhere in the band** |
+
+🔵 **Better than a pass — the sweep ran the collision head-on without meaning to.** At the top
+three points the 7th harmonic lands *inside* the measured 762.9–833.1 kHz switcher band:
+
+| f_c | 7 × f_c | | σ_noise |
+|---|---|---|---|
+| **110.0 kHz** | **770.0 kHz** | 🔴 inside the switcher band | **4.57 — the LOWEST of the nine** |
+| 112.5 kHz | 787.5 kHz | 🔴 inside | 4.73 |
+| 115.0 kHz | 805.0 kHz | 🔴 inside | 4.71 |
+
+✅ **Nothing happened**, so the switcher's 0.173 mV of rail ripple does not reach the detector.
 
 ⚠ **Run it warm** (the command refuses below 5 minutes) and **with the phase model fitted**, or
 every point is measured at a different phase error and the comparison is meaningless.

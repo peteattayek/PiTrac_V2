@@ -1,6 +1,6 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// safe_state.h â€” everything dangerous idles safe.
+// safe_state.h -- everything dangerous idles safe.
 //
 // safe_state_init() is the FIRST thing main() calls, before stdio, before
 // clocks are touched, before anything else. Every fault path calls
@@ -16,7 +16,7 @@ typedef enum {
     FAULT_NONE = 0,
     FAULT_USB_POWER_ONLY,     // tried to latch while running on USB-C
     FAULT_RAIL_COLLAPSE,      // +5V_IN sagged right after closing the latch
-    FAULT_SUPPLY_LOST,        // +5V_IN went away WHILE latched â€” we were being
+    FAULT_SUPPLY_LOST,        // +5V_IN went away WHILE latched -- we were being
                               // back-fed from USB through D8. Latch dropped.
     FAULT_NO_PI_DETECTED,     // POWERING_ON timed out with no Pi 3V3
     FAULT_PI_BOOT_TIMEOUT,    // Pi 3V3 up but userspace never signalled
@@ -33,7 +33,7 @@ typedef enum {
 void safe_state_init(void);
 
 // Same, but also drops the +5V latch. Use from fault paths where the rail
-// itself is suspect. NOTE: with a Pi seated this is a hard power cut â€” the
+// itself is suspect. NOTE: with a Pi seated this is a hard power cut -- the
 // power FSM prefers an orderly shutdown and only calls this as a last resort.
 // Drive everything to its safe level and drop the rail.
 //

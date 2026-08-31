@@ -160,7 +160,7 @@ sees real power. All measurements are DMM/scope — the CLI plays no part.
 | a | USB-C only, J1 unpowered, **J2 off** | +3V3 = **3.30 V**. Draw < 100 mA. TP2 = **0 V**. TP6/TP7 ≈ **0 V — up to a few hundred mV is normal**, see below. |
 | b | Unplug USB. PSU **5.2 V, limit 0.3 A** into J1. J2 off. | Only the +3V3 domain draws. Verify +5V is genuinely **0 V at J8.2**. Yellow LED still blinks — the MCU runs on +3V3 with no USB. |
 | c | Raise limit to **2 A**. Fit **J2** (forces latch on). | +5V = 5.2 V · VIR = **36 V** at J3 (open circuit is fine) · TP2 = **12 V** (11.4–12.7) · TP6/TP7/TP9/TP10 all = **+5VA / 2**, i.e. **≈2.59 V** on a 5.2 V rail — see note |
-| d | Scope the LM5157 SW node | Decide the R11/C9 snubber (DNP by default — fit only if it rings) |
+| d | Scope the LM5157 SW node — **L1 pad 1** or **R11 pad 1** (empty pad; R11/C9 are DNP). 🔴 **10× probe, short ground spring** — a long ground lead invents ringing and makes you fit a snubber you do not need | Decide the R11/C9 snubber (DNP by default — fit only if it rings), **and record f_SW**. ⚠ The 1.055 MHz nominal is **unconfirmed** — a rail measurement on board 3 found the only switcher tone at **801 kHz** (2026-08-31). This is the measurement that settles which converter that is. See `BENCH_P3_DETECT.md` §3.6 Check 1 |
 | e | Remove J2 | +5V drops, board returns to standby cleanly |
 
 Soft-start takes ~86 ms and there is ~670 µF of VIR bulk, so a 1 A limit may

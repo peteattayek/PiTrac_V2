@@ -1,4 +1,4 @@
-﻿# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 PiTrac contributors
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
 if(WIN32)
@@ -17,7 +17,7 @@ endif()
 cmake_minimum_required(VERSION 3.13)
 
 # ---------------------------------------------------------------------------
-# PiTrac "Second Board To Rule Them All" â€” RP2354B firmware
+# PiTrac "Second Board To Rule Them All" -- RP2354B firmware
 #
 # Build:
 #   cmake -B build -G Ninja -DPICO_BOARD=pitrac_ltb_v1 -DPICO_PLATFORM=rp2350
@@ -86,7 +86,7 @@ target_link_libraries(pitrac
     pico_flash
 )
 
-# stdio on USB only. UART1 goes to the Pi and will carry a framed binary protocol â€”
+# stdio on USB only. UART1 goes to the Pi and will carry a framed binary protocol --
 # never let printf() onto it.
 pico_enable_stdio_usb(pitrac 1)
 pico_enable_stdio_uart(pitrac 0)

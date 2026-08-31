@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
 #include "power_fsm.h"
 #include "board.h"
@@ -90,7 +90,7 @@ static bool take_long_press(void)  { bool e = s_evt_long_press;  s_evt_long_pres
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Sustained supply monitor â€” runs the whole time the latch is closed.
+// Sustained supply monitor -- runs the whole time the latch is closed.
 //
 // The one-shot check at latch time cannot see the supply being pulled afterwards.
 // When that happens Q3 stays closed and the +5V rail is quietly back-fed from USB
@@ -117,7 +117,7 @@ static bool supply_lost(void) {
         if (!s_v5_low) { s_v5_low = true; s_t_v5_low_since = t; return false; }
         return (t - s_t_v5_low_since) >= V5_LOW_DEBOUNCE_MS;
     }
-    s_v5_low = false;   // recovered â€” e.g. a strobe burst finished
+    s_v5_low = false;   // recovered -- e.g. a strobe burst finished
     return false;
 }
 
@@ -140,7 +140,7 @@ static void pi_shutdown_assert(bool on) {
 //
 // RPI5_ON is the good fallback: at halt the SoC is off and Pi GPIO22 reverts to
 // its default pull-down, so this reads low regardless of what the 3.3 V rail
-// does â€” and independently of whether the systemd unit's ExecStop ran.
+// does -- and independently of whether the systemd unit's ExecStop ran.
 //
 // Which one is primary gets decided by a one-line measurement in Phase 8.2
 // (`sudo halt`, then DMM on J8.1). Until then, accept either.
@@ -232,7 +232,7 @@ void power_fsm_step(void) {
         case PS_SHUTTING_DOWN:
             if (supply_lost()) {
                 // Cannot sustain the rail from USB, so an orderly Pi shutdown is
-                // not on the table â€” it would take 15 s of trying to run a Pi 5
+                // not on the table -- it would take 15 s of trying to run a Pi 5
                 // through a 1 A diode. Drop the latch now and make the reason
                 // legible instead of letting it brown out mysteriously.
                 fault_raise(FAULT_SUPPLY_LOST);
@@ -253,7 +253,7 @@ void power_fsm_step(void) {
         // The guard that makes USB-C bench work safe. On USB alone the board
         // sits at ~4.6-4.7 V through D8, which is below the Pi 5's brownout
         // threshold AND below the boost's 4.74 V UVLO. Latching there browns
-        // out everything. Firmware-enforced only â€” there is no hardware interlock.
+        // out everything. Firmware-enforced only -- there is no hardware interlock.
         float v5 = adc_read_5vin_volts();
         if (v5 < V5_MIN_FOR_LATCH) {
             fault_raise(FAULT_USB_POWER_ONLY);
@@ -301,7 +301,7 @@ void power_fsm_step(void) {
         }
         if (since(s_t_state) >= PI_DETECT_WINDOW_MS) {
             // No Pi on the header. This is the normal bench path for phases
-            // 1-6 and it stays in the final firmware â€” it is how development
+            // 1-6 and it stays in the final firmware -- it is how development
             // always happens.
             s_pi_present = false;
             s_pi_seen    = false;

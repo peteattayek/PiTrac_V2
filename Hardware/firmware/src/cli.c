@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
 #include "cli.h"
 #include "board.h"
@@ -91,9 +91,9 @@ static const char *k_help =
     "  beam on | off\n"
     "  beam freq <hz>             default 104167 (TOP=1439, exact 30% at level 432)\n"
     "  beam duty <pct>            IMMEDIATE. use 'beam ramp' above ~5%\n"
-    "  beam ramp <pct> [step_ms]  gradual, 1% steps â€” watch temps as it climbs\n"
+    "  beam ramp <pct> [step_ms]  gradual, 1% steps -- watch temps as it climbs\n"
     "  beam phase <ticks>         demod offset, 0..TOP (1 tick = 6.67 ns = 0.25 deg)\n"
-    "  beam clamp                 1 kHz / 50% â€” scope TP5 to measure the U9 clamp (Q1)\n"
+    "  beam clamp                 1 kHz / 50% -- scope TP5 to measure the U9 clamp (Q1)\n"
     "  beam sweep <f0> <f1> <n> <dwell_ms>   duty-fidelity sweep (Q2)\n"
     "\n"
     "\n"
@@ -204,7 +204,7 @@ static void cmd_stat(void) {
             printf("           +5V_IN last sampled %lu ms ago\n", (unsigned long)age);
     }
     // A watchdog that can reset the board -- and so drop the latch -- must be
-    // visible. It is armed only while no Pi is powered; see service.h.
+    // visible. It defaults OFF and is armed only deliberately; see service.h.
     printf("watchdog : %s%s\n",
            pitrac_watchdog_enabled() ? "ARMED (1 s)" : "off",
            pitrac_watchdog_enabled() ? "   a reset here DROPS THE LATCH" : "");
@@ -256,7 +256,7 @@ static void cmd_capture(int argc, char **argv) {
         printf("ERR: mask 0x%02x includes a non-analog channel.\n", mask);
         printf("     valid mask is 0x%02x (ch 0,1,2,5,7).\n", ADC_VALID_MASK);
         printf("     ch3=GPIO43 RPI5_SHUTDOWN and ch4=GPIO44 Threshold_PWM are\n");
-        printf("     digital outputs on this board â€” sampling them is a bug.\n");
+        printf("     digital outputs on this board -- sampling them is a bug.\n");
         return;
     }
 
@@ -286,12 +286,12 @@ static void cmd_capture(int argc, char **argv) {
     printf("# end\n");
 
     if (adc_capture_overran())
-        printf("WARN: FIFO overran â€” round-robin phase lost, samples are mislabeled.\n");
+        printf("WARN: FIFO overran -- round-robin phase lost, samples are mislabeled.\n");
 }
 
 // Pins that the CLI is allowed to drive. PIN_PULSE_LIMIT_DIS is deliberately
 // absent: it defeats the strobe hardware watchdog and there must be no path to
-// it until Phase 6d. PIN_LATCH_CONTROL is absent too â€” go through the FSM so
+// it until Phase 6d. PIN_LATCH_CONTROL is absent too -- go through the FSM so
 // the USB-power guard cannot be bypassed.
 static bool gpio_writable(uint p) {
     switch (p) {
@@ -425,7 +425,7 @@ static void cmd_adc5vcal(int argc, char **argv) {
             adc_set_5vin_scale(meas / raw);
             printf("scale <- %.4f  (raw %.3f V, measured %.3f V)\n",
                    (double)adc_get_5vin_scale(), (double)raw, (double)meas);
-            printf("NOTE: RAM only â€” not persisted to flash yet.\n");
+            printf("NOTE: RAM only -- not persisted to flash yet.\n");
         } else printf("ERR: implausible values\n");
     
 }
@@ -485,7 +485,7 @@ static void cmd_panel(int argc, char **argv) {
         }
 
         if (!power_rails_ready())
-            printf("NOTE: +5V rail is open (state %s) â€” the panel LEDs are fed from the\n"
+            printf("NOTE: +5V rail is open (state %s) -- the panel LEDs are fed from the\n"
                    "      SWITCHED rail and will stay dark. Use 'on' first.\n",
                    power_state_name(power_fsm_state()));
 
@@ -495,7 +495,7 @@ static void cmd_panel(int argc, char **argv) {
             for (int p = 0; p <= 100; p += 5) { panel_override(p, p); pitrac_yield_ms(80); }
             for (int p = 100; p >= 0; p -= 5) { panel_override(p, p); pitrac_yield_ms(80); }
             panel_override(-1, -1);
-            printf("done â€” both returned to automatic\n");
+            printf("done -- both returned to automatic\n");
             return;
         }
 
@@ -507,17 +507,17 @@ static void cmd_panel(int argc, char **argv) {
                    "it runs to completion (~24 s) then returns to automatic.\n");
             for (int p = 0; p < PANEL_PAT__COUNT; p++) {
                 printf("  %-9s %s\n", panel_pattern_name(p),
-                       p == PANEL_PAT_OFF      ? "(dark â€” what STANDBY looks like)"      :
-                       p == PANEL_PAT_POWERING ? "(fast breath â€” rails coming up)"       :
-                       p == PANEL_PAT_BOOTING  ? "(slow breath â€” waiting on the Pi)"     :
-                       p == PANEL_PAT_RUNNING  ? "(solid â€” ready)"                       :
-                       p == PANEL_PAT_SHUTDOWN ? "(fast blink â€” teardown)"               :
-                                                 "(double-blink â€” fault)");
+                       p == PANEL_PAT_OFF      ? "(dark -- what STANDBY looks like)"      :
+                       p == PANEL_PAT_POWERING ? "(fast breath -- rails coming up)"       :
+                       p == PANEL_PAT_BOOTING  ? "(slow breath -- waiting on the Pi)"     :
+                       p == PANEL_PAT_RUNNING  ? "(solid -- ready)"                       :
+                       p == PANEL_PAT_SHUTDOWN ? "(fast blink -- teardown)"               :
+                                                 "(double-blink -- fault)");
                 panel_force_pattern(p);
                 for (int i = 0; i < 400; i++) { pitrac_yield_ms(10); }
             }
             panel_force_pattern(-1);
-            printf("done â€” ring returned to automatic (now: %s)\n",
+            printf("done -- ring returned to automatic (now: %s)\n",
                    panel_pattern_name(panel_pattern_for_state()));
             return;
         }
@@ -1256,9 +1256,11 @@ static void cmd_wdog(int argc, char **argv) {
         else { printf("usage: wdog [on|off]\n"); return; }
     }
     printf("watchdog : %s\n", pitrac_watchdog_enabled() ? "ARMED (1 s)" : "off");
-    printf("  Armed only while no Pi is powered: on this board a watchdog reset\n"
-           "  is a HARD POWER CUT, not a recovery -- GPIO15 goes high-Z, R12 pulls\n"
-           "  the latch open. See service.h.\n");
+    printf("  OFF by default. On this board a watchdog reset is a HARD POWER CUT,\n"
+           "  not a recovery -- GPIO15 goes high-Z, R12 pulls the latch open, and\n"
+           "  whatever was being measured dies with it. See service.h.\n");
+    printf("  Arm it for PHASE 6, where a hang with 9 A through a linear-mode FET\n"
+           "  is a genuinely different risk from a hang on the bench.\n");
     printf("  'bootsel' and 'reset' disarm it themselves; you do not need to.\n");
 }
 
@@ -1360,7 +1362,7 @@ static void cmd_beam(int argc, char **argv) {
                            : (bon ? "counting (slice is live)"
                                   : "*** COUNTING - beam is off! ***"));
             }
-            printf("rails    : %s\n", power_rails_ready() ? "up" : "DOWN â€” beam cannot run");
+            printf("rails    : %s\n", power_rails_ready() ? "up" : "DOWN -- beam cannot run");
             return;
         }
 
@@ -1377,7 +1379,7 @@ static void cmd_beam(int argc, char **argv) {
                    (unsigned long)beam_actual_freq_hz(), (double)(beam_duty() * 100.0f));
             if (beam_duty() > 0.05f)
                 printf("NOTE: >5%% duty from cold. Watch the ballast resistors (R73/R74)\n"
-                       "      and D11 â€” ~0.95 A average from +5V at 30%%.\n");
+                       "      and D11 -- ~0.95 A average from +5V at 30%%.\n");
             return;
         }
 
@@ -1436,7 +1438,7 @@ static void cmd_beam(int argc, char **argv) {
                    (double)(beam_duty() * 100.0f), (double)(d * 100.0f), (unsigned long)ms);
             printf("WATCH R73/R74 and D11. Ctrl the PSU if current climbs unexpectedly.\n");
             beam_ramp_duty(d, ms);
-            printf("done â€” duty now %.2f %%\n", (double)(beam_duty() * 100.0f));
+            printf("done -- duty now %.2f %%\n", (double)(beam_duty() * 100.0f));
             return;
         }
 
@@ -1451,7 +1453,7 @@ static void cmd_beam(int argc, char **argv) {
         }
 
         // Q1: how wide is the U9 one-shot clamp really? Command a high phase far
-        // longer than the clamp and scope TP5 â€” the LED pulse is the answer.
+        // longer than the clamp and scope TP5 -- the LED pulse is the answer.
         if (!strcmp(argv[1], "clamp")) {
             beam_configure(1000, 0.50f, beam_phase_ticks());
             {
@@ -1498,7 +1500,7 @@ static void cmd_beam(int argc, char **argv) {
                    (unsigned long)f0, (unsigned long)f1, (unsigned long)n,
                    (unsigned long)dw, (double)(beam_duty() * 100.0f));
             printf("Measure the ACTUAL duty at TP5 at each step and note where it stops\n");
-            printf("tracking the commanded value â€” that frequency is the answer to Q2.\n\n");
+            printf("tracking the commanded value -- that frequency is the answer to Q2.\n\n");
             printf("  step   requested   actual   TOP    level\n");
 
             beam_enable(true);
@@ -1511,12 +1513,12 @@ static void cmd_beam(int argc, char **argv) {
                        (unsigned long)(beam_duty() * (beam_top() + 1)));
                 pitrac_yield_ms(dw);
             }
-            printf("\nsweep done â€” beam left running at %lu Hz. 'beam off' when finished.\n",
+            printf("\nsweep done -- beam left running at %lu Hz. 'beam off' when finished.\n",
                    (unsigned long)beam_actual_freq_hz());
             return;
         }
 
-        printf("? 'beam %s' â€” try 'help'\n", argv[1]);
+        printf("? 'beam %s' -- try 'help'\n", argv[1]);
     
 }
 

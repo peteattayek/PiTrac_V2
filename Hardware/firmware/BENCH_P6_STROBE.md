@@ -46,6 +46,48 @@ rail-down and the next `on` relit D11 with no `beam on`. If you are on an older 
 
 ---
 
+## 🔴 Two things measured in Phase 3 that land squarely on this phase
+
+> ### 1. A rail sag BLINDS the detector, and its recovery can fake a ball.
+>
+> **Measured on board 3, 2026-08-31 (`BENCH_P3_DETECT.md` §3.6b).** `+2V5` is `+5VA/2`, so the
+> whole detector chain's reference rides the rail. While the HPF is in **HOLD** — which is what
+> *armed* means — a rail step reaches the comparator input amplified **×7.43**:
+>
+> | | |
+> |---|---|
+> | measured coupling, HOLD | **×7.43** (+75.0 mV rail → +556.9 mV at the comparator input) |
+> | rail step that fires a 300 mV threshold | **39 mV** |
+> | U12B's downward headroom before it saturates | **21 mV** |
+>
+> 🔴 **Bursts sag the rail deliberately, and that is exactly the mechanism.** Two distinct
+> effects, and they happen in this order:
+>
+> 1. **During the sag the detector is BLIND.** U12B is single-supply with its gain taken to
+>    ground, so its quiescent output *is* the bottom of its range. A falling rail saturates it
+>    after 21 mV and it stops responding — measured through a further 120 mV of droop that
+>    ×7.43 says should have moved it 870 mV.
+> 2. **The RECOVERY is the false-trigger edge**, because the comparator triggers on a *rising*
+>    input. A 200 mV sag recovering swings the comparator input ~1.5 V.
+>
+> ✅ **Why this is not a Phase 3 blocker:** the strobe fires in `SHOT_FIRING`, long after
+> `SHOT_TRIGGERED`, so both effects land outside the armed window. 🔴 **What it constrains
+> here:** do not re-arm while the rail is still recovering from a burst. The 500 ms supply-monitor
+> debounce was sized for the sag; **nothing yet covers the recovery.** Budget a re-arm delay.
+>
+> 🔧 The board fix is `NEXT_BOARD_REV.md` **CR-02** (regulate +2V5), now a measured
+> requirement rather than a proposal.
+
+> ### 2. This is where the MCU watchdog earns its place — arm it deliberately.
+>
+> The watchdog **defaults OFF** as of 2026-08-31. On the bench a watchdog reset just drops the
+> latch in the middle of a measurement, and a hung firmware is obvious to an operator sitting in
+> front of the board. 🔴 **A hang with 9 A running through a linear-mode FET is a different
+> risk entirely**, so arm it here — in the strobe code, deliberately — rather than relying on an
+> ambient default nobody remembers is on. `wdog on` arms it for a session; `stat` shows the state.
+
+---
+
 ## The one rule
 
 **`PULSE_LIMIT_DISABLE` (GPIO27) stays 0 through 6a–6c.**

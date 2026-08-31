@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
 #include "safe_state.h"
 #include "board.h"
@@ -43,7 +43,7 @@ void safe_state_init(void) {
     // ---- Outputs, most dangerous first -----------------------------------
 
     // +5V rail off. R12 10K also pulls this down through reset, so the rail is
-    // open before we ever execute â€” this just makes it explicit and holds it.
+    // open before we ever execute -- this just makes it explicit and holds it.
     out_low(PIN_LATCH_CONTROL);
 
     // Strobe pulse gate low. R57 1K backs this up.
@@ -58,7 +58,7 @@ void safe_state_init(void) {
     out_low(PIN_GATE_PWM);
 
     // Beam off. R69 1K backs this up. Note the beam cannot be driven DC even
-    // if this were stuck high â€” U9 clamps it. See board.h fact #5.
+    // if this were stuck high -- U9 clamps it. See board.h fact #5.
     out_low(PIN_MOD_PWM);
     out_low(PIN_DEMOD_PWM);
 
@@ -126,15 +126,15 @@ void safe_state_init(void) {
     // The internal one is load-bearing. See board.h fact #1.
     in_pull(PIN_PWR_TOGGLE, true, false);
 
-    // Comparator has an external 10K pull-up (R103) â€” no internal pull.
+    // Comparator has an external 10K pull-up (R103) -- no internal pull.
     in_pull(PIN_D_COMPARATOR, false, false);
 
-    // Pi 3V3 presence comes from an external R45/R44 divider â€” no internal pull.
+    // Pi 3V3 presence comes from an external R45/R44 divider -- no internal pull.
     in_pull(PIN_PI_3V3_SENSE, false, false);
 
     // Defined level with the connectors unpopulated.
     //
-    // CAUTION (board.h fact #8): RP2350 erratum E9 â€” an input with the internal
+    // CAUTION (board.h fact #8): RP2350 erratum E9 -- an input with the internal
     // pull-down enabled and a high-impedance source can latch near 2.2 V rather
     // than reading 0. These three pins are exactly that configuration when J4
     // is empty and no Pi is seated. Treat them as advisory, never as an

@@ -31,6 +31,28 @@
 #include <stdint.h>
 
 #define CAL_CHOP_HZ_DEFAULT   20u    // see the droop note in cal.c
+
+// Settle time before a sigma measurement in `scan carrier`.
+//
+// THIS IS THE SAME BUG detect_hpf_test() WAS REBUILT TO ELIMINATE, and it was
+// still here. The sigma windows used 50 ms against an HPF whose tau is 660 ms --
+// 0.076 tau, four times worse than the 200 ms that was already condemned in
+// detect.h. So sigma did not measure noise at all: it measured the HPF still
+// recovering from the beam step 50 ms earlier, and the slope of that recovery is
+// PROPORTIONAL TO THE SIGNAL. That is why board 3's scan reported sigma_noise
+// tracking `signal` at a fixed ratio of ~17.8 across eight of nine rows.
+//
+// It also made the result depend on MEASUREMENT ORDER, exactly as the old
+// hpf test did. The first row was the only one preceded by a settled beam --
+// the operator's 5 minute warm-up -- so it alone read a true noise floor (0.26
+// codes against 90-134 for every later row) and won "BEST by SNR" by a factor of
+// 225. The scan was ranking position in the loop, not carrier frequency.
+//
+// Sizing: the residual slope over a 130 ms window must fall under the ~0.5 code
+// noise floor. After k tau the drop across the window is V*exp(-k)*0.197, so with
+// V ~ 2400 codes k must exceed 6.2. 5000 ms is 7.6 tau -> 0.24 codes. Matching
+// HPF_TEST_SETTLE_MS is deliberate: same filter, same problem, same number.
+#define CAL_SIGMA_SETTLE_MS 5000u
 #define CAL_PHASE_POINTS      64u
 #define CAL_CHOP_CYCLES        8u
 

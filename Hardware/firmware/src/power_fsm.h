@@ -1,6 +1,6 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// power_fsm.h â€” Phase 1 (latch) + Phase 1b (Pi soft-shutdown).
+// power_fsm.h -- Phase 1 (latch) + Phase 1b (Pi soft-shutdown).
 //
 // This is the highest-risk-to-the-Pi code in the project: the +5V latch IS the
 // Pi's power switch. Every failure path here is meant to be proven against a

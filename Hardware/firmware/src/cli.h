@@ -1,6 +1,6 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// cli.h â€” line-based bench CLI over USB-CDC.
+// cli.h -- line-based bench CLI over USB-CDC.
 //
 // This is the spine of the whole bring-up. `capture` in particular turns the
 // board into a logging DSO, which is what makes the analog phases tractable

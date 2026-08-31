@@ -78,9 +78,24 @@ void pitrac_abort_clear(void);
 // HARD POWER CUT to the Pi, not a recovery. A firmware hang would become a
 // corrupted filesystem.
 //
-// The policy decided in Phase 1b: enable the reset action ONLY while the Pi is
-// down. With a Pi up, a hung MCU is the lesser evil -- the rail stays on, the
-// Pi keeps running, and the operator can intervene.
+// DEFAULT: OFF. Changed 2026-08-31, after arming it by default cost a reflash
+// cycle and two bench sessions.
+//
+// The Phase 1b policy was "enable the reset action ONLY while the Pi is down",
+// on the reasoning that with a Pi up a hung MCU is the lesser evil. That policy
+// is about protecting a PI. On the bench there is no Pi, so what it actually
+// buys is a reset when the firmware hangs -- and per the paragraph above, that
+// is a power cut in the middle of whatever was being measured. A hang is
+// already obvious to an operator sitting in front of the board.
+//
+// It also broke `bootsel`: reset_usb_boot() reaches BOOTSEL through the
+// watchdog's own scratch registers, so an armed watchdog fought it.
+//
+// WHERE IT EARNS ITS PLACE IS PHASE 6, where a hang with 9 A through a
+// linear-mode FET is a genuinely different risk. Arm it there, deliberately,
+// in the strobe code. `wdog on` arms it for a session; `stat` shows the state.
+// Phase 8 should re-evaluate the Pi-present rule next to the FSM transitions
+// it depends on, in power_fsm.c.
 //
 // This was left as a comment in main() until 2026-08-28 and is implemented
 // here now because pitrac_service() is the one function guaranteed to run on

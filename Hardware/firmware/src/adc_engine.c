@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
 #include "adc_engine.h"
 #include "board.h"
@@ -270,7 +270,7 @@ void adc_engine_init(void) {
 
     // Only initialise pins that are genuinely analog inputs. GPIO43 and GPIO44
     // are ADC-capable but are driven as digital outputs on this board
-    // (RPI5_SHUTDOWN and Threshold_PWM) â€” calling adc_gpio_init() on them would
+    // (RPI5_SHUTDOWN and Threshold_PWM) -- calling adc_gpio_init() on them would
     // disable their digital drivers and break both features.
     adc_gpio_init(ADC_FIRST_GPIO + ADC_CH_CURRENT);
     adc_gpio_init(ADC_FIRST_GPIO + ADC_CH_5VIN);
