@@ -23,7 +23,7 @@ fails() {
     fi
     ((checks+=1))
 }
-for name in common.sh inspect-platform.sh configure-cameras.sh benchmark-storage.sh record-dual.sh verify-recording.sh; do
+for name in common.sh inspect-platform.sh configure-cameras.sh benchmark-storage.sh record-dual.sh verify-recording.sh buffered-writer.sh; do
     script=$SCRIPTS/$name
     bash -n "$script"
     bash "$script" --help > "$work/help.txt"
@@ -76,6 +76,36 @@ sed 's/pad4: SOURCE$/pad4: SINK/' "$work/cfe-topology.txt" > "$work/cfe-wrong-pa
 fails has_cfe_raw_source_pad < "$work/cfe-wrong-pad.txt"
 printf '%s\n' '- entity 10: pisp-fe (5 pads, 7 links, 0 routes)' '        pad4: SOURCE' > "$work/cfe-missing.txt"
 fails has_cfe_raw_source_pad < "$work/cfe-missing.txt"
+check_idle_fixture() (
+    local outcome=$1
+    fuser() {
+        [[ $# == 2 && $1 == -s && $2 == /dev/null ]] || return 2
+        case $outcome in
+            idle) return 1 ;;
+            busy) return 0 ;;
+            usage) echo 'No process specification given' >&2; return 1 ;;
+            error) echo 'Cannot inspect process table' >&2; return 2 ;;
+        esac
+    }
+    idle_graph '            device node name /dev/null'
+)
+check_idle_fixture idle
+((checks+=1))
+fails check_idle_fixture busy
+fails check_idle_fixture usage
+fails check_idle_fixture error
+fails idle_graph 'No device nodes in this graph'
+fails idle_graph 'device node name /dev/pitrac-camera-nonexistent-fixture'
+for headroom in 0 19 101 020 25.0 invalid; do fails validate_headroom "$headroom"; done
+for count in 0 7 33 032 8.0 invalid; do fails validate_buffer_count "$count"; done
+validate_buffer_count 8
+((checks+=1))
+validate_buffer_count 32
+((checks+=1))
+printf 'schema\t1\n' > "$work/legacy-headroom.tsv"
+equal "$(recorded_headroom "$work/legacy-headroom.tsv")" 25
+printf 'min_headroom_percent\t20\nmin_headroom_percent\t25\n' > "$work/duplicate-headroom.tsv"
+fails recorded_headroom "$work/duplicate-headroom.tsv"
 cat > "$work/format.txt" <<'EOF'
 Format Video Capture:
     Width/Height      : 1456/1088
@@ -214,6 +244,20 @@ done
 bash "$SCRIPTS/verify-recording.sh" --run "$run"
 equal "$(< "$run/status")" VERIFIED_RECORDING
 cp "$run/storage.tsv" "$work/storage-original.tsv"
+cp "$run/run.tsv" "$work/run-original.tsv"
+sed 's/mbps\t500/mbps\t397.022302/' "$work/storage-original.tsv" > "$run/storage.tsv"
+manifest
+fails bash "$SCRIPTS/verify-recording.sh" --run "$run"
+printf 'min_headroom_percent\t20\n' >> "$run/run.tsv"
+manifest
+bash "$SCRIPTS/verify-recording.sh" --run "$run"
+equal "$(< "$run/status")" VERIFIED_RECORDING_REDUCED_HEADROOM
+equal "$(value "$run/verification.tsv" min_headroom_percent)" 20
+sed 's/min_headroom_percent\t20/min_headroom_percent\t19/' "$run/run.tsv" > "$work/invalid-headroom.tsv"
+cp "$work/invalid-headroom.tsv" "$run/run.tsv"
+manifest
+fails bash "$SCRIPTS/verify-recording.sh" --run "$run"
+cp "$work/run-original.tsv" "$run/run.tsv"
 sed 's/mbps\t500/mbps\t100/' "$work/storage-original.tsv" > "$run/storage.tsv"
 manifest
 fails bash "$SCRIPTS/verify-recording.sh" --run "$run"

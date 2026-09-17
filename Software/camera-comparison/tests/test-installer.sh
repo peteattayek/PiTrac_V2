@@ -40,6 +40,16 @@ bash -n "$SCRIPTS/install-mira220.sh"
 ((checks+=1))
 bash "$SCRIPTS/install-mira220.sh" --help > "$fixture_root/help.txt"
 ((checks+=1))
+(
+    source "$SCRIPTS/install-mira220.sh"
+    manual_config
+) > "$fixture_root/manual-config.txt"
+primary_config=$(awk '
+    /^\[pi5\]$/ {active=1; next}
+    active && /^\[all\]$/ {exit}
+    active {print}
+' "$fixture_root/manual-config.txt")
+equal "$primary_config" $'camera_auto_detect=0\ndtoverlay=imx296,cam0\ndtoverlay=mira220-nir'
 
 # Mirror the 6.18 modpost buffer/size contract, not the MD4 calculation itself.
 cat > "$fixture_root/srcversion-format.c" <<'EOF'
@@ -74,6 +84,32 @@ for fingerprint in "" "${observed_srcversion:0:22}" "${observed_srcversion}00" \
     fails check_srcversion "$fingerprint"
     fails check_ownership "$fingerprint"
 done
+
+# mkdir -m controls the leaf, not intermediate directories created by -p.
+(
+    umask 077
+    mkdir -p -m 0755 -- "$fixture_root/old-mask/updates/pitrac-mira220-nir"
+)
+equal "$(stat -c %a "$fixture_root/old-mask/updates")" 700
+equal "$(stat -c %a "$fixture_root/old-mask/updates/pitrac-mira220-nir")" 755
+mkdir -m 0750 -- "$fixture_root/existing-parent"
+(
+    umask 077
+    source "$SCRIPTS/install-mira220.sh"
+    mkdir -p -m 0755 -- "$fixture_root/new-mask/updates/pitrac-mira220-nir"
+    printf 'fixture metadata\n' > "$fixture_root/new-mask/updates/modules.dep.fixture"
+    mkdir -p -m 0755 -- "$fixture_root/existing-parent/child"
+    XDG_CACHE_HOME=$fixture_root/cache-base
+    kernel=$fixture_kernel
+    new_cache > "$fixture_root/cache.log"
+    printf '%s\n' "$work" > "$fixture_root/cache-path"
+)
+equal "$(stat -c %a "$fixture_root/new-mask/updates")" 755
+equal "$(stat -c %a "$fixture_root/new-mask/updates/pitrac-mira220-nir")" 755
+equal "$(stat -c %a "$fixture_root/new-mask/updates/modules.dep.fixture")" 644
+equal "$(stat -c %a "$fixture_root/cache-base/pitrac-mira220-nir")" 700
+equal "$(stat -c %a "$(< "$fixture_root/cache-path")")" 700
+equal "$(stat -c %a "$fixture_root/existing-parent")" 750
 
 cat > "$fixture_source/Makefile" <<'EOF'
 .PHONY: all
@@ -126,4 +162,4 @@ if (
 fi
 ((checks+=1))
 
-printf 'All %d installer checks passed (C formatting, actual Pi fingerprint and GNU Make fixtures; no installation).\n' "$checks"
+printf 'All %d installer checks passed (permissions, C formatting, actual Pi fingerprint and GNU Make fixtures; no installation).\n' "$checks"

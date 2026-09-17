@@ -19,6 +19,7 @@ trap 'rc=$?; if ((rc)); then printf "INVALID: verification failed\n" > "$run/sta
 seconds=$(value "$run/run.tsv" seconds)
 warmup=$(value "$run/run.tsv" warmup)
 sink=$(value "$run/run.tsv" sink)
+headroom=$(recorded_headroom "$run/run.tsv")
 positive_integer "$seconds" && ((seconds <= 60)) || die "Invalid recording duration."
 [[ $warmup == 5 && ( $sink == 0 || $sink == 1 ) ]] || die "Unsupported warm-up or recording mode."
 [[ $(value "$run/completion.tsv" controls_readback_passed) == 1 &&
@@ -61,7 +62,7 @@ done
 [[ $(value "$run/run.tsv" expected_total_bytes) == "$total" ]] || die "Total byte budget does not match files."
 if ((!sink)); then
     validate_storage_report "$run/storage.tsv" "$(value "$run/run.tsv" boot_id)" \
-        "$(value "$run/run.tsv" kernel)" "$(value "$run/run.tsv" filesystem_device)" "$total" "$rate"
+        "$(value "$run/run.tsv" kernel)" "$(value "$run/run.tsv" filesystem_device)" "$total" "$rate" "$headroom"
 fi
 overlap=$(awk -v first="$first" -v last="$last" 'BEGIN {printf "%.6f", last-first}')
 awk -v overlap="$overlap" -v seconds="$seconds" 'BEGIN {exit overlap < seconds}' ||
@@ -72,11 +73,21 @@ awk -v a="$min_exposure" -v b="$max_exposure" 'BEGIN {exit b-a > 1100/74.25+0.00
     kv overlap_seconds "$overlap"
     kv exposure_difference_us "$(awk -v a="$min_exposure" -v b="$max_exposure" 'BEGIN {printf "%.6f", b-a}')"
     kv calculated_exposure_not_optically_measured 1
+    kv min_headroom_percent "$headroom"
+    if ((!sink)); then
+        kv measured_headroom_percent "$(awk -v measured="$(value "$run/storage.tsv" mbps)" -v rate="$rate" \
+            'BEGIN {printf "%.6f", (measured*1e6/rate-1)*100}')"
+    fi
 } > "$run/verification.tsv"
 if ((sink)); then
     printf 'VERIFIED_SINK_ONLY\n' > "$run/status"
     echo "Verified capture-to-sink evidence only; storage was not tested."
 else
-    printf 'VERIFIED_RECORDING\n' > "$run/status"
+    if ((headroom < 25)); then
+        printf 'VERIFIED_RECORDING_REDUCED_HEADROOM\n' > "$run/status"
+        echo "Reduced-headroom qualification: explicitly requested $headroom%, not the default 25%."
+    else
+        printf 'VERIFIED_RECORDING\n' > "$run/status"
+    fi
     echo "Verified recording: exact formats, frame counts, sizes, FPS, controls and $overlap seconds of overlap."
 fi

@@ -9,24 +9,25 @@ It is separate from the existing board designs and microcontroller firmware in
 
 ## Camera comparison
 
-Start with the [Pi 5 dual-camera setup guide](camera-comparison/README.md) for a
+Start with the [tested quick start](camera-comparison/QUICKSTART.md) or the
+[full setup guide](camera-comparison/README.md) for a
 standalone, free-running NIR comparison between:
 
-- ams OSRAM Mira220 EVM-SE, monochrome, on CAM/DISP0;
-- INNO-MAKER CAM-MIPI296RAW-TRIGGER, monochrome IMX296, on CAM/DISP1.
+- ams OSRAM Mira220 EVM-SE, monochrome, on CAM/DISP1;
+- INNO-MAKER CAM-MIPI296RAW-TRIGGER, monochrome IMX296, on CAM/DISP0.
 
 The guide preserves an existing Raspberry Pi OS Trixie installation and begins
 with inspection of the actual running kernel. It covers active cooling, power,
 PCIe Gen 2 NVMe storage, a source-pinned Mira220 driver, reversible manual boot
 configuration, direct V4L2 raw capture, and evidence-based verification.
 
-**Hardware validation is pending.** The pinned driver source compiled on the
-target's 6.18.50 kernel with a valid source fingerprint, but installation stopped
-at an incorrect fingerprint-length check that has now been corrected;
-successful installation and camera capture remain unverified.
-Trixie alone is not a compatibility guarantee;
-the guide includes mandatory stop points and an unresolved upstream Pi 5
-streaming report. Do not reflash or upgrade the kernel just to follow it.
+**A 60-second simultaneous disk recording has passed on the inspected Pi 5**
+with kernel 6.18.50, Mira220 RAW8 at approximately 89.080 fps and IMX296 packed
+RAW10 at approximately 60.375 fps. This required 32 capture buffers per camera,
+128 MiB asynchronous writers, and an explicitly approved 20% minimum storage
+headroom (measured 24.32%, below the default 25%). See the guides for the exact
+conditions, desktop-camera contention, and retained evidence. This does not
+establish compatibility with every kernel or module revision.
 
 ## License
 

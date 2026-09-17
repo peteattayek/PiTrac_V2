@@ -9,13 +9,13 @@ and its current kernel until inspection establishes what is actually present.
 The inspected target now boots `6.18.50+rpt-rpi-2712`; still check the running
 kernel on each target rather than assuming it matches.
 
-**Status: target validation pending.** The rates and exposure times below are
-source-derived targets, not measurements. The pinned driver and overlay compiled
-on the target's 6.18.50 kernel and produced a valid 23-character `srcversion`.
-Installation stopped before copying driver files because an earlier installer
-incorrectly required 24 characters. The corrected validator below still requires
-a successful target installation. No successful Mira220 stream,
-NVMe benchmark, or 60-second dual recording has been demonstrated here.
+**Status: tested on the inspected Pi 5.** See [the tested quick start](QUICKSTART.md)
+for the current wiring, commands and retained results. Both cameras passed a
+60-second simultaneous full-resolution NVMe recording on 6.18.50, using 32 mmap
+buffers and a 128 MiB asynchronous writer per camera. The SSD's measured 24.32%
+headroom was accepted under an explicitly approved 20% requirement; the default
+25% requirement remains unchanged. This is validation of that specific profile,
+not a blanket guarantee for every board, kernel or storage device.
 A [public Mira220 Pi 5/CFE streaming failure][mira-issue] remains open as of
 2026-09-17. A compiled module, compiled overlay, successful probe, or
 `CONFIGURED` message is not proof of capture.
@@ -40,8 +40,8 @@ A [public Mira220 Pi 5/CFE streaming failure][mira-issue] remains open as of
 
 | Camera | Physical Pi port | Full active image | Sensor bus format | Memory fourcc | Timing target | Unity analogue gain code |
 |---|---|---|---|---|---|---|
-| Mira220 EVM-SE mono | CAM/DISP0 | 1600 x 1400 | `Y8_1X8` | `GREY`, native RAW8 | about 89.080 fps, VBLANK 18 | `1` = fixed 1x |
-| INNO-MAKER IMX296 mono | CAM/DISP1 | 1456 x 1088 | `Y10_1X10` | `Y10P`, native packed RAW10 | about 60.376 fps, VBLANK 30 | `0` = 0 dB = 1x |
+| Mira220 EVM-SE mono | CAM/DISP1 | 1600 x 1400 | `Y8_1X8` | `GREY`, native RAW8 | about 89.080 fps, VBLANK 18 | `1` = fixed 1x |
+| INNO-MAKER IMX296 mono | CAM/DISP0 | 1456 x 1088 | `Y10_1X10` | `Y10P`, native packed RAW10 | about 60.376 fps, VBLANK 30 | `0` = 0 dB = 1x |
 
 Both cameras run continuously at their own rates. Their starts, frame numbers,
 and exposure instants are **not synchronized**. Verification requires actual
@@ -78,7 +78,7 @@ sizes for actual storage requirements, not these rounded figures.
 
 Shut down the Pi and **remove power from the Pi and any independently powered
 camera/accessory before attaching or removing CSI cables**. No hot-plugging.
-Connect Mira220 to physical **CAM/DISP0**, IMX296 to **CAM/DISP1**. These names
+The inspected wiring has Mira220 on **CAM/DISP1**, IMX296 on **CAM/DISP0**. These names
 refer to the board sockets, not `/dev/video0` or an application's camera index.
 Do not add extra camera power unless the exact module manual requires it.
 
@@ -99,6 +99,7 @@ PowerShell. Copy or check out this repository onto the existing Pi. The example
 location is `$HOME/PiTrac_V2`; adjust it to your checkout.
 
 ```bash
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 cd "$HOME/PiTrac_V2/Software/camera-comparison"
 EVIDENCE="$HOME/camera-comparison-evidence-$(date +%Y%m%d-%H%M%S)"
 mkdir -- "$EVIDENCE"
@@ -110,7 +111,8 @@ bash scripts/inspect-platform.sh --output "$EVIDENCE/inspect-before"
 ```
 
 Use **GNU Bash 5.1 or newer**, not `sh`. The helpers use Bash features and GNU
-utilities. Keep the shell variables for later steps. After reboot or a new
+utilities. The explicit `PATH` also makes administrative utilities such as
+`modinfo` available in a non-interactive SSH shell. Keep the shell variables for later steps. After reboot or a new
 terminal, set `EVIDENCE` to the **same existing evidence parent**, and return to
 this working directory; do not create it again.
 
@@ -216,7 +218,7 @@ and inspect the proposed dependency transaction:
 ```bash
 sudo apt-get update
 apt-get --simulate install --no-upgrade \
-  bash v4l-utils util-linux coreutils psmisc fio gawk kmod \
+  bash v4l-utils util-linux coreutils psmisc fio mbuffer gawk kmod \
   build-essential git device-tree-compiler sudo
 ```
 
@@ -226,7 +228,7 @@ After approving the package list:
 
 ```bash
 sudo apt-get install --no-upgrade \
-  bash v4l-utils util-linux coreutils psmisc fio gawk kmod \
+  bash v4l-utils util-linux coreutils psmisc fio mbuffer gawk kmod \
   build-essential git device-tree-compiler sudo
 ```
 
@@ -404,12 +406,16 @@ resolving conflicting camera settings:
 
 ```ini
 camera_auto_detect=0
-dtoverlay=mira220-nir,cam0
-dtoverlay=imx296
+dtoverlay=imx296,cam0
+dtoverlay=mira220-nir
 ```
 
-CAM1 is the default for the stock IMX296 overlay; do **not** add an unsupported
-`cam1` parameter. Omit trigger-mode and `always-on` options. Confirm that no
+CAM1 is the default for these overlays; do **not** add an unsupported `cam1`
+parameter. If your physical wiring is reversed, use
+`dtoverlay=mira220-nir,cam0` and `dtoverlay=imx296` instead, not both pairs.
+The installer prints the tested pair first and the reversed pair as an
+alternative; use only the pair matching the physical sockets.
+Omit trigger-mode and `always-on` options. Confirm that no
 included file or later conditional section re-enables conflicting overlays or
 auto-detection. Do not append a second copy blindly or change unrelated settings.
 
@@ -482,16 +488,30 @@ An empty directory named "nvme" is not evidence of an NVMe mount. If storage is
 not prepared, make a separate, reviewed storage setup decision; this guide does
 not provide destructive partitioning or formatting commands.
 
+On the inspected Pi, the SD card and SSD share filesystem UUIDs. The SSD's
+distinct partition identifier, not the duplicate filesystem UUID, was used to
+mount it. See [the tested quick start](QUICKSTART.md) for that machine's mount
+and partition details; do not reuse its identifiers on another system.
+
 Once you have verified the source and available space, create a new parent on
 that mounted filesystem:
 
 ```bash
 NVME_RUNS="$NVME_MOUNT/pitrac-comparison-$(date +%Y%m%d-%H%M%S)"
 findmnt --mountpoint "$NVME_MOUNT" -o TARGET,SOURCE,FSTYPE,OPTIONS &&
-  mkdir -- "$NVME_RUNS"
+if [[ -e $NVME_RUNS || -L $NVME_RUNS ]]; then
+  printf 'Choose a new capture directory: %s\n' "$NVME_RUNS" >&2
+  false
+else
+  sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0700 -- "$NVME_RUNS"
+fi
 ```
 
-Proceed only if both commands succeed. Run captures as your normal Pi user with
+Stop if the mount check fails or identifies the wrong filesystem. The scoped
+`sudo install` is needed when the filesystem root belongs to root; it creates
+only the new, user-owned capture directory. Do not change ownership or permissions
+of the filesystem root or existing data. Proceed only if creation succeeds.
+Run captures as your normal Pi user with
 the required video-device permissions and a valid user-owned `XDG_RUNTIME_DIR`.
 Do not use `sudo` for every helper or recursively loosen device/directory
 permissions to hide access problems. Close other camera applications first.
@@ -572,6 +592,11 @@ crop left by another application can constrain `S_FMT`; simply requesting
 1456 x 1088 on the video node does not restore that crop. Failure to restore the
 full active rectangle is a stop condition, not permission to record a smaller
 image.
+
+On a desktop OS, PipeWire/WirePlumber may hold camera subdevices even when no
+preview window is visible. Inspect the reported holders and use the
+[documented pause/restore procedure](QUICKSTART.md#after-a-reboot) when approved.
+Do not bypass the busy-device check or run every capture as root.
 
 ### 1. Prove IMX296 alone
 
@@ -655,7 +680,7 @@ Repeat into new directories after SSD cache/temperature stabilize. A single
 fast cold-cache result; use representative sustained performance for the
 immediately following captures.
 
-The recording helper requires:
+By default, the recording helper requires:
 
 - measured throughput at least **1.25 times** the negotiated combined
   `sizeimage * fps` rate (roughly 400 MB/s before padding);
@@ -673,7 +698,10 @@ choose a larger `--gib` value (1..256) only after checking free space.
 ### 5. Record 10 seconds, then 60 seconds to disk
 
 Do not combine `--sink` with `--storage-report`. Use the report from your most
-recent representative benchmark:
+recent representative benchmark. These generic examples keep the default
+25% throughput requirement. For the inspected SSD's explicitly approved 20%
+profile, add `--min-headroom-percent 20` to both recording commands, as shown in
+[QUICKSTART.md](QUICKSTART.md). The lower requirement is never selected automatically.
 
 ```bash
 STORAGE_REPORT="$NVME_RUNS/storage-test-01/storage.tsv"
@@ -703,8 +731,25 @@ extra retained frames remain in the files; the helper does not trim to an exact
 shared interval. For 60 seconds, budget about 61 seconds of raw data plus padding
 and required headroom, not just 19.2 GB.
 
-Capture uses eight mmap buffers per sensor, with RAM checks and bounded process
-timeouts, rather than accumulating an entire run in memory. Disk completion
+Capture requests 32 mmap buffers per sensor by default (`--buffers 8..32`),
+with RAM checks and bounded process timeouts. Disk recording additionally uses
+one `mbuffer` writer per camera, with a fixed 128 MiB ring and 1 MiB transfer
+blocks. Data travels through private FIFOs, not mixed stdout/log streams. On the
+tested camera pair this is approximately 385 MiB of data buffering plus overhead,
+not a whole-run RAM buffer. Producer and writer failures both invalidate the run;
+all writers must drain successfully before verification and flushing.
+
+The default minimum throughput headroom remains 25%. An operator can explicitly
+select `--min-headroom-percent 20` (allowed range 20..100); this choice is included
+in the checksummed manifest and enforced by offline verification. Results below
+25 are labelled `VERIFIED_RECORDING_REDUCED_HEADROOM`. The 25% free-space and
+benchmark-size margins are not lowered by this option. The inspected SSD needed
+the explicitly approved 20% option; do not edit a benchmark report to bypass a gate.
+
+Direct writes with eight buffers failed the initial disk trial, and 32 buffers
+alone still missed one frame over 60 seconds. The asynchronous writers resolved
+that failure without relaxing any frame-rate, cadence, size or error checks.
+The failed trials remain invalid. Disk completion
 includes a filesystem flush. Interrupted, partial, or unverified runs are invalid;
 do not rename them to imply success.
 
@@ -722,7 +767,7 @@ self-describing image headers.
 | `<sensor>.tsv` | Sensor identity/nodes, native depth, exact dimensions/fourcc/stride/sizeimage, requested and estimated exposure, control codes, timing, kernel and boot identity |
 | Configuration `<sensor>.before-topology.txt`, `.topology.txt`, `.controls.txt`, `.video-format.txt` | Discovery and negotiated media/format evidence |
 | Run `<sensor>.raw` | Concatenated retained buffers, disk mode only; sink mode writes image bytes to `/dev/null` |
-| `run.tsv` | Schema, camera selection, requested duration, five-frame warm-up, sink/disk mode, byte/rate budgets, frame targets, boot/kernel/filesystem identity and v4l2-utils version |
+| `run.tsv` | Schema, camera selection, duration/warm-up, byte/rate budgets, frame targets, requested mmap buffers, writer/buffer details, required headroom, boot/kernel/filesystem identity and v4l2-utils version |
 | `<sensor>.capture.log` | Required original verbose V4L2 buffer evidence, not optional progress output |
 | `<sensor>.frames.tsv` | Parsed retained sequence, monotonic device timestamp, bytes used, and flags |
 | `<sensor>.summary.tsv` | Retained count, measured FPS, first/last timestamp, span, `min_interval_us` and `max_interval_us` |
@@ -730,8 +775,9 @@ self-describing image headers.
 | `storage.tsv`, `fio.txt` | Benchmark identity/bytes/elapsed MB/s and fio details; the accepted TSV is copied into disk runs |
 | `completion.tsv` | Completion/flush timing, durability mode and live control-readback result |
 | `manifest.sha256` | Checksums of the run/configuration inputs and disk storage report; not a raw-image checksum or proof of provenance |
-| `verification.tsv` | Measured common timestamp overlap and calculated inter-camera exposure difference, explicitly not optically measured |
-| Run `status` | `VERIFIED_SINK_ONLY`, `VERIFIED_RECORDING`, or an invalid/failure state |
+| `verification.tsv` | Measured common overlap, calculated exposure difference (not optically measured), and required/measured storage headroom |
+| `*.writer.log` | Asynchronous writer diagnostics; a writer failure invalidates the recording |
+| Run `status` | `VERIFIED_SINK_ONLY`, `VERIFIED_RECORDING`, `VERIFIED_RECORDING_REDUCED_HEADROOM`, or an invalid/failure state |
 
 The recorder invokes [verification](scripts/verify-recording.sh) automatically;
 the explicit verification commands above demonstrate repeatable checking.
@@ -866,6 +912,35 @@ not a silent change to this recording profile.
 | Insufficient common overlap | Compare retained timestamps and startup delays; a longer file alone is not proof of adequate overlap |
 | Interrupted or invalid run | Keep status, partial bytes and all logs; retry with a new output directory after resolving the cause |
 
+### Installation directory permissions
+
+Older installer versions used `umask 077` with `mkdir -p -m 0755`. GNU `mkdir`
+applies that explicit mode to the leaf only: a new intermediate `updates`
+directory could become root-only `0700`, blocking normal-user verification.
+The installer now uses conventional `022` installation permissions while its
+cache and per-attempt directories remain explicitly `0700`. It checks directory
+access before treating protected paths as absent. Tests cover this exact case
+and preservation of pre-existing directory modes.
+
+For a partial failure, inspect `namei -l`, directory contents and the ownership
+record first. Do not recursively chmod the kernel tree or delete the ownership
+record. On the inspected Pi, `updates` contained only the empty installer-created
+subdirectory; its mode alone was repaired to `0755`, followed by the corrected
+installer's `--remove` and `--install`. Driver selection, permissions, checksums
+and initramfs checks then passed. A different directory layout requires review.
+
+### Desktop camera clients
+
+On the inspected desktop OS, PipeWire and WirePlumber held camera subdevices
+open even with the old PiTrac web service disabled. They were temporarily
+runtime-masked with operator approval. See [the quick start](QUICKSTART.md) for
+pause/restore commands and their effect on audio/screen sharing.
+
+PSmisc 23.7 `fuser` rejects a `--` separator and returns the same status as
+"no users." The helper now uses validated absolute device paths without that
+separator and rejects diagnostic output instead of treating a usage error as
+an idle camera. Do not bypass the busy-device check.
+
 To remove this setup, first stop captures and preserve evidence. Disable
 `mira220-nir` in **every** boot-config scope/include; also keep other Mira220
 overlays/auto-detection from loading a Mira module during removal. Compare
@@ -915,6 +990,7 @@ Run the [capture-helper fixtures](tests/test-helpers.sh) and the
 ```bash
 bash tests/test-helpers.sh
 bash tests/test-installer.sh
+bash tests/test-writer.sh
 ```
 
 They exercise shell syntax, argument/error paths, timing calculations and
@@ -927,11 +1003,15 @@ configuration/ABI settings, the command-local retry and build-error propagation.
 They need a C compiler (`cc`, supplied by the existing build prerequisites), but
 do not compile or install a real kernel module. No Python or CMake test
 setup is needed.
+The installer also tests directory creation under a restrictive caller umask
+and private cache permissions. The writer tests use the installed `mbuffer`
+with real FIFOs, verify byte-exact transfer including an unaligned final block,
+and reject output overwrite and invalid input types.
 **Fixtures are schema/logic tests, not hardware validation**: synthetic logs
 and sparse fixture files are not evidence of photons, sensor streams, sustained
 storage, or a successful Pi kernel build.
 
-Target acceptance remains pending until recorded evidence establishes:
+For a new target, acceptance still requires evidence establishing:
 
 1. exact-kernel vendor build/install and correct module/overlay after reboot;
 2. each sensor alone, then both together, passing sink verification;
@@ -940,6 +1020,10 @@ Target acceptance remains pending until recorded evidence establishes:
    FPS within 1%, no sequence gaps/error buffers, exact sizes, fixed controls
    and successful flush;
 5. no unresolved power/thermal or format/metadata substitutions.
+
+The inspected system passed these capture checks with the explicitly recorded
+20% storage-headroom exception described above. See [QUICKSTART.md](QUICKSTART.md)
+for measured rates, counts, overlap, data locations and operational prerequisites.
 
 Keep actual kernel/package/module versions, inspection reports, logs and
 experiment notes with the results. Update the tested matrix in

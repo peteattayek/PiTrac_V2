@@ -4,7 +4,8 @@
 set -euo pipefail
 export LC_ALL=C
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-umask 077
+# System module/dependency files need normal permissions; new_cache is explicitly private.
+umask 022
 
 readonly REPOSITORY=https://github.com/ams-OSRAM/mira220_v4l2_driver.git
 readonly COMMIT=aeedd655d12f6698000416aa6fd94b6f4dfa7b16
@@ -59,8 +60,10 @@ Usage: install-mira220.sh --check | --install | --remove | --help
              loaded. Run on the recorded kernel; headers are not needed.
   --help     Show this help without platform checks.
 
-Candidate only: NOT target-built or hardware/streaming-validated. Other kernels,
-including 6.12, are refused. No OS upgrades/reflash, libcamera replacement,
+The documented 6.18.50 profile passed dual-camera capture; see QUICKSTART.md
+for its buffering and explicitly reduced storage-headroom conditions.
+This installer does not test capture. Other 6.18 releases remain candidates;
+6.12 and other kernel families are refused. No OS upgrades/reflash, libcamera replacement,
 packaged-file overwrite, module blacklist, config.txt edits, unload, or reboot.
 The module name remains mira220; the overlay is uniquely mira220-nir.dtbo.
 Only the stock Trixie auto_initramfs layout is supported, not custom initramfs
@@ -83,16 +86,20 @@ sections/overlays first. Back up every file you will edit, using a new backup
 name (for example: sudo cp -n /boot/firmware/config.txt /boot/firmware/config.txt.before-mira220-nir).
 Verify the backup exists and is correct; do not overwrite an earlier backup.
 Resolve conflicting camera_auto_detect/dtoverlay settings, including includes.
-In a section scoped to this Pi 5 (normally [pi5]), use exactly:
+For the tested wiring (IMX296 on CAM0, Mira220 on CAM1), use a section scoped
+to this Pi 5 (normally [pi5]):
 
 [pi5]
 camera_auto_detect=0
-dtoverlay=mira220-nir,cam0
-dtoverlay=imx296
+dtoverlay=imx296,cam0
+dtoverlay=mira220-nir
 [all]
 
-Mira220 goes on CAM/DISP0; IMX296 defaults to CAM/DISP1. No cam1, mono,
-always-on or trigger override is required. Preserve unrelated settings and
+If your wiring is reversed, replace those TWO dtoverlay lines with:
+dtoverlay=mira220-nir,cam0
+dtoverlay=imx296
+Do not enable both pairs. CAM1 is the default; no cam1, mono, always-on or
+trigger override is required. Preserve unrelated settings and
 conditional sections. Check overlay_prefix/os_prefix/custom boot layouts before
 editing: the installed overlay is /boot/firmware/overlays/mira220-nir.dtbo.
 Only reboot manually after all installation and configuration checks pass.
@@ -113,9 +120,24 @@ root_secure() {
             die "Expected a root-owned path: $path"
         (( (8#$mode & 0022) == 0 )) ||
             die "Refusing group/world-writable system path: $path"
+        if [[ -d $path && ( ! -r $path || ! -x $path ) ]]; then
+            die "System directory is not readable/searchable by the current user: $path. Inspect its ownership and permissions; they are not changed automatically."
+        fi
         [[ $path == / ]] && break
         path=${path%/*}
         [[ -n $path ]] || path=/
+    done
+}
+
+check_module_directories() {
+    local directory
+    root_secure "/lib/modules/$kernel"
+    for directory in "/lib/modules/$kernel/updates" "${module%/*}"; do
+        if exists "$directory"; then
+            [[ -d $directory && ! -L $directory ]] ||
+                die "Expected a non-symlink module directory: $directory"
+            root_secure "$directory"
+        fi
     done
 }
 
@@ -438,6 +460,7 @@ on_exit() {
 
 check_installation() {
     candidate_headers
+    check_module_directories
     scan_config
     if exists "$STATE"; then
         read_ownership
@@ -469,9 +492,7 @@ prepare_mutation() {
     mountpoint -q "$FIRMWARE" || die "$FIRMWARE is not mounted; refusing to write into a hidden/unmounted boot directory."
     root_secure "$FIRMWARE/overlays"
     root_secure /var/lib
-    root_secure "/lib/modules/$kernel"
-    [[ ! -L /lib/modules/$kernel/updates && ! -L ${module%/*} ]] ||
-        die "Refusing symlink in installation-specific module directories."
+    check_module_directories
     scan_config
     [[ $config_has_overlay == 0 ]] ||
         die "Mira overlay is still configured. Restore the scoped camera configuration (including includes) and disable mira220-nir before --install/--remove. Reboot manually with it disabled."
@@ -490,8 +511,6 @@ install_driver() {
     fi
     exists "$OVERLAY" && die "Unowned overlay already exists: $OVERLAY"
     exists "$module" && die "Unowned module already exists: $module"
-    if exists "/lib/modules/$kernel/updates"; then root_secure "/lib/modules/$kernel/updates"; fi
-    if exists "${module%/*}"; then root_secure "${module%/*}"; fi
     new_cache
     build_vendor
     phase=recording-ownership

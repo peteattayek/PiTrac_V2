@@ -40,15 +40,20 @@ lock_cameras() {
     flock -n 9 || die "Another comparison helper is configuring or recording."
 }
 idle_graph() {
-    local node rc
+    local node rc message seen=0
     while read -r node; do
-        if fuser -s -- "$node"; then
+        [[ $node == /dev/* && -c $node ]] || die "Invalid or missing media device node: $node"
+        seen=1
+        # PSmisc fuser does not accept "--"; an absolute device path is unambiguous.
+        if message=$(fuser -s "$node" 2>&1); then
             die "A process has $node open. Close camera applications first."
         else
             rc=$?
-            [[ $rc == 1 ]] || die "Cannot check whether $node is busy (fuser exit $rc)."
+            [[ $rc == 1 && -z $message ]] ||
+                die "Cannot check whether $node is busy (fuser exit $rc): $message"
         fi
     done < <(awk '/device node name/ { print $NF }' <<< "$1")
+    ((seen)) || die "No device nodes found while checking the media graph."
 }
 control() {
     local output
@@ -92,8 +97,27 @@ validate_shared_exposure() {
     timing mira220 "$1" >/dev/null || die "Exposure is outside the shared full-rate comparison range."
     timing imx296 "$1" >/dev/null || die "Exposure is outside the shared full-rate comparison range."
 }
+validate_headroom() {
+    [[ $1 =~ ^[1-9][0-9]{1,2}$ ]] && (($1 >= 20 && $1 <= 100)) ||
+        die "Minimum storage headroom must be an integer from 20 to 100 percent (default 25)."
+}
+validate_buffer_count() {
+    [[ $1 =~ ^[1-9][0-9]?$ ]] && (($1 >= 8 && $1 <= 32)) ||
+        die "Capture buffer count must be an integer from 8 to 32 (default 32)."
+}
+recorded_headroom() {
+    local result
+    # Schema-1 recordings made before this option always required 25 percent.
+    result=$(awk -F '\t' '
+        $1 == "min_headroom_percent" { if (NF != 2) invalid=1; result=$2; n++ }
+        END { if (invalid || n>1) exit 2; if (n==0) print 25; else print result }
+    ' "$1") || die "Malformed storage-headroom record."
+    validate_headroom "$result"
+    printf '%s\n' "$result"
+}
 validate_storage_report() {
-    local report=$1 boot=$2 kernel=$3 filesystem=$4 total=$5 rate=$6 measured tested
+    local report=$1 boot=$2 kernel=$3 filesystem=$4 total=$5 rate=$6 headroom=${7:-25} measured tested
+    validate_headroom "$headroom"
     [[ $(value "$report" schema) == 1 &&
        $(value "$report" method) == fio-direct-random-end-fsync &&
        $(value "$report" filesystem_device) == "$filesystem" &&
@@ -103,9 +127,9 @@ validate_storage_report() {
     measured=$(value "$report" mbps)
     tested=$(value "$report" bytes)
     number "$measured" && number "$tested" || die "Invalid storage measurements."
-    awk -v measured="$measured" -v rate="$rate" -v tested="$tested" -v total="$total" \
-        'BEGIN {exit !(measured*1e6 >= 1.25*rate && tested >= 1.25*total)}' ||
-        die "Storage test is too small or below the required 25% throughput headroom."
+    awk -v measured="$measured" -v rate="$rate" -v tested="$tested" -v total="$total" -v headroom="$headroom" \
+        'BEGIN {exit !(measured*1e6 >= (1+headroom/100)*rate && tested >= 1.25*total)}' ||
+        die "Storage test is too small (needs 125% of run bytes) or below the required $headroom% throughput headroom."
 }
 sensor_entity() {
     awk -v sensor="$1" '
