@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 PiTrac contributors
 # Flash the RP2354 over SWD from a Raspberry Pi 5 using flying leads.

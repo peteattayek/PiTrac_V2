@@ -36,7 +36,14 @@ static adc_mode_t s_mode = ADC_MODE_OFF;
 static float      s_5vin_scale = V5IN_SCALE_DEFAULT;
 static int        s_dma_chan = -1;
 
-static uint16_t   s_buf[ADC_CAPTURE_MAX_SAMPLES];
+// Aligned to its own size because the TRIGGERED capture runs the DMA in ring
+// mode over it, and the hardware wraps the write address by masking -- which
+// only lands back at s_buf[0] if the buffer starts on a 2^RING_BITS boundary.
+// Misalign it and the DMA writes over whatever precedes it in BSS.
+static uint16_t   s_buf[ADC_CAPTURE_MAX_SAMPLES]
+                  __attribute__((aligned(1u << ADC_CAPTURE_RING_BITS)));
+static size_t     s_buf_start;      // where valid data begins (ring wrap)
+static size_t     s_trig_off;       // trigger offset, or SIZE_MAX if untriggered
 static size_t     s_buf_count;
 static uint       s_buf_mask;
 static uint32_t   s_buf_rate;
@@ -448,14 +455,126 @@ size_t adc_capture(uint chan_mask, size_t n_samples, uint32_t rate_hz) {
     s_buf_count = n_samples;
     s_buf_mask  = chan_mask;
     s_buf_rate  = rate_hz;
+    s_buf_start = 0;            // linear fill: the same modulo walk still works
+    s_trig_off  = SIZE_MAX;     // "this one was not triggered"
 
     s_mode = ADC_MODE_OFF;
     adc_engine_set_mode(ADC_MODE_IDLE);
     return n_samples;
 }
 
+// ---------------------------------------------------------------------------
+// Triggered capture. See the long note in adc_engine.h for why this has to run
+// the DMA continuously rather than starting it when the signal gets loud.
+// ---------------------------------------------------------------------------
+
+adc_trig_result_t adc_capture_triggered(uint chan, size_t n_samples,
+                                        uint32_t rate_hz, uint16_t threshold,
+                                        float pre_frac, uint32_t timeout_ms,
+                                        adc_wait_poll_fn poll,
+                                        uint16_t *out_base, size_t *out_trig) {
+    if (chan > 7 || !((ADC_VALID_MASK >> chan) & 1u)) return ADC_TRIG_ERROR;
+    if (s_dma_chan < 0) return ADC_TRIG_ERROR;
+    if (n_samples == 0 || n_samples > ADC_CAPTURE_MAX_SAMPLES)
+        n_samples = ADC_CAPTURE_MAX_SAMPLES;
+    if (pre_frac < 0.0f) pre_frac = 0.0f;
+    if (pre_frac > 0.9f) pre_frac = 0.9f;
+
+    size_t pre  = (size_t)(n_samples * pre_frac);
+    size_t post = n_samples - pre;
+    if (post == 0) return ADC_TRIG_ERROR;
+
+    // Baseline BEFORE arming. Taking it from the ring afterwards would race the
+    // wrap -- at 500 ksps the whole buffer is only 32.8 ms deep.
+    uint16_t base = adc_read_avg(chan, 256);
+    if (out_base) *out_base = base;
+
+    ring_stop();
+    adc_quiesce();
+    adc_select_input(chan);
+    adc_set_round_robin(0);          // single channel: no interleave
+    set_rate(rate_hz);
+    adc_fifo_setup(true, true, 1, true, false);
+
+    dma_channel_config c = dma_channel_get_default_config(s_dma_chan);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_16);
+    channel_config_set_read_increment(&c, false);
+    channel_config_set_write_increment(&c, true);
+    channel_config_set_dreq(&c, DREQ_ADC);
+    // Wrap the WRITE address over the whole buffer. s_buf is aligned to its own
+    // size for exactly this reason.
+    channel_config_set_ring(&c, true, ADC_CAPTURE_RING_BITS);
+
+    // Run "forever" and stop it ourselves. 0x0FFFFFFF samples is 9 minutes at
+    // 500 ksps; the timeout below fires long before that.
+    const uint32_t COUNT0 = 0x0FFFFFFFu;
+    dma_channel_configure(s_dma_chan, &c, s_buf, &adc_hw->fifo, COUNT0, true);
+    adc_run(true);
+
+    const size_t      CAP     = ADC_CAPTURE_MAX_SAMPLES;
+    uint32_t          t0      = to_ms_since_boot(get_absolute_time());
+    uint64_t          scanned = 0;        // absolute sample index already checked
+    uint64_t          trig    = UINT64_MAX;
+    adc_trig_result_t res     = ADC_TRIG_TIMEOUT;
+
+    for (;;) {
+        uint64_t written = COUNT0 - dma_channel_hw_addr(s_dma_chan)->transfer_count;
+
+        if (trig == UINT64_MAX) {
+            // Never scan a sample the DMA has already overwritten. If we fell a
+            // whole buffer behind, that history is gone -- skip forward rather
+            // than trigger on data that is no longer there.
+            if (written > CAP && scanned < written - CAP) scanned = written - CAP;
+
+            for (uint64_t i = scanned; i < written; i++) {
+                uint16_t v = s_buf[i % CAP] & 0x0FFFu;
+                int      d = (int)v - (int)base;
+                if (d < 0) d = -d;
+                if (d >= (int)threshold) { trig = i; break; }
+            }
+            scanned = written;
+
+            // Do not arm until the pre-trigger history actually exists, or a
+            // sound in the first few ms returns a buffer padded with whatever
+            // was in SRAM.
+            if (trig != UINT64_MAX && trig < pre) trig = UINT64_MAX;
+        }
+
+        if (trig != UINT64_MAX && written >= trig + post) { res = ADC_TRIG_OK; break; }
+        if (to_ms_since_boot(get_absolute_time()) - t0 > timeout_ms) break;
+        if (poll && poll()) { res = ADC_TRIG_ABORTED; break; }
+    }
+
+    dma_channel_abort(s_dma_chan);
+    adc_run(false);
+    adc_fifo_drain();
+
+    if (res == ADC_TRIG_OK) {
+        s_buf_start = (size_t)((trig - pre) % CAP);
+        s_buf_count = pre + post;
+        s_trig_off  = pre;
+        if (out_trig) *out_trig = pre;
+
+        s_overran = false;
+        for (size_t i = 0; i < CAP; i++) {
+            if (s_buf[i] & 0x8000u) s_overran = true;
+            s_buf[i] &= 0x0FFFu;
+        }
+        if (s_overran) fault_raise(FAULT_ADC_OVERRUN);
+
+        s_buf_mask = (1u << chan);
+        s_buf_rate = rate_hz;
+    }
+
+    s_mode = ADC_MODE_OFF;
+    adc_engine_set_mode(ADC_MODE_IDLE);
+    return res;
+}
+
 const uint16_t *adc_capture_buffer(void) { return s_buf; }
 size_t          adc_capture_count(void)  { return s_buf_count; }
 uint            adc_capture_mask(void)   { return s_buf_mask; }
 uint32_t        adc_capture_rate(void)   { return s_buf_rate; }
+size_t          adc_capture_start(void)  { return s_buf_start; }
+size_t          adc_capture_trig_offset(void) { return s_trig_off; }
 bool            adc_capture_overran(void){ return s_overran; }

@@ -294,6 +294,7 @@ up once you're iterating; the buttons get old around the twentieth cycle.
 | Doc | What it is |
 |---|---|
 | `START_HERE.md` | You are here — build, flash, first commands |
+| 🔵 **`HANDOFF.md`** | **A new person or model taking over?** Conventions, safety, tooling traps, and the reading order |
 | **`PROGRESS.md`** | **The living record.** What's done, open questions, measurement log. Read this first when resuming. |
 | `BENCH.md` | Phases 0 → 1c: toolchain, rails, latch, Pi shutdown, panel |
 | `BENCH_P2_BEAM.md` | Phase 2 — beam carrier and demod phase lock |
@@ -308,7 +309,8 @@ up once you're iterating; the buttons get old around the twentieth cycle.
 **Current status (2026-08-31): phases 0 through 2 are complete and closed. Phase 3 §3.1–3.6
 are complete on board 3** — including §3.6b (Q8 measured at **×7.43, FAILS**) and §3.6 Check 2
 (`scan carrier` flatness, **PASS**). **§3.7, the first real transits, is next**, with `detect`
-still never run on board 3. See `PROGRESS.md` §10 for the resume block — it is always more
+still never run on board 3. ✅ **Phase 5 mic bring-up is complete** (2026-08-31): front end
+validated, `capture trig` added. See `PROGRESS.md` §10 for the resume block — it is always more
 current than this line.
 
 🔵 **Bringing up a newly assembled board? Use `BRINGUP_NEW_BOARD.md`, not this document.**

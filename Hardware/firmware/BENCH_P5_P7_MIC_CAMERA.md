@@ -4,11 +4,13 @@ Two independent phases sharing a document because neither is large.
 
 ---
 
-> ## 🔴 FIRMWARE STATUS, audited 2026-08-25
+> ## 🟡 FIRMWARE STATUS, audited 2026-08-25, updated 2026-08-31
 >
 > | | Exists today? |
 > |---|---|
 > | **Phase 5 bring-up** (`adc 7`, `capture 0x80`, `tools/scope.py`) | ✅ **yes — runnable now** |
+> | **`capture trig`** — hardware trigger with pre-trigger history | ✅ **added 2026-08-31** |
+> | `tools/scope.py --roll` / `--trig` | ✅ added 2026-08-31 |
 > | Mic onset detection (high-pass, energy window, trigger) | ❌ not written |
 > | Mic-as-veto logic in the firing path | ❌ not written |
 > | **Phase 7 handshake** (`wait_both`, `t_cam`, FIRING FSM, `CAM_TIMEOUT` fault) | ❌ not written |
@@ -16,7 +18,8 @@ Two independent phases sharing a document because neither is large.
 > | I²S digital mic (J5) | ❌ not written, and deliberately deferred |
 >
 > **Phase 5's bring-up section is the one part of this document you can run today**, and it
-> needs nothing but USB power. Everything else is an acceptance procedure for firmware that
+> needs nothing but USB power. ✅ **Bring-up is now COMPLETE on board 3 (2026-08-31)** — see
+> the measured results below. What remains unwritten is the onset detector and the veto logic. Everything else is an acceptance procedure for firmware that
 > has to be written first. If a command below is not in `help`, it does not exist yet.
 
 ## How to read the procedures below
@@ -95,6 +98,31 @@ python tools\scope.py --port COM7 --channel 7 --samples 8000 --volts
 
 ### Step 3 — the four stimuli
 
+> ### 🔵 USE `capture trig`. A hand-started capture cannot catch a clap.
+>
+> Added 2026-08-31. The window here is tens of milliseconds; timing a clap into one you
+> started by pressing Enter is not realistic, and rolling captures are blind during each
+> serial dump. **The board triggers itself:**
+>
+> ```
+> capture trig 7 80
+> ```
+> or, plotted and aligned for you:
+> ```
+> python tools/scope.py --port COM11 --channel 7 --trig 80 --volts --csv captures/clap.csv
+> ```
+>
+> 🔵 **It runs the DMA continuously and stops it AFTER the trigger**, so the buffer holds
+> the baseline and the leading edge -- the part an onset detector has to be tuned on, and the
+> part a start-on-command capture can never contain. 25 % of the window is pre-trigger by
+> default: **8.2 ms at the 500 ksps default, 16.4 ms at 250 ksps.** `t = 0` is the trigger in
+> both the plot and the CSV.
+>
+> Starting thresholds: **60-80** codes for a snap, **150** for a clap, **400+** for a ball.
+>
+> ⚠ There is also `--roll` for a live rolling view, with `--pause-on-event`. Good for "is the
+> mic alive"; it is **not** continuous, and it is not the tool for capturing a transient.
+
 Run the capture for each and keep the CSV (`--csv`):
 
 | Test | Expect | What it tells you |
@@ -115,14 +143,83 @@ Run the capture for each and keep the CSV (`--csv`):
 ⚠ **Keep the clipped/unclipped judgement.** The onset detector's threshold is meaningless if
 the signal it is tuned on was already railed.
 
+## ✅ MEASURED -- board 3, 2026-08-31. The front end is healthy.
+
+| | clap | snap |
+|---|---|---|
+| baseline | **2053 codes / 1.6544 V** | 2053 codes |
+| noise sigma | **0.64 codes (0.52 mV)** | 0.62 codes (0.50 mV) |
+| peak | **+240 codes (193 mV)** | **+297 codes (239 mV)** |
+| SNR | **51.5 dB** | **53.6 dB** |
+| clipped? | no (1854-2293) | no (1960-2350) |
+| decay to 2 % of peak | 2.51 ms | 1.12 ms |
+
+✅ **Noise is SUB-LSB** -- 1 LSB is 0.806 mV and sigma is 0.50 mV, so the analog section is as
+quiet as this ADC can resolve. ✅ **Headroom is ample**: the loudest stimulus used 14.5 % of the
+available swing, leaving about **7x** before clipping.
+
+✅ **The pre-trigger buffer is genuine.** 16.38 ms of history sitting at exactly the baseline,
+sigma 0.62, p-p 5-7 codes -- which is also the proof that the ring-mode DMA and its
+"do not arm until the history exists" guard both work.
+
+### 🔴 45 % of a clap's energy is BELOW the 2.41 kHz high-pass corner
+
+Energy by band, over the 6 ms after onset:
+
+| band | clap | snap |
+|---|---|---|
+| 1.0 - 2.4 kHz (**below the corner**) | 🔴 **44.7 %** | 5.7 % |
+| 2.4 - 5.0 kHz | 25.6 % | **42.3 %** |
+| 5.0 - 10.0 kHz | 11.9 % | 16.3 % |
+| 10.0 - 24.1 kHz | 10.4 % | 20.8 % |
+| spectral peak | **1501 Hz** | 2502 Hz |
+
+The corner is a **single pole**, so sub-corner content still gets through, attenuated -- which
+is why it is visible at all. But **C84/R106 is rejecting the band where a clap's energy lives.**
+
+⚠ **This only matters if a ball impact resembles a clap rather than a snap.** An impact is
+typically a low-frequency thud plus a high-frequency click. **Capture a real ball before
+deciding**: if its energy sits at 1-2 kHz like the clap, the front end is discarding signal and
+a larger C84 is the fix (see `NEXT_BOARD_REV.md` CR-18). If it looks like the snap, the corner
+is right as drawn.
+
+### 🔵 The ring-down is REAL ACOUSTIC CONTENT, not the filter
+
+Predicted before measuring: an impulse into a 2.41-24.1 kHz bandpass should ring at roughly the
+geometric mean, ~7.6 kHz, identically for every stimulus. **That was wrong.** Zero-crossing
+rates across the 0.2-2.0 ms decay:
+
+| clap | **9.4 kHz** |
+|---|---|
+| snap | **24.2 kHz** |
+
+Two stimuli, two rates -- so this is the *sound*, not the amplifier's impulse response.
+✅ **The mic discriminates between stimuli.** ✅ And both decay fully within 2.5 ms, so there is
+**no long enclosure resonance** to widen a veto window.
+
 ## Onset detection
 
 1. One-pole software high-pass to strip the 1.65 V bias and slow drift
 2. Short-term energy over a ~0.5 ms window
-3. Trigger when it exceeds *k* × a slow-moving baseline
+3. Trigger when it exceeds *k* x a slow-moving baseline
 4. Store the onset timestamp plus a short pre/post snippet for the capture report
 
 Tune *k* against the recorded clap/impact captures rather than guessing.
+
+> ### 🔵 TIMESTAMP THE THRESHOLD CROSSING, NOT THE PEAK. Measured 2026-08-31.
+>
+> | | crossing -> peak |
+> |---|---|
+> | clap | **88 us** (10-90 % rise 44 us) |
+> | snap | **300 us** |
+>
+> The peak is whichever oscillation cycle happens to be largest, so it moves with the stimulus
+> and with where the samples land. **The crossing is both earlier and far more repeatable.**
+> ✅ Both events are **positive-going first**, so a signed detector is viable and needs no
+> rectifier.
+>
+> ⚠ Keep it in proportion: at 2.9 us/mm a 30 mm placement uncertainty already swamps the 88 us.
+> This choice buys REPEATABILITY, not accuracy.
 
 ## ⚠ Set expectations correctly
 

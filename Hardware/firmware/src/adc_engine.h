@@ -191,16 +191,64 @@ float    adc_default_5vin_scale(void);
 // ---------------------------------------------------------------------------
 
 #define ADC_CAPTURE_MAX_SAMPLES 16384   // 32 KB of SRAM
+// log2 of the buffer size IN BYTES -- what DMA ring mode wants. 16384 samples
+// x 2 bytes = 32768 = 2^15. Keep these two in step.
+#define ADC_CAPTURE_RING_BITS   15
 
 // Returns the number of samples captured, or 0 on error (bad mask, bad rate).
 // Blocking. Restores ADC_MODE_IDLE afterwards.
 size_t adc_capture(unsigned chan_mask, size_t n_samples, uint32_t rate_hz);
+
+// ---------------------------------------------------------------------------
+// TRIGGERED CAPTURE -- a real oscilloscope trigger, with PRE-trigger history.
+//
+// WHY THE CIRCULAR DMA, rather than "start capturing when the signal is loud":
+// by the time a threshold has been crossed the onset has ALREADY HAPPENED. The
+// interesting part of an impact -- the baseline immediately before it, and the
+// leading edge itself -- is in the past. A start-on-command capture cannot ever
+// contain it. So the DMA runs continuously into a wrapping buffer, and the
+// trigger decides where to STOP, not where to start.
+//
+// The buffer is therefore circular and the valid data does not begin at index
+// 0. Use adc_capture_start() and walk it modulo ADC_CAPTURE_MAX_SAMPLES; the
+// plain adc_capture() path leaves start = 0 so the same walk works for both.
+//
+// `poll` is called every couple of ms while waiting. Return true from it to
+// abort. It exists so this file needs no dependency on the service layer --
+// the CLI passes something that services the FSM and watches for a keypress.
+typedef bool (*adc_wait_poll_fn)(void);
+
+typedef enum {
+    ADC_TRIG_OK = 0,
+    ADC_TRIG_TIMEOUT,      // nothing crossed the threshold in time
+    ADC_TRIG_ABORTED,      // poll() asked to stop
+    ADC_TRIG_ERROR,        // bad arguments, or no DMA channel
+} adc_trig_result_t;
+
+// Single channel only -- interleaving would make the threshold ambiguous.
+//   threshold  : |sample - baseline| in CODES that arms the stop
+//   pre_frac   : fraction of n_samples kept BEFORE the trigger (0.0 .. 0.9)
+//   baseline   : measured internally before arming, and returned via *out_base
+adc_trig_result_t adc_capture_triggered(unsigned chan, size_t n_samples,
+                                        uint32_t rate_hz, uint16_t threshold,
+                                        float pre_frac, uint32_t timeout_ms,
+                                        adc_wait_poll_fn poll,
+                                        uint16_t *out_base, size_t *out_trig);
 
 // Access the buffer filled by the last adc_capture().
 const uint16_t *adc_capture_buffer(void);
 size_t          adc_capture_count(void);
 unsigned        adc_capture_mask(void);
 uint32_t        adc_capture_rate(void);
+
+// Index in adc_capture_buffer() where the valid data BEGINS. Always 0 after a
+// plain adc_capture(); non-zero after a triggered one, because the DMA wrapped.
+// Walk (start + i) % ADC_CAPTURE_MAX_SAMPLES.
+size_t          adc_capture_start(void);
+
+// Offset of the trigger point within the captured data, or SIZE_MAX if the
+// last capture was not triggered.
+size_t          adc_capture_trig_offset(void);
 
 // True if the ADC FIFO overran during the last capture. An overrun rotates the
 // round-robin channel phase, which silently mislabels every subsequent sample --

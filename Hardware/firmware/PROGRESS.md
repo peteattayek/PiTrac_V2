@@ -59,14 +59,13 @@ Includes phases 0–2 (`safe_state`, `adc_engine`, `power_fsm`, `panel`, `beam`,
 
 | | Status |
 |---|---|
-| Board | Assembled and **powered on the bench supply. All rails verified good** — +5V, VIR 36 V, +12 V, +5VA, virtual ground. |
-| Approved plan | `C:\Users\ATTAYEKP\.claude\plans\this-folder-contains-a-flickering-wreath.md` |
-| Toolchain | **Installed** — VS Code Pico extension, private copies in `%USERPROFILE%\.pico-sdk`. SDK 2.3.0, toolchain 15_2_Rel1, ninja 1.13.2, cmake 4.3.4. |
-| Bench equipment | Scope, logic analyzer, DMM, current-limited PSU, **FLIR thermal camera**. See the thermal section in `BENCH.md` for the four points where the FLIR matters. |
-| Firmware | Phases 0–2 written, **builds clean**, flashed and running |
-| Bench work done | **Phases 0, 0.5, 1, 1b, 1c (2026-07-31) and 2 (2026-08-13) all complete.** Phase 2: phase lock to 0.15 ticks, beam ramped to 30 %, U9 clamp 122.68 µs, duty fidelity flat to 250 kHz, thermals characterised. E9 check passed. All rails verified. All Phase 1 tests pass including fail-safe-through-reset; **the full Phase 1b matrix passes**, covering both timeouts, the RPI5_ON fallback, the escape hatch and the reset invariant. Standby draw **32 mA**. |
-| **Phase 3 bench, 2026-08-17** | 🔴 **STARTED, then BLOCKED.** Firmware boots and works: PIO on block 2 / GPIOBASE 16, threshold DAC correct on a DMM, `hpf test` resolved the GPIO33 polarity (**TRACK = 0**, matching the TMUX1219 datasheet), `cfg save` persists. **Blocked at §3.3 by CR-15** — the TIA saturates on beam coupling above ~3 % duty. |
-| ⚠ **BOARD STATE RIGHT NOW** | **The DC servo is latched at its positive rail and TP7 sits at 0 V.** Caused by a diagnostic step that laid conductive foil over D12; see §11. **Every rail, D12 and the reference test good and the current budget closes to 0.3 µA — no damage indicated.** Clearing it needs a long power-down. **Read §11 before touching the board.** |
+| **Handoff** | 🔵 **New to this work? Read `HANDOFF.md` first** (conventions, safety, tooling pitfalls, reading order), then §10 for the live resume point. There is **no separate plan file** — the `~/.claude/plans/…` paths this table used to cite no longer exist. PROGRESS is the plan. |
+| **Boards** | ✅ **Board 3 — the active bench board.** UID `6d6fda754e367a40`, **reworked TIA (Rf 116 kΩ, Cf 0.99 pF)**, calibrated and saved (carrier 104166 Hz, phase 1311 ticks, slot A seq 5). ✅ **Board 2** — healthy, calibrated, stock 470 kΩ TIA. 🔴 **Board 1 — OUT OF SERVICE**: U11B destroyed 2026-08-17 by foil across D12 (§11); needs U11 replaced. |
+| Toolchain | Installed — VS Code Pico extension, private copies in `%USERPROFILE%\.pico-sdk`. SDK 2.3.0, toolchain 15_2_Rel1, ninja 1.13.2, cmake 4.3.4. ⚠ **Not on PATH** — see `HANDOFF.md` for the export line. |
+| Bench equipment | Scope, logic analyzer (analog inputs **12 V max**, up to 50 MS/s), DMM, current-limited PSU, FLIR thermal camera. |
+| **Firmware** | ✅ **Builds clean (144136 text / 88308 bss).** Written: power FSM, safe state, beam carrier + demod, ADC engine (DMA ring, block capture, **triggered capture**), detect (threshold DAC, gated HPF, comparator PIO timing, pass log + retained waveforms), cal (`cal demod`, `cal model`, `scan carrier`), dual-slot config store, service/yield layer, shot-sequencer **skeleton**, CLI. ❌ **Not written:** Phase 5 onset detector + mic veto, **all Phase 6 strobe firmware**, Phase 7 camera handshake, Phase 8 Pi integration. |
+| **Bench work done** | ✅ Phases 0, 0.5, 1, 1b, 1c, 2. ✅ **Phase 3 §3.1–3.6 on board 3** — §3.6b is a *design finding* (Q8 ×7.43, CR-02), §3.6 Check 2 PASS. ✅ **Phase 5 mic bring-up** (2026-08-31). |
+| **Next** | 🔴 **`detect` has never run on board 3** — 30 s, do it first. Then **§3.7, the first real transits.** Open in parallel: a real **ball impact** on the mic (decides CR-18). Full list in §10. |
 
 **Bug found and fixed on the bench 2026-07-30 — ✅ fix verified (Phase 1 test 5).**
 
@@ -84,10 +83,8 @@ every latched state. On trip it raises `FAULT_SUPPLY_LOST` and drops the latch. 
 is load-bearing — from Phase 6 the rail is *expected* to sag during strobe bursts (the boost
 UVLO is bracketed at 4.74/4.52 V for that), so a bare threshold would trip on every shot.
 
-**Immediate next action:** 🔴 **`cfg save`.** The demod phase and the phase model are in RAM
-only; reacquiring them costs a 26 s sweep plus a 128 s model fit. Then `BENCH_P3_DETECT.md`
-§3.5. *(This line used to read "fix `ARCHITECTURE.md` A1 first" — A1 and A2 were both fixed
-2026-08-14. Only A7 remains open, and it surfaces in Phase 6b.)*
+**Immediate next action:** see the **Next** row above and §10. *(This paragraph used to say
+"`cfg save`, then §3.5" — true for board 2 on 2026-08-24, long since done on both boards.)*
 
 **Phase 2 closed 2026-08-13.** Both open questions answered:
 - **Q1 — U9 one-shot clamp = 122.68 µs.** Neither the .md's 113 µs nor the calculated 86 µs;
@@ -335,7 +332,8 @@ See `tools/openocd_pi5.cfg`.
       `tools/scope.py`. *(Pull it forward whenever you are blocked on something else.)*
 - [ ] **6** Strobe: 6a dry → 6b gate DAC → 6c LED bank ramp → 6d clamp-with-current.
       🔴 **NO STROBE FIRMWARE EXISTS AT ALL** — see the 8/25 audit row in §6. `strobe_burst.pio`
-      is present but **not in `CMakeLists.txt`**, so it is never even assembled. Nothing in
+      is assembled by `pioasm` on every build (syntax-checked since commit 081c286, 2026-08-31) but **no C
+      code loads it**, and nothing else exists. Nothing in
       `BENCH_P6_STROBE.md` can be run until it is written. **A7 must be fixed in the same
       change that adds the gate DAC.**
 - [ ] **7** Cameras: 7a loopback → 7b delayed sim → 7c real (needs Pi).
@@ -373,6 +371,11 @@ See `tools/openocd_pi5.cfg`.
 | 8/31/2026 | **U12B negative clamp** (board 3) | **21 mV** below quiescent | 🔴 Single supply, gain taken to GND (R98.1, R100.1), so quiescent **is** the bottom of its range. A falling rail saturates it and **the detector goes blind** — through 120 mV of droop that ×7.43 says should have moved it 870 mV |
 | 8/31/2026 | **Switcher fundamental on +5 V** | **801.1 kHz**, band 762.9–833.1 | ⚠ LA, 1.52 s at 50 MS/s, Welch ×1162. Harmonics at 1602.9 (2.001×) and 2404.8 kHz (3.002×) → a real switcher. **Dithered ±4.4 %**, 0.173 mV. ⚠ **L1 (LM5157) or L2 (RP2350 core buck) — unresolved from a rail measurement** |
 | 8/31/2026 | **Beam signature on +5 V**, 25 % duty | **8.67 mV** at 104.2 kHz | ✅ Harmonics 8.67 / 8.20 / 4.30 / **0.33** / 2.50 / 2.39 mV for n=1..6. 🔵 **n=4 is nulled** — `sinc(4×0.25) = 0` — an independent confirmation of the trapezoid model **and** that the duty is a true 25 % |
+| 8/31/2026 | **Mic quiescent point** (ch7, board 3) | **2053 codes / 1.6544 V** | ✅ Expect ~2048 / 1.65 V. U17 LMV321 output bias, stable to a few codes. Agrees exactly between `adc 7 256` and the pre-trigger window of a 16384-sample capture |
+| 8/31/2026 | **Mic noise floor** | **sigma 0.50–0.52 mV (0.62–0.64 codes)** | ✅ **Sub-LSB** — 1 LSB is 0.806 mV. p-p 5–7 codes over 16 ms. The analog section is as quiet as this ADC can resolve |
+| 8/31/2026 | **Mic response, clap / snap** | **+240 / +297 codes (193 / 239 mV)** | ✅ SNR **51.5 / 53.6 dB**, neither clipped (14.5 % of available swing, ~7× headroom). Decay to 2 % of peak in **2.51 / 1.12 ms** — no long enclosure resonance |
+| 8/31/2026 | **Mic spectral content** | **clap peaks 1501 Hz, snap 2502 Hz** | 🔴 **44.7 % of the clap is below the 2.41 kHz high-pass corner** (snap: 5.7 %). Ring-down by zero-crossing: clap **9.4 kHz**, snap **24.2 kHz** — different per stimulus, so real sound rather than the filter. **CR-18** |
+| 8/31/2026 | **Mic onset: crossing to peak** | **88 us (clap), 300 us (snap)** | ✅ 10–90 % rise 44 us for the clap. Both **positive-going first**. Timestamp the CROSSING — the peak is whichever cycle happens to be largest. At 2.9 us/mm, 30 mm of placement error swamps this anyway |
 | 8/31/2026 | **`scan carrier` flatness, 95–115 kHz** | ✅ **σ_noise 4.57–5.08, 10.8 % spread** | ✅ **§3.6 Check 2 PASSES.** `beam_noise_ratio` 2.86–3.41, flat. 🔵 At 110.0 / 112.5 / 115.0 kHz the 7th harmonic lands **inside** the 762.9–833.1 kHz switcher band and those rows are the **quietest** — the collision was tested head-on and nothing folded |
 | 7/29/2026 | TP9 LPF out / TP10 demod out | **2.59 V** | ✅ both at virtual ground → demod + both LPF stages healthy |
 | 7/30/2026 | R46/R47 junction (DMM) | **2.578 V** | vs 2.600 V ideal = −0.85%, fine for two 1% parts. **Divider healthy; leakage ruled out.** (Q9) |
@@ -472,7 +475,7 @@ See `tools/openocd_pi5.cfg`.
 | 8/24/2026 | 🔴 **FIRMWARE DEFECT — `off` did not turn the beam off** | **found at the bench** | 🔴 **`s_on` in `beam.c` survived every rail-down.** The power FSM never touched the beam: `PS_FORCE_OFF` dropped the latch and called `detect_hpf_safe_off()` for GPIO33, but nothing cleared the beam, so the PWM slices stayed enabled and GPIO31/GPIO39 stayed in `GPIO_FUNC_PWM`. **The beam only looked off because it had no power** — the next `on` relit D11 the instant the rail came up, with no `beam on`, no duty ramp, no cold-LED warning and `beam_duty_stable_ms()` already running. ⚠ **It also drove 3.3 V logic into an unpowered U10 (MCP1416), which runs from the SWITCHED +5 V rail** — the same back-feed condition GPIO33 is driven low for three lines later. ✅ **Fixed in `power_fsm.c`, in the FSM rather than in the CLI**: `beam_enable(false)` in `begin_shutdown()` (orderly path — dark at the *start* of teardown, not 15 s later when the Pi reports down) and as the **first** statement of `PS_FORCE_OFF`, before the latch drops. 🔵 **The CLI was the wrong place**: `off` is only one of six routes to rail-down — short press, 5 s escape hatch, `FAULT_SUPPLY_LOST`, `FAULT_PI_SHUTDOWN_TIMEOUT`, `power_request_force_off()` and the defensive `default:` — and all six land in `PS_FORCE_OFF` |
 | 8/24/2026 | 🔴 **FIRMWARE DEFECT — `cal model` leaves the beam at 200 kHz** | **cost a bench session** | 🔴 `cal_demod_model()` walks the carrier 80→200 kHz and **never restored it**, so every `cal demod` typed afterwards silently calibrated **200 kHz**, printed no frequency, and committed the answer. Two runs were spent "dialling in the light" at the wrong carrier and a phase of **744 ticks** was committed as if it were the 104 kHz value. 🔵 **The tell is in the sweep listing:** phases step by (TOP+1)/64, so steps of 11/23/35 mean a 750-tick period = 200 kHz, against 22/45/67 for 1440 = 104 kHz. ✅ **Fixed:** frequency and phase saved on entry and restored before every return path, and `cal demod` now prints `at <f> Hz (TOP+1 = <n>)` in its header |
 | 8/24/2026 | 🔴 **`scan carrier` had the SAME carrier-restore bug — fixed before it bit** | **found by reading, not at the bench** | 🔴 `cal_scan_carrier()` walks the carrier across the band in exactly the same way `cal_demod_model()` did and **also never restored it** — so a `scan carrier` would have left the beam at f1 (200 kHz by default) and every command afterwards would have run at the wrong frequency, silently. ✅ **Fixed the same way**: frequency and phase captured on entry, restored on the normal path **and on the warm-up REFUSED path**, with the duty-ceiling restore moved onto that path too (it leaked before). The command now prints `Carrier restored to <f> Hz` and states that the winner is a **recommendation** — adopting it means editing `board.h` and re-running `cal demod`, not leaving the beam wherever the scan ended |
-| 8/25/2026 | 🔴 **DOC AUDIT — phases 5, 6 and 7 have NO FIRMWARE, and the docs did not say so** | **three BENCH docs described procedures that cannot be run** | 🔴 `src/` contains no strobe, mic or camera module, and the CLI has **no `strobe`, `gate`, `burst`, `mic` or `cam` command**. 🔴 **`src/strobe_burst.pio` exists but is NOT in `CMakeLists.txt`** — only `detect.pio` is passed to `pico_generate_pio_header()`, so it has never been assembled. `compute_schedule()` does not exist. `BURST_CHARGE_MAX_mC` does not exist in `board.h`. ⚠ **`BENCH_P6_STROBE.md` reads as a runnable procedure throughout** — "load the PIO burst program", "DMA-feed a schedule", "unit-test `compute_schedule()`" — with nothing marking any of it as unwritten. ✅ **Fixed:** every future BENCH doc now opens with a FIRMWARE STATUS table separating what exists from what does not. ✅ **The one genuine exception is Phase 5 bring-up**, which needs only `adc 7`, `capture 0x80` and `tools/scope.py` — runnable today on USB power alone |
+| 8/25/2026 | 🔴 **DOC AUDIT — phases 5, 6 and 7 have NO FIRMWARE, and the docs did not say so** | **three BENCH docs described procedures that cannot be run** | 🔴 `src/` contains no strobe, mic or camera module, and the CLI has **no `strobe`, `gate`, `burst`, `mic` or `cam` command**. 🔴 **`src/strobe_burst.pio` exists but is NOT in `CMakeLists.txt`** — only `detect.pio` is passed to `pico_generate_pio_header()`, so it has never been assembled. `compute_schedule()` does not exist. `BURST_CHARGE_MAX_mC` does not exist in `board.h`. ⚠ **`BENCH_P6_STROBE.md` reads as a runnable procedure throughout** — "load the PIO burst program", "DMA-feed a schedule", "unit-test `compute_schedule()`" — with nothing marking any of it as unwritten. ✅ **Fixed:** every future BENCH doc now opens with a FIRMWARE STATUS table separating what exists from what does not. ✅ **The one genuine exception is Phase 5 bring-up**, which needs only `adc 7`, `capture 0x80` and `tools/scope.py` — runnable today on USB power alone. ✅ **UPDATE 8/31: Phase 5 bring-up is COMPLETE and `capture trig` now exists too.** The onset detector and the veto logic are still unwritten |
 | 8/25/2026 | 🔴 **THE PHASE MODEL WAS NEVER RESTORED TO RAM — `scan carrier` would have been meaningless** | **`cfg` said "fitted", `s_phase_model.valid` was false** | 🔴 **Found by reading a `cfg` dump from the bench, not at the bench.** `cfg_init()` pushes `adc5v_scale`, `detect_coalesce_us` and `path_mm` back into the modules that own them, and `cfg_apply_beam()` pushes carrier and phase into the beam — **but nothing restored the phase model.** So after every reset `cfg` printed `phase mdl: fitted, dispersive (80000..200000 Hz)` while the RAM copy was empty. 🔴 **The symptom would have been §3.6:** `scan carrier` warns "no phase model … every candidate will be measured at phase 0 … the SNR ranking will be meaningless" and then **runs anyway**. ⚠ **This is the same defect class as the 2026-08-14 fix in §10** — "saved carrier_hz / demod_phase_ticks but never restored them" — surviving in a different field of the same record. ✅ **Fixed:** `restore_phase_model()` in `cli_init()`, which also **recomputes** `pure_delay` rather than trusting a verdict saved by an older build. ✅ `cfg` now prints `[NOT IN RAM]` if the two ever disagree again |
 | 8/25/2026 | 🔴 **The saved phase is uninterpretable without the duty it was measured at — `cal_duty` added** | **166 ticks of error at the power-on default** | 🔴 The config stored `demod_phase_ticks` but **not the beam duty**, and `phase_ticks = t_chain_ticks − (duty/2)·(TOP+1)` — so the number is only correct at the duty it was measured at. `s_duty` powers up at **2 %** ("start low; ramp up deliberately") while the phase was calibrated at **25 %**, which is `1440 × (0.25−0.02)/2` = **166 ticks off**, or 41°, i.e. **cos 41° = 75 % of signal lost**. The 8/25 bench dump shows exactly that state: `duty 2.00 %` with `phase 1348 ticks` restored. ✅ **Fixed:** `cal_duty` added to the record, written by `cal demod`, and `cfg` now prints it **and warns with the tick error** whenever the live duty differs by more than 0.5 %. 🔵 **Carved out of `reserved`, not appended** — `slot_valid()` compares `size` against `sizeof(pitrac_cfg_t)` and there is a `_Static_assert(… == 256)`, so growing the struct would have invalidated every saved record and silently reverted the board to defaults. The unused `telemetry[16]` block absorbed the shift, so existing records read `cal_duty = 0` = "not recorded", which the code handles explicitly |
 | 8/25/2026 | ⚠ **`cfg` reported "dispersive" from a STALE STORED FLAG, not from the data** | **the verdict was saved by the pre-fix firmware** | ⚠ The 8/25 bench dump reads `phase mdl: fitted, dispersive`, but the corrected `pure_delay` test gives **0.78° against a 5° bar — a pure delay**. `phase_pure_delay` is a stored boolean, written when `cal model` ran on the build *before* the 8/24 fix, and `cfg` prints it verbatim. **The coefficients in flash are fine; only the boolean is wrong.** ✅ `restore_phase_model()` now recomputes it from a0/a1/a2 whenever `cal_duty` is known, so the flag self-corrects on the next boot after a `cal demod` + `cal model` + `cfg save` |
@@ -483,6 +486,12 @@ See `tools/openocd_pi5.cfg`.
 | 8/25/2026 | 🔴 **MY BUG — `cal demod`'s delay line read the geometric term only** | **a constant 1200 ns whatever the phase** | 🔴 **Introduced 2026-08-24 when the delay reporting was added.** `out->chain_delay_ns` was computed next to `out->peak`, where it reads naturally — but `out->best_ticks` is not assigned until **25 lines later**, so it ran against a zero and collapsed to `wrap((duty/2)·(TOP+1))` = **exactly 180 ticks = 1200 ns at 25 % duty, for every run**. ⚠ **It looked like a plausible number**, which is why the build did not catch it and a bench dump did. ✅ **Fixed** — moved after the assignment. **Correct values: 1343 ticks → 553 ns, 1348 → 587 ns, 1350 → 600 ns.** 🔵 **A reported quantity that is constant across runs it should vary with is the tell.** The docs' 620.8 → 599.1 ns model figures were computed offline in Python and are unaffected |
 | 8/25/2026 | 🔴 **I OVER-READ ONE MEASUREMENT: the "3.5 % delay droop" does not reproduce** | **−3.50 % on 8/24, −0.05 % on 8/25** | 🔴 **Same board, same procedure, residuals 0.074° and 0.080°.** The 8/24 fit gave **620.8 → 599.1 ns** across 80–200 kHz; the 8/25 fit gave **571.2 → 571.0 ns**. ⚠ **The span is a difference of two large numbers**, so a few-tick shift in the fit moves it enormously while barely touching either endpoint — it is not a well-determined quantity and should never have been quoted as one. 🔴 **I put that 3.5 % into `cal.h`, `BENCH_P3_DETECT.md` and `BRINGUP_NEW_BOARD.md` on 8/24, and additionally credited the TIA's 677 kHz pole with about a quarter of it.** That attribution rested entirely on the magnitude being real. ✅ **All three corrected**: quote the **absolute delay (~570–620 ns, reproducible to ~50 ns)** and the **verdict**, never a droop figure |
 | 8/28/2026 | ✅ **DOC RESTRUCTURE — `BRINGUP_NEW_BOARD.md` is now THE driver for a new board** | **per-board vs design-validation, made explicit everywhere** | ✅ The organising distinction is now stated in three places and used consistently: **§0.5 of this file** (the full classification, plus the rule for deciding which a new test is), the **head of `BRINGUP_NEW_BOARD.md`** (what is settled vs what must be measured, with § pointers), and a **table at the head of `BENCH_P3_DETECT.md`** marking each of §3.1–3.7. 🔵 **The rule: ask what would have to change for the answer to change.** If it is the design — a netlist value, a firmware mechanism, a physical law — it is settled once. If it is this assembly — a tolerance, a mounting, an optical alignment — it repeats |
+| 8/31/2026 | ✅ **PHASE 5 MIC FRONT END VALIDATED — sub-LSB noise, 51–54 dB SNR, 7× headroom** | **baseline 2053 codes, sigma 0.5 mV, clap +240 / snap +297 codes** | ✅ Triggered captures on board 3, 250 ksps, 16.4 ms pre-trigger. **Noise sigma 0.50–0.52 mV against a 0.806 mV LSB** — the analog section is as quiet as this ADC can resolve. Neither stimulus clipped; the loudest used **14.5 %** of the available swing. ✅ Decay to 2 % of peak in **2.51 ms (clap) / 1.12 ms (snap)**, so **no long enclosure resonance** to widen a veto window. 🔵 The quiescent point matches `adc 7 256` exactly (2053 codes both ways), and the **16.38 ms of pre-trigger history sits at that baseline with p-p 5–7 codes** — which is also the proof the ring-mode DMA works |
+| 8/31/2026 | 🔴 **45 % of a clap's energy is BELOW the mic's 2.41 kHz high-pass corner** | **spectral peak 1501 Hz for a clap vs 2502 Hz for a snap** | 🔴 Energy 1.0–2.4 kHz: **clap 44.7 %, snap 5.7 %.** The corner is a **single pole**, so sub-corner content still passes, attenuated — which is why it is visible at all. But **C84/R106 (2.2 nF / 30 kΩ) is rejecting the band a clap's energy lives in.** ⚠ **Only matters if a ball impact resembles a clap rather than a snap** — an impact is a low-frequency thud plus a high-frequency click, and which dominates decides whether the corner is right. ✅ Raised as **CR-18**, deliberately left OPEN pending a real ball capture. 🔵 **Do not change C84 on clap data**; the stimulus that matters has not been recorded yet |
+| 8/31/2026 | 🔵 **The mic ring-down is real acoustic content, not the amplifier — my prediction was wrong** | **clap 9.4 kHz vs snap 24.2 kHz** | 🔴 I predicted ~7.6 kHz for every stimulus, reasoning that an impulse into the 2.41–24.1 kHz bandpass would ring at the geometric mean and show the **filter's** impulse response. ✅ Measured by zero-crossing rate over the 0.2–2.0 ms decay (which, unlike a naive FFT, is immune to the decay envelope): **clap 9.4 kHz, snap 24.2 kHz.** Two stimuli, two rates — so it is the sound. 🔵 **Better than the prediction: the mic discriminates between stimuli.** ⚠ **Method note — my first FFT reported "875 Hz", which is below the high-pass corner and therefore impossible.** It was measuring the decay ENVELOPE, not an oscillation. A number that the circuit forbids is a bug in the analysis, not a discovery |
+| 8/31/2026 | ✅ **`capture trig` added — a real trigger with PRE-trigger history** | **the threshold decides where to STOP, not where to start** | 🔴 §5 asks for clap, tap and ball captures, and `capture` had **no trigger** — timing a transient into a 33–66 ms window by pressing Enter is not realistic, and rolling captures are blind during each serial dump. 🔵 **By the time a threshold is crossed the onset has already happened**, so a start-on-command capture can never hold the baseline before the impact or the leading edge — exactly the part an onset detector is tuned on. ✅ **Fixed by running the DMA continuously in ring mode and stopping it after the trigger**, giving 25 % pre-trigger by default. ✅ `s_buf` aligned to its own size (ring-mode DMA wraps by MASKING the write address — misaligned, it writes over neighbouring BSS); the linker placed it at 0x20008000 so the alignment **cost zero padding** |
+| 8/31/2026 | 🔴 **`tools/scope.py` was silently halving the trigger sample rate** | **board default 500 ksps, tool default 250 ksps** | 🔴 `--rate` defaulted to 250000 for the block-capture path, and the new `--trig` path inherited it — so a triggered shot taken through the tool ran at **half** the rate the CLI documents, with no warning. The first clap/snap captures were taken at 250 ksps for this reason. ✅ `--rate` now resolves to **500000 with `--trig`**, 250000 otherwise. 🔵 **A default that is right for one path and wrong for another is worse than no default** — it is invisible in the output |
+| 8/31/2026 | ✅ **Bench captures were landing in the repo; `captures/` added and gitignored** | **`clap.csv` and `clap_012.csv` were sitting untracked in `Hardware/firmware/`** | 🔴 `tools/scope.py` wrote every auto-named CSV to the current directory, which during a bench session is the firmware dir — and `.gitignore` covered only `*.csv.out`. A run of snaps quietly showed up in `git status`. ✅ Auto-named output (roll dumps, `--save-events`) now goes to `captures/`, created on demand and ignored in both gitignores. ✅ Anything named explicitly with `--csv` is left where the operator asked — silently relocating a named file would be worse than the mess it avoids. ✅ All three paths now print the **absolute** path |
 | 8/31/2026 | 🔴 **23 operator-visible strings were printing mojibake, and every source file carried a BOM** | **55 double-encoded em-dashes, 14 BOMs, 1 mangled ±** | 🔴 Found by sweeping the source for non-ASCII while auditing today's changes. Every `printf` and `help` line containing an em-dash was emitting **`â€"`** to the serial console — `beam ramp`, `beam clamp`, `stat`'s "DOWN — beam cannot run", every `panel` pattern name, the FIFO-overrun warning, and the `? 'beam x'` error. 🔵 **The operator sees this, not the source.** ✅ 55 × `â€"` → `--`, 1 × `Â±` → `+/-`, and **14 BOMs stripped** (13 source files plus `CMakeLists.txt`; all were leading, so harmless — but a stray BOM is exactly what broke `strobe_burst.pio` on 2026-08-30). ⚠ **Root cause is an editor writing UTF-8 that something re-read as cp1252 and re-encoded** — it will come back unless the tooling is fixed. Sweep for `[^\x00-\x7f]` in `src/` before believing any CLI output is clean |
 | 8/31/2026 | ✅ **§3.6 Check 2 PASSES — and it accidentally ran the worst case** | **sigma_noise 4.57–5.08 across 95–115 kHz, 10.8 % spread, no outlier** | ✅ With the settling bug fixed, the sweep is flat. 🔵 **Better than flat — it tested the collision head-on without meaning to.** At **110.0 / 112.5 / 115.0 kHz the 7th harmonic lands at 770.0 / 787.5 / 805.0 kHz, all INSIDE the measured 762.9–833.1 kHz switcher band** — and those three rows are among the **quietest** (110 kHz gave the lowest sigma_noise of all nine, 4.57). ✅ **So the 0.173 mV of switcher ripple does not reach the detector, and the −2.3 % drift margin is a paper number, not an operational risk.** The operating carrier 104.1667 kHz stays |
 | 8/31/2026 | 🔴 **`scan carrier`'s SNR column cannot rank frequencies — `signal` is a TIME trend, not a frequency response** | **546.0 → 574.4 monotonic across all 9 rows; p ≈ 3×10⁻⁶ by chance** | 🔴 The signal column rises **strictly monotonically in row order** — 546.0, 555.9, 560.4, 561.2, 564.9, 567.0, 570.5, 571.5, 574.4. Nine values landing pre-sorted is 1/9! ≈ **1 in 363,000**, so this tracks **elapsed time, not carrier frequency.** 🔵 **Cause: the scan chops the beam**, halving its average duty from 25 % to ~12.5 %, so the LED *cools* through the run and its output climbs — the same 25–45 % cold-to-plateau effect the warm-up gate exists for, running in reverse. ✅ Combined with sigma_noise's ±1.7 % scatter, **"BEST by SNR: 110000" is +1.5 sigma from the mean of the other rows — noise.** 🔴 **Do not adopt it.** ✅ The command now reports **flatness** as the verdict and says the carrier is fixed |
@@ -492,7 +501,7 @@ See `tools/openocd_pi5.cfg`.
 | 8/31/2026 | 🔴 **`scan carrier` had the SAME 50 ms-vs-0.66 s bug `hpf test` was rebuilt to eliminate — its "BEST by SNR" was first-point bias** | **95 kHz "won" by 225× because it was measured first** | 🔴 `adc5_sigma()` ran **50 ms** after a beam step against the HPF's **660 ms τ** — **0.076 τ, four times worse than the 200 ms already condemned in detect.h.** So σ did not measure noise: it measured the HPF still recovering, and **that slope is proportional to the signal.** 🔵 **The data says so outright — `signal`/`sigma_noise` is 17.8 ± 0.5 across eight of the nine rows** (2390/134.4, 2386/134.1, 2382/134.1 …), which no real noise process does. ✅ **Row 1 was the only one preceded by a settled beam** — the operator's 5 min warm-up — so it alone read a true floor (**0.26** codes vs 90–134) and took "BEST by SNR" at **5042 vs 17.8**. ✅ Fixed: `CAL_SIGMA_SETTLE_MS` 5000 (7.6 τ, matching `HPF_TEST_SETTLE_MS`), adds ~90 s to the scan. 🔴 **DO NOT ADOPT 95 kHz** |
 | 8/31/2026 | 🔵 **The tell for a settling artifact is that σ tracks the SIGNAL, not the floor** | **a fixed signal/σ ratio across a swept parameter** | 🔵 Additive noise is independent of signal amplitude, so a **constant** ratio between them means σ is a *fraction of the step* — i.e. a transient being sampled, not a noise process. Here the HPF drops V·e^(−t/τ) by 19.7 % across the 130 ms window; a monotonic ramp of extent Δ has σ = Δ/√12, giving **σ ≈ 0.058·V → ratio 17.3** against the measured 17.8. ⚠ `sigma_floor` was flat at 0.45–0.50 for a different reason: with the beam off the node sits **on U12B's ground rail** (§3.6b), so the "floor" was a clamped node. **Neither column measured what its name says** |
 | 8/31/2026 | 🔴 **The switcher is at 801 kHz, not the 1.055 MHz assumed — and that cuts the fold margin from −9.6 % to −2.3 %** | **762.9–833.1 kHz band, dithered ±4.4 %** | ✅ Measured from the **+5 V rail with a logic analyser**, 1.52 s at 50 MS/s, Welch-averaged over 1162 segments — no scope and no 36 V node touched. **801.1 kHz fundamental with harmonics at 1602.9 (2.001×) and 2404.8 kHz (3.002×)** — exact multiples, so a switcher, not a resonance. 🔵 **It is dithered**, which is why it appears as a smooth ~70 kHz hump and why the first peak-search found nothing and I wrongly concluded "the boost is not switching." 🔴 **The 7th harmonic of the carrier (729.2 kHz) is only 33.8 kHz from the band edge**, so the boost may drift just **−2.3 %** before folding — *inside its own dither spread*. ⚠ **Attribution unsettled: L1 (LM5157, straight off +5 V) vs L2 (RP2350 core buck, U3.63 VREG_LX, behind U2's LDO).** Scope on L1 pad 1 settles it |
-| 8/31/2026 | 🔵 **A logic analyser measured a 0.17 mV tone on a 5.2 V rail — the method is worth keeping** | **broadband floor 0.0144 mV after 1162 averages** | 🔵 The LA's ±12 V input cannot go near the 36 V SW node, but the switcher's current is drawn **through L1 from +5 V**, so it is visible on a rail the LA can read directly. ✅ **Its own noise floor is flat within 4.5 dB from 100 kHz to 5 MHz and only rolls off above 8 MHz** — measured from the capture itself, so the null result at 1.055 MHz is trustworthy rather than an instrument limit. ⚠ **Check the instrument's response before believing a null.** 🔴 I also read a 104.2 kHz peak as "the beam is on" when the beam was **off** — that came from a max-over-±3-bins statistic, which is biased upward against a noise floor. **Use a median baseline, not a windowed max, when deciding whether a line exists** |
+| 8/31/2026 | 🔵 **A logic analyser measured a 0.17 mV tone on a 5.2 V rail — the method is worth keeping** | **broadband floor 0.0144 mV after 1162 averages** | 🔵 The LA's 12 V-max input cannot go near the 36 V SW node, but the switcher's current is drawn **through L1 from +5 V**, so it is visible on a rail the LA can read directly. ✅ **Its own noise floor is flat within 4.5 dB from 100 kHz to 5 MHz and only rolls off above 8 MHz** — measured from the capture itself, so the null result at 1.055 MHz is trustworthy rather than an instrument limit. ⚠ **Check the instrument's response before believing a null.** 🔴 I also read a 104.2 kHz peak as "the beam is on" when the beam was **off** — that came from a max-over-±3-bins statistic, which is biased upward against a noise floor. **Use a median baseline, not a windowed max, when deciding whether a line exists** |
 | 8/31/2026 | 🔴 **§3.6b FAILS. Q8 is real, at the predicted magnitude — ×7.43 measured vs ×7.25 predicted** | **+75.0 mV rail → +556.9 mV at the comparator input, and it STAYS** | 🔴 Method A run properly on board 3: TRACK and HOLD captures, bidirectional hand ramp, 1 MS/s. **In HOLD the coupling is ×7.43 and permanent.** The analysis that predicted ×7.25 from R75/R76 = +5VA/2 through C81 into U12B ×14.5 was **right to 2.5 %.** ✅ **TRACK works exactly as designed:** the same step peaks at ×3.84 and decays with **τ ≈ 0.75 s** (nominal 0.66 s), back to baseline in 3.4 s. 🔵 **So the exposure is exactly the armed window and nothing else.** 🔴 **Against the pass criterion this is not close:** "under 20 % of the §3.5 threshold" would need a threshold above **2.8 V**, i.e. 85 % of the DAC's 3.268 V full scale. **At a 300 mV threshold a 39 mV rail step fires the detector; at 100 mV it takes 13 mV.** 🔧 **CR-02 is now a measured requirement, not a proposal** |
 | 8/31/2026 | 🔴 **A rail SAG does not just risk a false trigger — it BLINDS the detector** | **U12B clamps 21 mV below quiescent and stops responding** | 🔴 The coupling is **positive**: rail up → comparator input up. So a **falling** rail drives U12B's output into its **negative rail**, which is ground — its gain is taken to GND (R98.1, R100.1) on a single +5VA supply, so quiescent **is** the bottom of its range. **Measured: it clamps 21 mV below quiescent and then does not move**, through a further **120 mV** of rail droop that ×7.43 says should have swung it **870 mV**. 🔵 **While the rail is sagging, a ball cannot move the comparator input at all — the amplifier is saturated.** ⚠ **This matters most in Phase 6, where strobe bursts sag the rail deliberately**: the sag blinds, and the recovery — a rising rail — is the false-trigger edge. 🔵 **The 500 ms supply-monitor debounce was sized for the sag; nothing yet covers the recovery** |
 | 8/31/2026 | ✅ **The bidirectional step worked — and it proved the previous capture had measured nothing** | **the 8/31 down-only capture was the clamp, not a coupling** | ✅ Predicted from the netlist that U12B had **~14 mV** of downward headroom against a 725 mV excursion; **measured 21 mV.** The earlier down-only capture read **rail −94.6 mV → comparator −55.7 mV, "×0.59"** — that was the amplifier sitting on its rail plus the ground artifact, and **it looked like a comfortable pass.** 🔵 **The failure mode to remember: a saturated stage reports a SMALL number, which reads as a good result.** ⚠ The p-p noise gives no warning — it is the instrument floor, not the node. ✅ **Both directions, every time**, and §3.6b now says so |
@@ -610,7 +619,7 @@ firmware/
   src/power_fsm.[ch]          Phase 1 latch + Phase 1b Pi soft-shutdown FSM
   src/panel.[ch]              Phase 1c J7 indicators — PWM brightness, named patterns
   src/beam.[ch]               Phase 2 carrier + phase-locked demod clock  [IN BUILD, inert]
-  src/strobe_burst.pio        Phase 6 PIO burst engine   [NOT in the build yet]
+  src/strobe_burst.pio        Phase 6 PIO burst engine   [assembled each build; nothing loads it]
   src/cli.[ch]                USB-CDC line CLI, incl. `capture` (the bench instrument)
   src/main.c                  core 0 superloop
   tools/scope.py              plots a `capture` block from the CLI
@@ -799,41 +808,20 @@ firmware/
 
 ## 10. Next session — start here
 
-> ### ✅ RESUME POINT — §3.4 CLOSED, §3.5 is next (2026-08-24)
+> ### ✅ RESUME POINT — handoff 2026-09-17 (bench state as of 2026-08-31)
 >
-> **`cal demod` and `cal model` both pass on board 2.** `demod_phase_ticks = 1348` at 104166 Hz,
-> and the phase model is fitted over 80–200 kHz with a 0.074° residual. Four independent
-> measurements of the phase agree to 8 ticks. See §6 for the numbers.
+> 🔵 **Taking over? Read `HANDOFF.md` first.** It carries the working conventions, the safety
+> rules, the tooling traps on this machine, and the analysis lessons that were expensive to
+> learn. This block is the live state; **if the two ever disagree, this block wins.**
 >
-> **In physical terms: the chain delay is 620 ns**, PWM edge to demod input, and it is
-> nearly constant (620.8 → 599.1 ns over 80–200 kHz). The TIA accounts for 233 ns of it;
-> ~386 ns is unexplained and is probably the LED drive path. **Compare the DELAY between
-> boards, never `phase_ticks`** — the tick count carries a geometric duty/period term.
+> **Active board: board 3** (reworked TIA, calibrated, saved slot A seq 5). **Firmware in the
+> tree = firmware on the board**, very probably: the last UF2 was built 2026-08-31 13:43 and
+> the `capture trig` captures at 14:03 needed it. ✅ Confirm with `help` listing
+> `capture trig`, and `stat` showing `watchdog : off`.
 >
-> 🔴 **FIRST ACTION NEXT SESSION: reflash, then re-run `cal demod` + `cal model`, then
-> `cfg save`.** ✅ The calibration IS saved (slot A seq 5) and survives a reset. But the
-> record predates `cal_duty`, so the board cannot check the stored phase against the live
-> duty — and the beam powers up at **2 %** while the phase was measured at **25 %**, which
-> is 166 ticks off. Re-running at 25 % populates `cal_duty` and refreshes the `pure_delay`
-> flag, which is stale in the current record. Budget ~3 minutes plus the 5 minute warm-up.
+> ⚠ **About two weeks passed between the last bench session and this handoff.** Ask what was
+> done in between before trusting any "not yet run" line below.
 >
-> ⚠ **Whatever you do, set `beam duty 25` before trusting the restored phase.**
->
-> ✅ **§3.5 is DONE on board 2 (2026-08-25)** — vref 3.268 V, comparator offset +11.0 mV,
-> crosstalk 1.6 mV.
->
-> ✅ **BOARD 3 is up and calibrated, with a REWORKED TIA** (Rf 116 kΩ, Cf 0.99 pF).
-> `demod_phase_ticks` **1311**, chain delay **340 ns**, model residual 0.23°, PURE DELAY.
-> **Board 2's numbers do not transfer** — nearly all of them scale with Rf.
->
-> ✅ **§3.4 CLOSED on board 3 and SAVED (2026-08-28).** `demod_phase_ticks` **1311**,
-> chain delay **340 ns**, model residual 0.26°, amp spread 4 %, PURE DELAY. Target is a
-> clamped card at ~66 % of full scale — leave it exactly where it is.
->
-> ✅ **§3.5 CLOSED on board 3 (2026-08-28)** — DAC vref **3.256 V**, comparator offset
-> **+5.4 mV**, beam-off crosstalk 3.2 mV.
->
-> ### Status after 2026-08-31 — most of this list is now closed.
 >
 > | | | |
 > |---|---|---|
@@ -844,6 +832,8 @@ firmware/
 > | 🟡 | §3.6 Check 1 | **Deferred**, needs a scope. Downgraded: Check 2 already answered the question it supports |
 > | 🔴 | **`detect`** | **STILL NEVER RUN ON BOARD 3.** 30 s. Confirms GPIO46 reads and the SM arms |
 > | 🔴 | **§3.7** | **NEXT** — the first real transits |
+> | ✅ | **Phase 5 mic bring-up** | **DONE 8/31.** Front end validated: sub-LSB noise, 51–54 dB SNR, ~7× headroom, no enclosure ring |
+> | 🔴 | **Phase 5: a real BALL impact** | Not captured. It decides **CR-18** — whether the 2.41 kHz high-pass corner is throwing away the signal band |
 >
 > 🔵 **The carrier is FIXED at 104.1667 kHz** (decided 2026-08-28, §8), and §3.6 Check 2
 > has now verified it is clear. §3.6 is a one-off robustness check, not a per-board scan.
@@ -872,6 +862,46 @@ firmware/
 > ceiling. Attenuation over D12 is currently mechanical and **will need re-tuning on any
 > board or geometry change** — target `cal demod` peak at 50–70 % of full scale. Nothing
 > conductive near D12 (§11).
+>
+> ---
+>
+> ### (below: the 2026-08-24 resume block, superseded — its FIRST ACTION is done; the
+> ### 2026-08-31 status table that used to sit inside it now lives in the block above)
+>
+> ### ✅ RESUME POINT — §3.4 CLOSED, §3.5 is next (2026-08-24)
+>
+> **`cal demod` and `cal model` both pass on board 2.** `demod_phase_ticks = 1348` at 104166 Hz,
+> and the phase model is fitted over 80–200 kHz with a 0.074° residual. Four independent
+> measurements of the phase agree to 8 ticks. See §6 for the numbers.
+>
+> **In physical terms: the chain delay is 620 ns**, PWM edge to demod input, and it is
+> nearly constant (620.8 → 599.1 ns over 80–200 kHz). The TIA accounts for 233 ns of it;
+> ~386 ns is unexplained and is probably the LED drive path. **Compare the DELAY between
+> boards, never `phase_ticks`** — the tick count carries a geometric duty/period term.
+>
+> ✅ **DONE on both boards.** ~~FIRST ACTION NEXT SESSION: reflash, then re-run `cal demod` + `cal model`, then~~
+> `cfg save`.** ✅ The calibration IS saved (slot A seq 5) and survives a reset. But the
+> record predates `cal_duty`, so the board cannot check the stored phase against the live
+> duty — and the beam powers up at **2 %** while the phase was measured at **25 %**, which
+> is 166 ticks off. Re-running at 25 % populates `cal_duty` and refreshes the `pure_delay`
+> flag, which is stale in the current record. Budget ~3 minutes plus the 5 minute warm-up.
+>
+> ⚠ **Whatever you do, set `beam duty 25` before trusting the restored phase.**
+>
+> ✅ **§3.5 is DONE on board 2 (2026-08-25)** — vref 3.268 V, comparator offset +11.0 mV,
+> crosstalk 1.6 mV.
+>
+> ✅ **BOARD 3 is up and calibrated, with a REWORKED TIA** (Rf 116 kΩ, Cf 0.99 pF).
+> `demod_phase_ticks` **1311**, chain delay **340 ns**, model residual 0.23°, PURE DELAY.
+> **Board 2's numbers do not transfer** — nearly all of them scale with Rf.
+>
+> ✅ **§3.4 CLOSED on board 3 and SAVED (2026-08-28).** `demod_phase_ticks` **1311**,
+> chain delay **340 ns**, model residual 0.26°, amp spread 4 %, PURE DELAY. Target is a
+> clamped card at ~66 % of full scale — leave it exactly where it is.
+>
+> ✅ **§3.5 CLOSED on board 3 (2026-08-28)** — DAC vref **3.256 V**, comparator offset
+> **+5.4 mV**, beam-off crosstalk 3.2 mV.
+>
 >
 > ---
 >
@@ -934,6 +964,10 @@ firmware/
 > ---
 >
 > ### (below: the 2026-08-14 firmware handover, still accurate for the code)
+>
+> ⚠ *Historical, 2026-08-14. Two lines below are no longer true: most of this code HAS since run
+> on boards 2 and 3, and branch `phase3-detection` and its plan file no longer exist — all work
+> is on `main`. The build and code notes remain accurate.*
 >
 > **All Phase 3/4 firmware is written and builds clean. None of it has run on hardware.**
 > Branch `phase3-detection`. Approved plan lives in the user's `.claude/plans/` directory

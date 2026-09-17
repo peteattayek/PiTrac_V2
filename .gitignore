@@ -85,3 +85,9 @@ venv/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Bench captures from tools/scope.py. Auto-named runs land in captures/;
+# a long session writes dozens of these and they are raw data, not source.
+# Anything you name yourself with --csv is deliberate and is NOT ignored.
+captures/
+roll_*.csv

@@ -68,6 +68,11 @@ static const char *k_help =
     "  adc5v                      +5V_IN in volts (divider + cal applied)\n"
     "  adc5vcal <measured_volts>  trim the +5V_IN scale against a DMM\n"
     "  capture <mask> <n> <rate>  block capture -> CSV. mask is a channel bitmask\n"
+    "  capture trig <ch> [thr] [rate] [pre%] [tmo_s]\n"
+    "                             TRIGGERED single shot. Runs the DMA in a ring\n"
+    "                             and stops AFTER the trigger, so the buffer holds\n"
+    "                             the baseline and the leading edge. 80 codes,\n"
+    "                             500 kHz, 25%% pre-trigger, 30 s by default.\n"
     "                             e.g. 'capture 0x20 2000 250000' = ADC5 @ 250 ksps\n"
     "  adcmode off|idle|armed|burst\n"
     "\n"
@@ -246,8 +251,77 @@ static void cmd_pins(void) {
 #endif
 }
 
+// Passed to adc_capture_triggered() so the wait services the FSM and can be
+// broken by a keypress. Keeps adc_engine.c free of any service-layer include.
+static bool capture_wait_poll(void) {
+    pitrac_service();
+    return pitrac_abort_pending();
+}
+
+static void cmd_capture_trig(int argc, char **argv) {
+    if (argc < 3) {
+        printf("usage: capture trig <ch> [threshold] [rate_hz] [pre%%] [timeout_s]\n"
+               "  defaults: threshold 80, rate 500000, pre 25%%, timeout 30 s\n"
+               "  Runs the DMA continuously and stops it AFTER the trigger, so the\n"
+               "  buffer contains the baseline and the leading edge -- which a\n"
+               "  start-on-command capture can never hold.\n");
+        return;
+    }
+    uint     ch   = (uint)strtoul(argv[2], NULL, 0);
+    uint16_t thr  = (argc > 3) ? (uint16_t)strtoul(argv[3], NULL, 0) : 80u;
+    uint32_t rate = (argc > 4) ? (uint32_t)strtoul(argv[4], NULL, 0) : 500000u;
+    float    pref = (argc > 5) ? (float)strtoul(argv[5], NULL, 0) / 100.0f : 0.25f;
+    uint32_t tmo  = (argc > 6) ? (uint32_t)strtoul(argv[6], NULL, 0) * 1000u : 30000u;
+
+    if (ch > 7 || !((ADC_VALID_MASK >> ch) & 1u)) {
+        printf("ERR: ch%u is not an analog input (valid: 0,1,2,5,7)\n", ch);
+        return;
+    }
+
+    uint16_t base = 0;
+    size_t   trig = 0;
+    printf("armed: ch%u, threshold %u codes, %lu Hz, %.0f%% pre-trigger.\n",
+           ch, thr, (unsigned long)rate, (double)(pref * 100.0f));
+    printf("  window %.1f ms. Make the sound. Any key aborts.\n",
+           (double)ADC_CAPTURE_MAX_SAMPLES * 1000.0 / (double)rate);
+
+    adc_trig_result_t r = adc_capture_triggered(ch, ADC_CAPTURE_MAX_SAMPLES, rate,
+                                                thr, pref, tmo,
+                                                capture_wait_poll, &base, &trig);
+    switch (r) {
+        case ADC_TRIG_TIMEOUT:
+            printf("NO TRIGGER: nothing reached %u codes from a baseline of %u\n"
+                   "  in %lu s. Lower the threshold, or get closer.\n",
+                   thr, base, (unsigned long)(tmo / 1000u));
+            return;
+        case ADC_TRIG_ABORTED: printf("aborted.\n"); return;
+        case ADC_TRIG_ERROR:   printf("ERR: bad arguments\n"); return;
+        case ADC_TRIG_OK:      break;
+    }
+
+    size_t got = adc_capture_count();
+    printf("# capture mask=0x%02x n=%u rate=%lu overran=%d trig=%u base=%u\n",
+           adc_capture_mask(), (unsigned)got, (unsigned long)adc_capture_rate(),
+           adc_capture_overran(), (unsigned)trig, base);
+    printf("# columns: ch%u\n", ch);
+    const uint16_t *b = adc_capture_buffer();
+    const size_t start = adc_capture_start();
+    for (size_t i = 0; i < got; i++) {
+        printf("%u\n", b[(start + i) % ADC_CAPTURE_MAX_SAMPLES]);
+        if ((i % 256) == 0) tight_loop_contents();
+    }
+    printf("# end\n");
+    if (adc_capture_overran())
+        printf("WARN: FIFO overran -- samples are not evenly spaced.\n");
+}
+
 static void cmd_capture(int argc, char **argv) {
-    if (argc < 4) { printf("usage: capture <mask> <n> <rate_hz>\n"); return; }
+    if (argc >= 2 && !strcmp(argv[1], "trig")) { cmd_capture_trig(argc, argv); return; }
+    if (argc < 4) {
+        printf("usage: capture <mask> <n> <rate_hz>\n");
+        printf("       capture trig <ch> [threshold] [rate_hz] [pre%%] [timeout_s]\n");
+        return;
+    }
     uint     mask = (uint)strtoul(argv[1], NULL, 0);
     size_t   n    = (size_t)strtoul(argv[2], NULL, 0);
     uint32_t rate = (uint32_t)strtoul(argv[3], NULL, 0);
@@ -276,8 +350,12 @@ static void cmd_capture(int argc, char **argv) {
     uint nch = 0;
     for (uint c = 0; c < 8; c++) if (adc_capture_mask() & (1u << c)) nch++;
 
+    // A triggered capture wrapped, so the data does not start at index 0. The
+    // plain path leaves start = 0, which makes this the same walk for both.
+    const size_t start = adc_capture_start();
     for (size_t i = 0; i < got; i += nch) {
-        for (uint k = 0; k < nch; k++) printf(k ? ",%u" : "%u", b[i + k]);
+        for (uint k = 0; k < nch; k++)
+            printf(k ? ",%u" : "%u", b[(start + i + k) % ADC_CAPTURE_MAX_SAMPLES]);
         printf("\n");
         // The CDC pipe is slower than we can print. Yield occasionally so USB
         // keeps servicing and we don't drop the tail of a long dump.
@@ -1594,7 +1672,7 @@ static const cli_cmd_t k_cmds[] = {
     { "id", NULL, cmd_id_cmd, "firmware + chip identity" },
     { "stat", NULL, cmd_stat_cmd, "power state, rails, faults" },
     { "pins", NULL, cmd_pins_cmd, "read every signal pin" },
-    { "capture", NULL, cmd_capture_cmd, "block capture -> CSV" },
+    { "capture", NULL, cmd_capture_cmd, "block capture -> CSV; 'capture trig' waits for a sound" },
     { "gpio", NULL, cmd_gpio_cmd, "read / drive a pin" },
     { "adc", NULL, cmd_adc, "oversampled read" },
     { "adc5v", NULL, cmd_adc5v, "+5V_IN in volts" },

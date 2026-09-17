@@ -17,10 +17,10 @@ anything.
 > | This document asks for | Reality in `src/` |
 > |---|---|
 > | Commanding a pulse width | **no `strobe` command**, no strobe module |
-> | "Load the PIO burst program" | `src/strobe_burst.pio` exists but is **not in `CMakeLists.txt`** — only `detect.pio` is passed to `pico_generate_pio_header()`, so it is never assembled |
+> | "Load the PIO burst program" | `src/strobe_burst.pio` **is assembled by `pioasm` on every build** (since commit 081c286, 2026-08-31, so it cannot rot unnoticed) — but **no C code loads it** and it emits nothing at link time |
 > | "DMA-feed a schedule" | no DMA path, no schedule structure |
 > | `compute_schedule()` unit test | **the function does not exist** |
-> | `BURST_CHARGE_MAX_mC` interlock | **the constant does not exist in `board.h`** |
+> | `BURST_CHARGE_MAX_MC` interlock | the **constant** exists in `board.h` (6.0 mC, 🔴 unvalidated, since commit 081c286) — **no interlock uses it** |
 > | Ramping Gate_PWM | **no `gate` command** |
 > | "capture the ADC0 plateau in BURST mode" | `adcmode burst` exists and selects ch0; nothing fires a pulse to plateau |
 >
@@ -220,7 +220,7 @@ Unit-test `compute_schedule()` against the .md §15 table:
 > The table is internally consistent to three digits on both, so these are almost certainly
 > the intended assumptions rather than coincidence.
 
-Verify the `BURST_CHARGE_MAX_mC` (6.0) interlock actually sheds pulses at 10 m/s — and note
+Verify the `BURST_CHARGE_MAX_MC` (6.0) interlock actually sheds pulses at 10 m/s — and note
 it is the only row that exceeds it, at 9 mC. The 20 m/s row (4.5 mC) passes with 25 % margin.
 
 ---
@@ -371,8 +371,8 @@ working, and every later step assumes it is.
 
 ## Exit criteria
 
-- [ ] **Strobe firmware written** — pulse command, PIO burst engine (`strobe_burst.pio` added
-      to `CMakeLists.txt`), schedule computation, `BURST_CHARGE_MAX_mC` interlock, gate DAC
+- [ ] **Strobe firmware written** — pulse command, PIO burst engine (`strobe_burst.pio` is
+      already assembled; it needs LOADING), schedule computation, `BURST_CHARGE_MAX_MC` interlock, gate DAC
 - [ ] **U5 clamp measured**, `STROBE_SW_MAX_US` confirmed or corrected against it, §15 table
       re-derived only if U5 comes in below 100 µs
 - [ ] Commanded widths reproduce at Q10's gate
