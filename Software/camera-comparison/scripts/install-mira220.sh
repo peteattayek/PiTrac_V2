@@ -42,6 +42,7 @@ need() {
 exists() { [[ -e $1 || -L $1 ]]; }
 hash_file() { sha256sum -- "$1" | awk '{print $1}'; }
 valid_kernel() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$ ]]; }
+valid_srcversion() { [[ $1 =~ ^[A-Fa-f0-9]{23,24}$ ]]; }
 
 help() {
     cat <<'EOF'
@@ -255,12 +256,16 @@ read_ownership() {
         [[ ! ${ownership[$key]+present} ]] || die "Duplicate ownership key: $key"
         ownership["$key"]=$value
     done < "$MANIFEST"
+    validate_ownership
+}
+
+validate_ownership() {
     [[ ${#ownership[@]} == 7 && ${ownership[schema]:-} == 1 &&
        ${ownership[commit]:-} == "$COMMIT" &&
        ${ownership[module_sha]:-} =~ ^[a-f0-9]{64}$ &&
        ${ownership[overlay_sha]:-} =~ ^[a-f0-9]{64}$ &&
-       ${ownership[srcversion]:-} =~ ^[A-Fa-f0-9]{24}$ &&
-       ${ownership[initramfs]:-} =~ ^(none|stock)$ ]] ||
+       ${ownership[initramfs]:-} =~ ^(none|stock)$ ]] &&
+        valid_srcversion "${ownership[srcversion]:-}" ||
         die "Invalid/incompatible ownership manifest; manual audit required."
     valid_kernel "${ownership[kernel]:-}" || die "Invalid recorded kernel."
 }
@@ -386,8 +391,8 @@ build_vendor() {
     vermagic=$(modinfo -F vermagic "$src/mira220.ko")
     [[ ${vermagic%% *} == "$kernel" ]] || die "Built module vermagic does not match $kernel."
     source_version=$(modinfo -F srcversion "$src/mira220.ko")
-    [[ $source_version =~ ^[A-Fa-f0-9]{24}$ ]] ||
-        die "Built module has missing/invalid srcversion despite CONFIG_MODULE_SRCVERSION_ALL=y. Inspect $work/build.log and modinfo on $src/mira220.ko; no driver files have been installed."
+    valid_srcversion "$source_version" ||
+        die "Expected a 23- or 24-character hexadecimal srcversion; got length ${#source_version}, value $(printf '%q' "$source_version"). Inspect $work/build.log and modinfo on $src/mira220.ko; no driver files have been installed."
     module_hash=$(hash_file "$src/mira220.ko")
     overlay_hash=$(hash_file "$work/mira220-nir.dtbo")
 }

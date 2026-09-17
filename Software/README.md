@@ -21,7 +21,8 @@ PCIe Gen 2 NVMe storage, a source-pinned Mira220 driver, reversible manual boot
 configuration, direct V4L2 raw capture, and evidence-based verification.
 
 **Hardware validation is pending.** The pinned driver source compiled on the
-target's 6.18.50 kernel, but installation stopped at the optional metadata check;
+target's 6.18.50 kernel with a valid source fingerprint, but installation stopped
+at an incorrect fingerprint-length check that has now been corrected;
 successful installation and camera capture remain unverified.
 Trixie alone is not a compatibility guarantee;
 the guide includes mandatory stop points and an unresolved upstream Pi 5

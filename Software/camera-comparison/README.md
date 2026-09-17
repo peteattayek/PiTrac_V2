@@ -11,9 +11,10 @@ kernel on each target rather than assuming it matches.
 
 **Status: target validation pending.** The rates and exposure times below are
 source-derived targets, not measurements. The pinned driver and overlay compiled
-on the target's 6.18.50 kernel, but installation stopped at the optional
-`srcversion` check before installing driver files. The metadata-generation fix
-below still requires a successful target retry. No successful Mira220 stream,
+on the target's 6.18.50 kernel and produced a valid 23-character `srcversion`.
+Installation stopped before copying driver files because an earlier installer
+incorrectly required 24 characters. The corrected validator below still requires
+a successful target installation. No successful Mira220 stream,
 NVMe benchmark, or 60-second dual recording has been demonstrated here.
 A [public Mira220 Pi 5/CFE streaming failure][mira-issue] remains open as of
 2026-09-17. A compiled module, compiled overlay, successful probe, or
@@ -349,20 +350,24 @@ running kernel's configuration or change `CONFIG_MODVERSIONS` ABI checks.
 The pinned vendor source has no `MODULE_VERSION`, so a default build can
 legitimately omit `srcversion` even when compilation succeeds.
 
-If an older copy of the installer stops during `source-fetch-and-build` with
-`Module lacks srcversion identity`, it has not yet installed the module or
-overlay. Do not remove packaged files, bypass identity checks, or rebuild the
-kernel. Update the installer, or use this command-local retry with the existing
-Pi-side copy:
+Kbuild on the inspected 6.18.50 kernel emits **23 hexadecimal characters**:
+modpost passes its 25-byte buffer with a size of 24 to `snprintf`, leaving
+23 characters plus the terminator. This was confirmed with the actual Pi-built
+module, not just a fixture. The installer accepts that form and the compatible
+24-character form, using the same validator for the build and ownership record.
+It preserves and compares the entire fingerprint without padding or truncation.
 
-```bash
-MAKEFLAGS='CONFIG_MODULE_SRCVERSION_ALL=y' bash scripts/install-mira220.sh --install
-```
+An older installer that requires exactly 24 characters will reject a valid
+23-character fingerprint even with `CONFIG_MODULE_SRCVERSION_ALL=y` or a
+`MAKEFLAGS` override. Inspect `modinfo -F srcversion` on the existing module named
+in the failure output instead of repeatedly rebuilding. Update the installer's
+build and ownership validation together; a generation-only change is insufficient.
+Failures at `source-fetch-and-build` have not yet installed the module or overlay.
+Do not remove packaged files, bypass identity checks, or rebuild the kernel.
 
-GNU Make forwards that variable assignment through the vendor's recursive build.
-The installer must still verify the resulting fingerprint, vermagic, file
-checksums, module precedence and initramfs. If it fails again, preserve the new
-build log and stop before changing camera boot configuration.
+The installer still verifies the fingerprint, vermagic, file checksums, module
+precedence and initramfs. If it fails again, preserve the reported actual value
+and length and stop before changing camera boot configuration.
 
 The installed external module is
 `/lib/modules/$(uname -r)/updates/pitrac-mira220-nir/mira220.ko`, with the paired
@@ -913,10 +918,14 @@ bash tests/test-installer.sh
 ```
 
 They exercise shell syntax, argument/error paths, timing calculations and
-deterministic metadata/log fixtures. The installer fixtures use GNU Make to
+deterministic metadata/log fixtures. The installer tests compile a small C
+reproducer of the pinned Kbuild formatting contract, validate the actual
+23-character Pi fingerprint in both build and ownership checks, reject malformed
+fingerprints, and retain compatible 24-character records. They use GNU Make to
 verify metadata-option propagation through a recursive build, unchanged
 configuration/ABI settings, the command-local retry and build-error propagation.
-They do not compile or install a real kernel module. No Python or CMake test
+They need a C compiler (`cc`, supplied by the existing build prerequisites), but
+do not compile or install a real kernel module. No Python or CMake test
 setup is needed.
 **Fixtures are schema/logic tests, not hardware validation**: synthetic logs
 and sparse fixture files are not evidence of photons, sensor streams, sustained

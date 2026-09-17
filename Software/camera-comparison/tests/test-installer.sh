@@ -4,7 +4,7 @@
 set -euo pipefail
 SCRIPTS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../scripts" && pwd)
 source "$SCRIPTS/common.sh"
-need make awk cmp sha256sum
+need make cc awk cmp sha256sum
 fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/pitrac-installer-tests.XXXXXXXX")
 trap 'rm -r -- "$fixture_root"' EXIT
 fixture_source=$fixture_root/vendor
@@ -16,11 +16,64 @@ equal() {
     [[ $1 == "$2" ]] || die "Expected '$2', got '$1'."
     ((checks+=1))
 }
+fails() {
+    if ("$@") > "$fixture_root/negative.stdout" 2> "$fixture_root/negative.stderr"; then
+        die "Expected failure: $*"
+    fi
+    ((checks+=1))
+}
+check_srcversion() (
+    source "$SCRIPTS/install-mira220.sh"
+    valid_srcversion "$1"
+)
+check_ownership() (
+    source "$SCRIPTS/install-mira220.sh"
+    ownership=(
+        [schema]=1 [kernel]="$fixture_kernel" [commit]="$COMMIT"
+        [module_sha]="$(printf '%064d' 0)" [overlay_sha]="$(printf '%064d' 0)"
+        [srcversion]="$1" [initramfs]=none
+    )
+    validate_ownership
+)
 
 bash -n "$SCRIPTS/install-mira220.sh"
 ((checks+=1))
 bash "$SCRIPTS/install-mira220.sh" --help > "$fixture_root/help.txt"
 ((checks+=1))
+
+# Mirror the 6.18 modpost buffer/size contract, not the MD4 calculation itself.
+cat > "$fixture_root/srcversion-format.c" <<'EOF'
+#include <stdio.h>
+
+int main(void)
+{
+    char srcversion[25];
+    snprintf(srcversion, sizeof(srcversion) - 1, "%08X%08X%08X%08X",
+             0x712AA4F7u, 0x4D072B09u, 0xAA7CE8F0u, 0x12345678u);
+    puts(srcversion);
+    return 0;
+}
+EOF
+if ! cc "$fixture_root/srcversion-format.c" -o "$fixture_root/srcversion-format" \
+    > "$fixture_root/format-build.log" 2>&1; then
+    cat "$fixture_root/format-build.log" >&2
+    die "Could not compile the intentional-truncation formatting fixture."
+fi
+generated_srcversion=$("$fixture_root/srcversion-format")
+observed_srcversion=712AA4F74D072B09AA7CE8F
+equal "$generated_srcversion" "$observed_srcversion"
+equal "${#generated_srcversion}" 23
+for fingerprint in "$observed_srcversion" "${observed_srcversion,,}" 0123456789ABCDEF01234567; do
+    check_srcversion "$fingerprint" || die "A supported fingerprint was rejected."
+    ((checks+=1))
+    check_ownership "$fingerprint" || die "A supported ownership fingerprint was rejected."
+    ((checks+=1))
+done
+for fingerprint in "" "${observed_srcversion:0:22}" "${observed_srcversion}00" \
+    "Z${observed_srcversion:1}" " $observed_srcversion" "$observed_srcversion"$'\n'; do
+    fails check_srcversion "$fingerprint"
+    fails check_ownership "$fingerprint"
+done
 
 cat > "$fixture_source/Makefile" <<'EOF'
 .PHONY: all
@@ -57,7 +110,7 @@ equal "$(value "$fixture_source/build-settings.tsv" abi_versions)" y
 cmp -- "$fixture_headers/auto.conf" "$fixture_root/auto.conf.before"
 ((checks+=1))
 
-# The command-local retry also works with an older Pi-side installer.
+# MAKEFLAGS enables metadata but cannot repair an incorrect fingerprint validator.
 MAKEFLAGS='CONFIG_MODULE_SRCVERSION_ALL=y' make -C "$fixture_source" \
     KDIR="$fixture_headers" KERNELRELEASE="$fixture_kernel" -j2 > "$fixture_root/retry-build.log"
 equal "$(value "$fixture_source/build-settings.tsv" modpost_flag)" -a
@@ -73,4 +126,4 @@ if (
 fi
 ((checks+=1))
 
-printf 'All %d installer fixture checks passed (GNU Make fixtures; no module installation or target build).\n' "$checks"
+printf 'All %d installer checks passed (C formatting, actual Pi fingerprint and GNU Make fixtures; no installation).\n' "$checks"
