@@ -57,6 +57,25 @@ printf '%s\n' '- entity 42: mira220 6-0054 (1 pad, 1 link)' > "$work/topology.tx
 equal "$(sensor_entity mira220 < "$work/topology.txt")" 'mira220 6-0054'
 printf '%s\n' '- entity 52: mira220 4-0054 (1 pad, 1 link)' >> "$work/topology.txt"
 fails sensor_entity mira220 < "$work/topology.txt"
+cat > "$work/cfe-topology.txt" <<'EOF'
+- entity 1: csi2 (8 pads, 8 links, 0 routes)
+        pad0: SINK
+        pad4: SOURCE
+- entity 10: pisp-fe (5 pads, 7 links, 0 routes)
+        pad4: SOURCE,MUST_CONNECT
+- entity 16: imx296 10-001a (1 pad, 1 link, 0 routes)
+        pad0: SOURCE
+EOF
+has_cfe_raw_source_pad < "$work/cfe-topology.txt" || die "Uppercase CSI source pad was not recognized."
+((checks+=1))
+equal "$(sensor_entity imx296 < "$work/cfe-topology.txt")" 'imx296 10-001a'
+sed 's/SOURCE/Source/g' "$work/cfe-topology.txt" > "$work/cfe-mixed-case.txt"
+has_cfe_raw_source_pad < "$work/cfe-mixed-case.txt" || die "Mixed-case CSI source pad was not recognized."
+((checks+=1))
+sed 's/pad4: SOURCE$/pad4: SINK/' "$work/cfe-topology.txt" > "$work/cfe-wrong-pad.txt"
+fails has_cfe_raw_source_pad < "$work/cfe-wrong-pad.txt"
+printf '%s\n' '- entity 10: pisp-fe (5 pads, 7 links, 0 routes)' '        pad4: SOURCE' > "$work/cfe-missing.txt"
+fails has_cfe_raw_source_pad < "$work/cfe-missing.txt"
 cat > "$work/format.txt" <<'EOF'
 Format Video Capture:
     Width/Height      : 1456/1088

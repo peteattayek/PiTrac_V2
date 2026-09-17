@@ -116,6 +116,13 @@ sensor_entity() {
         END { if (n != 1) exit 2 }
     '
 }
+has_cfe_raw_source_pad() {
+    awk '
+        /- entity [0-9]+:/ { csi = ($0 ~ /- entity [0-9]+: csi2 \(/) }
+        csi && $1 == "pad4:" && toupper($2) ~ /^SOURCE(,|$)/ { found=1 }
+        END { exit !found }
+    '
+}
 format_values() {
     awk '
         /Width\/Height[[:space:]]*:/ { split($NF, wh, "/"); w=wh[1]; h=wh[2]; nw++ }

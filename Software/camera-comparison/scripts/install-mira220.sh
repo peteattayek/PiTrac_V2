@@ -361,6 +361,11 @@ new_cache() {
     printf 'Build/diagnostic cache retained at: %s\n' "$work"
 }
 
+build_module() {
+    # Request the optional fingerprint from modpost without changing kernel config or ABI checks.
+    make -C "$1" KDIR="$2" KERNELRELEASE="$3" CONFIG_MODULE_SRCVERSION_ALL=y -j2
+}
+
 build_vendor() {
     local src=$work/source vermagic
     phase=source-fetch-and-build
@@ -373,7 +378,7 @@ build_vendor() {
     [[ $(git -C "$src" rev-parse HEAD) == "$COMMIT" &&
        -z $(git -C "$src" status --porcelain) ]] || die "Source checkout is not clean and pinned."
     # Vendor Makefile: all -> make -C $(KDIR) M=$(SRC) modules. No overlay target.
-    make -C "$src" KDIR="$build" KERNELRELEASE="$kernel" -j2 2>&1 | tee "$work/build.log"
+    build_module "$src" "$build" "$kernel" 2>&1 | tee "$work/build.log"
     dtc -@ -I dts -O dtb -i "$src/dts/rpi" -o "$work/mira220-nir.dtbo" \
         "$src/dts/rpi/mira220-overlay.dts" 2>&1 | tee "$work/overlay.log"
     [[ -s $src/mira220.ko && -s $work/mira220-nir.dtbo ]] || die "Build artifacts are missing/empty."
@@ -382,7 +387,7 @@ build_vendor() {
     [[ ${vermagic%% *} == "$kernel" ]] || die "Built module vermagic does not match $kernel."
     source_version=$(modinfo -F srcversion "$src/mira220.ko")
     [[ $source_version =~ ^[A-Fa-f0-9]{24}$ ]] ||
-        die "Module lacks srcversion identity; a separately reviewed loaded-module verification method is required."
+        die "Built module has missing/invalid srcversion despite CONFIG_MODULE_SRCVERSION_ALL=y. Inspect $work/build.log and modinfo on $src/mira220.ko; no driver files have been installed."
     module_hash=$(hash_file "$src/mira220.ko")
     overlay_hash=$(hash_file "$work/mira220-nir.dtbo")
 }
@@ -581,4 +586,6 @@ main() {
     esac
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
+fi

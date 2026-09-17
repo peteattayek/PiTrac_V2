@@ -20,8 +20,10 @@ with inspection of the actual running kernel. It covers active cooling, power,
 PCIe Gen 2 NVMe storage, a source-pinned Mira220 driver, reversible manual boot
 configuration, direct V4L2 raw capture, and evidence-based verification.
 
-**Hardware validation is pending.** No driver build or camera capture on the
-target Pi has been verified here. Trixie alone is not a compatibility guarantee;
+**Hardware validation is pending.** The pinned driver source compiled on the
+target's 6.18.50 kernel, but installation stopped at the optional metadata check;
+successful installation and camera capture remain unverified.
+Trixie alone is not a compatibility guarantee;
 the guide includes mandatory stop points and an unresolved upstream Pi 5
 streaming report. Do not reflash or upgrade the kernel just to follow it.
 

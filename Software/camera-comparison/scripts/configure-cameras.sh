@@ -70,7 +70,7 @@ for sensor in "${sensors[@]}"; do
     graph=$(media-ctl -d "$device" -p)
     grep -Eq '^model[[:space:]]+rp1-cfe' <<< "$graph" || die "Unsupported receiver; expected downstream rp1-cfe."
     grep -Fq 'rp1-cfe-csi2_ch0' <<< "$graph" || die "Raw channel 0 is missing."
-    grep -Eq 'pad4: Source' <<< "$graph" || die "Unsupported CFE pad layout."
+    has_cfe_raw_source_pad <<< "$graph" || die "Unsupported CFE pad layout: csi2 pad 4 must be a source."
     idle_graph "$graph"
     printf '%s\n' "$graph" > "$output/$sensor.before-topology.txt"
     subdev=$(media-ctl -d "$device" -e "$entity")

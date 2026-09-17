@@ -6,11 +6,15 @@
 This guide adds a standalone camera-comparison setup to an **existing 64-bit
 Raspberry Pi OS Trixie installation on Raspberry Pi 5**. Keep that installation
 and its current kernel until inspection establishes what is actually present.
-The target's `uname -r` is not yet known.
+The inspected target now boots `6.18.50+rpt-rpi-2712`; still check the running
+kernel on each target rather than assuming it matches.
 
 **Status: target validation pending.** The rates and exposure times below are
-source-derived targets, not measurements. No target Pi driver build, successful
-stream, NVMe benchmark, or 60-second recording has been demonstrated here.
+source-derived targets, not measurements. The pinned driver and overlay compiled
+on the target's 6.18.50 kernel, but installation stopped at the optional
+`srcversion` check before installing driver files. The metadata-generation fix
+below still requires a successful target retry. No successful Mira220 stream,
+NVMe benchmark, or 60-second dual recording has been demonstrated here.
 A [public Mira220 Pi 5/CFE streaming failure][mira-issue] remains open as of
 2026-09-17. A compiled module, compiled overlay, successful probe, or
 `CONFIGURED` message is not proof of capture.
@@ -134,6 +138,44 @@ Record and review:
 `dist-upgrade`, change boot order, force PCIe Gen 3, or replace the kernel to get
 past a failed check. Inspect first. Any kernel migration or driver backport is
 a separate decision with a recovery plan.
+
+### Installed kernel differs from the running kernel
+
+An image and matching headers can already be installed while `uname -r` still
+reports an older kernel. For example, an inspection may list 6.18.50 packages
+while the Pi is running `6.12.75+rpt-rpi-2712`. The Mira220 check correctly
+rejects the **running** 6.12 kernel; installing more headers or removing that
+check is not the solution.
+
+A pending reboot is a common explanation, but incomplete package configuration,
+an explicit boot override, or a different boot partition can also cause this.
+Before changing packages or rebooting, inspect the candidate's package status
+and the boot configuration. Substitute the candidate actually listed by your
+inspection:
+
+```bash
+CANDIDATE=6.18.50+rpt-rpi-2712
+dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\t${Version}\n' \
+  "linux-image-$CANDIDATE" "linux-headers-$CANDIDATE"
+cat /boot/firmware/config.txt
+vcgencmd get_config str
+ls -lh "/boot/vmlinuz-$CANDIDATE" "/boot/initrd.img-$CANDIDATE" \
+  /boot/firmware/kernel_2712.img /boot/firmware/initramfs_2712
+```
+
+`ii` means a package is installed and configured. Follow any boot `include`
+directives and review explicit `kernel`, `os_prefix` or initramfs overrides;
+do not remove them blindly. Once the intended boot files and recovery path are
+confirmed, a planned reboot may be all that is needed. Recheck `uname -r` and
+run inspection into a new directory afterwards. If it still reports the old
+kernel, investigate boot selection instead of repeatedly reinstalling packages.
+
+Likewise, a sensor entity showing `Y10_1X10/1456x1088` while the receiver pads
+still show `SRGGB10_1X10/640x480` is consistent with an unconfigured raw pipeline:
+the receiver defaults do not mean the monochrome sensor has changed to Bayer.
+A detected but unmounted NVMe is not yet a recording destination. Preserve its
+existing partitions and data; do not run the storage benchmark on the microSD
+root filesystem by mistake.
 
 ### Why Trixie is not enough
 
@@ -299,6 +341,28 @@ user cache under `${XDG_CACHE_HOME:-$HOME/.cache}/pitrac-mira220-nir`. It prints
 the retained per-attempt directory containing source, `build.log`, and
 `overlay.log`. The vendor build requires that cache path have no spaces or shell
 metacharacters; choose a suitable user-owned cache location if necessary.
+
+The external-module build explicitly passes `CONFIG_MODULE_SRCVERSION_ALL=y`
+so Kbuild generates the optional `srcversion` fingerprint used by the installer.
+This is a **build-command setting for this module**: it does not edit the
+running kernel's configuration or change `CONFIG_MODVERSIONS` ABI checks.
+The pinned vendor source has no `MODULE_VERSION`, so a default build can
+legitimately omit `srcversion` even when compilation succeeds.
+
+If an older copy of the installer stops during `source-fetch-and-build` with
+`Module lacks srcversion identity`, it has not yet installed the module or
+overlay. Do not remove packaged files, bypass identity checks, or rebuild the
+kernel. Update the installer, or use this command-local retry with the existing
+Pi-side copy:
+
+```bash
+MAKEFLAGS='CONFIG_MODULE_SRCVERSION_ALL=y' bash scripts/install-mira220.sh --install
+```
+
+GNU Make forwards that variable assignment through the vendor's recursive build.
+The installer must still verify the resulting fingerprint, vermagic, file
+checksums, module precedence and initramfs. If it fails again, preserve the new
+build log and stop before changing camera boot configuration.
 
 The installed external module is
 `/lib/modules/$(uname -r)/updates/pitrac-mira220-nir/mira220.ko`, with the paired
@@ -840,14 +904,20 @@ directory or assume old ownership state can be reused.
 
 ## Validation status and sources
 
-The existing [Bash fixture runner](tests/test-helpers.sh) can be invoked with:
+Run the [capture-helper fixtures](tests/test-helpers.sh) and the
+[installer build fixtures](tests/test-installer.sh) with:
 
 ```bash
 bash tests/test-helpers.sh
+bash tests/test-installer.sh
 ```
 
-It exercises shell syntax, argument/error paths, timing calculations and
-deterministic metadata/log fixtures. No Python or CMake test setup is needed.
+They exercise shell syntax, argument/error paths, timing calculations and
+deterministic metadata/log fixtures. The installer fixtures use GNU Make to
+verify metadata-option propagation through a recursive build, unchanged
+configuration/ABI settings, the command-local retry and build-error propagation.
+They do not compile or install a real kernel module. No Python or CMake test
+setup is needed.
 **Fixtures are schema/logic tests, not hardware validation**: synthetic logs
 and sparse fixture files are not evidence of photons, sensor streams, sustained
 storage, or a successful Pi kernel build.
