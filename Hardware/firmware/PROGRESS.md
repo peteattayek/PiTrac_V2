@@ -3,7 +3,7 @@
 **Read this first when resuming work.** It records what is done, what is next, and the
 decisions/measurements that must not be lost between sessions.
 
-Last updated: **2026-09-18**. **Current status is in §0 and the TOP block of §10.**
+Last updated: **2026-09-28** (owner-reported Test 6 PASS, plus doc/comment corrections; the last bench log entry is 2026-09-18). **Current status is in §0 and the TOP block of §10.**
 
 **Historical overview from 2026-08-24 (superseded for live board/build status):**
 
@@ -64,13 +64,13 @@ see §10 for the current pending-flash state:
 
 | | Status |
 |---|---|
-| **Handoff** | 🔵 **New to this work? Read `HANDOFF.md` first** (conventions, safety, tooling pitfalls, reading order), then §10 for the live resume point. There is **no separate plan file** — the `~/.claude/plans/…` paths this table used to cite no longer exist. PROGRESS is the plan. |
+| **Handoff** | 🔵 **New to this work? Read `HANDOFF.md` first** (conventions, safety, tooling pitfalls, reading order; for a whole-repo developer overview see `DEVELOPER_GUIDE.md` at the repo root), then §10 for the live resume point. There is **no separate plan file** — the `~/.claude/plans/…` paths this table used to cite no longer exist. PROGRESS is the plan. |
 | **Boards** | ✅ **Board 3 — the active bench board.** UID `6d6fda754e367a40`, **reworked TIA (Rf 116 kΩ, Cf 0.99 pF)**, calibrated and saved (carrier 104166 Hz, phase 1311 ticks, slot A seq 5). ✅ **Board 2** — healthy, calibrated, stock 470 kΩ TIA. 🔴 **Board 1 — OUT OF SERVICE**: U11B destroyed 2026-08-17 by foil across D12 (§11); needs U11 replaced. |
 | Toolchain | Installed — VS Code Pico extension, private copies in `%USERPROFILE%\.pico-sdk`. SDK 2.3.0, toolchain 15_2_Rel1, ninja 1.13.2, cmake 4.3.4. ⚠ **Not on PATH** — see `HANDOFF.md` for the export line. |
 | Bench equipment | Scope, logic analyzer (analog inputs **12 V max**, up to 50 MS/s), DMM, current-limited PSU, FLIR thermal camera. |
-| **Firmware** | ✅ **Power-request fix built in Release: 145152 text / 0 data / 88308 bss**, stamp **Sep 18 2026 15:21:18**; **20/20 host regression tests PASS**. **Flash and physical regression pending**; board still last verified on **11:11:51**. Fix changes request lifecycle/CLI refusal, not safety thresholds, shutdown timings, optical acquisition or config format. Written: power FSM, safe state, beam carrier + demod, ADC engine (DMA ring, block capture, **triggered capture**), detect (threshold DAC, gated HPF, comparator PIO timing, pass log + retained waveforms), cal (`cal demod`, `cal model`, `scan carrier`), dual-slot config store, service/yield layer, shot-sequencer **skeleton**, CLI. ❌ **Not written:** reported ball velocity, Phase 5 onset detector + mic veto, **all Phase 6 strobe firmware**, Phase 7 camera handshake, Phase 8 Pi integration. |
-| **Bench work done** | ✅ Phases 0, 0.5, 1, 1b, 1c, 2 previously passed; **new power-request regression found 2026-09-18**, see §6/§10. ✅ **Phase 3 §3.1–3.6 on board 3** — §3.6b is a *design finding* (Q8 ×7.43, CR-02), §3.6 Check 2 PASS. ✅ **Phase 5 mic bring-up** (2026-08-31). ✅ Board 3 detect control-path smoke and **first real optical ball waveform** (2026-09-18), **3.102 V peak / ~22.7 ms FWHM**, no observed clipping. Comparator edge timing and full §3.7/Phase 4 remain open. |
-| **Next** | **Reflash first: power-request fix, 15:21:18 Release build.** Then run **BENCH.md Test 6** with beam OFF/no Pi: redundant `on` is refused, one `off` leaves STANDBY/latch 0 for at least 5 s, repeated `off` does not poison the next start, force-off remains down. Board 3 is currently **STANDBY, latch 0** on the older image. After that, resolve the optical acquisition-window constraint before the normal 20-pass comparison. Real mic ball impact remains open in parallel (CR-18). |
+| **Firmware** | ✅ **Power-request fix built in Release: 145152 text / 0 data / 88308 bss**, stamp **Sep 18 2026 15:21:18**; **20/20 host regression tests PASS**. ✅ **Flashed; BENCH.md Test 6 PASS — owner-reported 2026-09-28** (readings not logged here). Fix changes request lifecycle/CLI refusal, not safety thresholds, shutdown timings, optical acquisition or config format. Written: power FSM, safe state, beam carrier + demod, ADC engine (DMA ring, block capture, **triggered capture**), detect (threshold DAC, gated HPF, comparator PIO timing, pass log + retained waveforms), cal (`cal demod`, `cal model`, `scan carrier`), dual-slot config store, service/yield layer, shot-sequencer **skeleton**, CLI. ❌ **Not written:** reported ball velocity, Phase 5 onset detector + mic veto, **all Phase 6 strobe firmware**, Phase 7 camera handshake, Phase 8 Pi integration. |
+| **Bench work done** | ✅ Phases 0, 0.5, 1, 1b, 1c, 2 previously passed; **power-request regression found 2026-09-18**, fixed, and ✅ **BENCH.md Test 6 PASS (owner-reported 2026-09-28)**; see §6/§10. ✅ **Phase 3 §3.1–3.6 on board 3** — §3.6b is a *design finding* (Q8 ×7.43, CR-02), §3.6 Check 2 PASS. ✅ **Phase 5 mic bring-up** (2026-08-31). ✅ Board 3 detect control-path smoke and **first real optical ball waveform** (2026-09-18), **3.102 V peak / ~22.7 ms FWHM**, no observed clipping. Comparator edge timing and full §3.7/Phase 4 remain open. |
+| **Next** | **Resolve the optical acquisition-window constraint.** The first real ball pulse (~22.7 ms wide) needs ~59.8 ms of refinement history against the 32.768 ms ring (§6 2026-09-18; `BENCH_P3_DETECT.md` §3.7 Step 2). Then run the normal §3.7 20-pass comparison. Real mic ball impact remains open in parallel (CR-18). *(Done: the power-request fix is flashed and BENCH.md Test 6 passed — owner-reported 2026-09-28.)* |
 
 **Bug found and fixed on the bench 2026-07-30 — ✅ fix verified (Phase 1 test 5).**
 
@@ -1007,6 +1007,26 @@ no Pi/camera, supply 5.20 V. Do not mark the hardware regression passed until on
 after redundant `on` stays down and subsequent intentional starts still work.
 No commits; unrelated Software changes left untouched.
 
+### 2026-09-28 - Power-request fix flashed; BENCH.md Test 6 PASS (owner-reported)
+
+The owner reported on 2026-09-28 that the power-request fix above was flashed and that
+**BENCH.md Test 6 passed**. The console log and readings were not added to this repo; if
+they turn up, record the `id` stamp (expected **Sep 18 2026 15:21:18**) and the Test 6
+rows here. **The stale-`on` regression is closed.** The old-image workaround (`on` only
+from confirmed STANDBY) is no longer needed on a reflashed board, but checking `stat` for
+**STANDBY / latch 0** after a shutdown is still good practice.
+
+Same day, documentation and comment-only corrections (no firmware behaviour change, no
+reflash needed):
+- `DEVELOPER_GUIDE.md` added at the repo root as the entry point for new developers.
+- Stale comments fixed in `beam.h`, `panel.h`, `detect.h`, `safe_state.c`, `board.h`
+  and `boards/pitrac_ltb_v1.h` (the last also lost a BOM and mojibake).
+- `tools/netlist_report.py` now works on case-sensitive filesystems and dates the report
+  from the netlist's own export stamp, so `--check` passes on a fresh clone.
+- `LICENSES/CERN-OHL-S-2.0.txt` added (LICENSING.md referred to it; it was missing).
+
+The full list is in `DEVELOPER_GUIDE.md` Appendix D.
+
 ---
 
 ## 7. Source layout
@@ -1178,7 +1198,12 @@ firmware/
   (the ring size must divide by it or the channel phase rotates on wrap), and an A↔B DMA
   chain does **not** work as a substitute — transfer counts do not reload, so the pair
   stalls silently after one lap each.
-- 🟡 **The 35 % beam duty ceiling is enforced in exactly one CLI path, and it is not the
+- ✅ **FIXED in code (source check 2026-09-28):** `beam_configure()` now enforces the
+  ceiling on the *effective* duty for every caller, clamping rather than refusing
+  (`beam.c`). One trap remains: `beam clamp` still leaves the duty at 50 %, so a bare
+  `beam freq` afterwards runs at the **35 % ceiling**, above the 25 % operating point
+  (CR-12). Keep typing `beam duty 2` after `beam clamp`. *Original entry, superseded:*
+  🟡 **The 35 % beam duty ceiling is enforced in exactly one CLI path, and it is not the
   dangerous one.** `beam duty` checks it (`cli.c`, the `REFUSED` branch), but `beam freq`,
   `beam clamp` and `beam sweep` all reach `beam_configure()` directly and skip the check.
   The concrete trap: **`beam clamp` writes `s_duty = 0.50` persistently**, so a bare
@@ -1211,7 +1236,12 @@ firmware/
 
 ## 10. Next session — start here
 
-> ### ✅ RESUME POINT — 2026-09-18: reflash power-request fix, then bench regression
+> ### ✅ RESUME POINT — 2026-09-28: power-request fix flashed, Test 6 PASS; next is the acquisition window
+>
+> **2026-09-28 update (owner-reported):** the power-request fix is flashed and **BENCH.md
+> Test 6 passed** — the regression is closed (§6). **Next:** resolve the acquisition-window
+> constraint described below, then the §3.7 20-pass set; the CR-18 ball impact runs in
+> parallel. The rest of this block records the 2026-09-18 state and is otherwise current.
 >
 > 🔵 **Taking over? Read `HANDOFF.md` first.** It carries the working conventions, the safety
 > rules, the tooling traps on this machine, and the analysis lessons that were expensive to
@@ -1225,10 +1255,11 @@ firmware/
 > unexpectedly restarted the rail; a **second `off`** achieved this confirmed shutdown.
 > Input supply **5.209 V** is upstream of the latch, not a switched-rail measurement.
 >
-> **Reflash first:** power-request fix built/verified in **Release**, expected `id` stamp
+> ✅ **Done since (owner-reported 2026-09-28) — kept for the record:** power-request fix
+> built/verified in **Release**, expected `id` stamp
 > **Sep 18 2026 15:21:18**, **145152 text / 88308 bss**. **20/20 native C regression tests
 > PASS**; the initial tests reproduced the bug before the fix. The board still last ran
-> **11:11:51**: **flash and physical Test 6 in BENCH.md are pending**.
+> **11:11:51** at the time; **the flash and BENCH.md Test 6 have since been done — PASS**.
 > New `on` is refused outside STANDBY and never queues a later restart; stop requests
 > cancel pending starts and teardown clears all requests. Supply/Pi timing, optical
 > acquisition and config layout are unchanged. Until reflashed, keep the old-image
@@ -1270,8 +1301,8 @@ firmware/
 > | ✅ | **§3.6 Check 2** | **DONE — PASS.** σ_noise flat 4.57–5.08 across 95–115 kHz |
 > | 🟡 | §3.6 Check 1 | **Deferred**, needs a scope. Downgraded: Check 2 already answered the question it supports |
 > | ✅ | **`detect` / arm / disarm** | **Control-path smoke PASS 2026-09-18.** PIO2/base16/SM0; GPIO46 remained HIGH at saved threshold 0; zero passes/FIFO words. **Edge timing is still untested** |
-> | 🟡 | **Power regression** | Source fix + **20/20 host tests PASS**. **Reflash 15:21:18 and run BENCH.md Test 6**; physical proof pending |
-> | 🟡 | **§3.7** | First real ball pilot **PASS**, **3.102 V / ~22.7 ms**. Full repeatability, comparator/ADC comparison and gain decision remain open. Finish power-fix bench verification and resolve acquisition-window limit before the normal 20-pass set |
+> | ✅ | **Power regression** | Source fix + **20/20 host tests PASS**; flashed and **BENCH.md Test 6 PASS** (owner-reported 2026-09-28) |
+> | 🟡 | **§3.7** | First real ball pilot **PASS**, **3.102 V / ~22.7 ms**. Full repeatability, comparator/ADC comparison and gain decision remain open. Power-fix verification is done (Test 6 PASS); resolve the acquisition-window limit before the normal 20-pass set |
 > | ✅ | **Phase 5 mic bring-up** | **DONE 8/31.** Front end validated: sub-LSB noise, 51–54 dB SNR, ~7× headroom, no enclosure ring |
 > | 🔴 | **Phase 5: a real BALL impact** | Not captured. It decides **CR-18** — whether the 2.41 kHz high-pass corner is throwing away the signal band |
 >
@@ -1496,9 +1527,12 @@ firmware/
 >   until the strobe/camera path exists. **`pico_multicore` is not linked**, which is why
 >   `flash_safe_execute()` takes its simple path — when Phase 6 launches core 1,
 >   `flash_safe_execute_core_init()` must be called on it.
-> - The phase model lives in RAM in `cli.c`; `cfg save` persists its coefficients but
->   `cfg_init()` does not rehydrate `s_phase_model` from them. Re-run `cal model` after a
->   reset, or wire that up.
+> - ✅ *Fixed 2026-08-25 (see the `restore_phase_model()` comment in `cli.c`; confirmed by a
+>   source check 2026-09-28): `restore_phase_model()` in `cli_init()`
+>   rehydrates `s_phase_model` from the saved coefficients at boot, and recomputes the
+>   pure-delay verdict when `cal_duty` is known.* Original: the phase model lives in RAM
+>   in `cli.c`; `cfg save` persists its coefficients but `cfg_init()` does not rehydrate
+>   `s_phase_model` from them. Re-run `cal model` after a reset, or wire that up.
 
 **Phases 0 through 2 are complete.** `BENCH.md` and `BENCH_P2_BEAM.md` are both finished.
 **Reflash first** — eight firmware fixes landed during Phase 2 bring-up (table at the top).
@@ -1528,6 +1562,10 @@ firmware/
 `beam duty <pct>` (refuses >35 %), `beam ramp <pct> [step_ms]`, `beam phase <ticks>`,
 `beam clamp` (now genuinely 1 kHz / 500 µs via clkdiv=3), `beam sweep <f0> <f1> <n> <dwell>`.
 
+> ✅ *Superseded (source check 2026-09-28): `beam_configure()` now enforces the ceiling on
+> every path, so the 50 % case can no longer happen — but `beam clamp` followed by a bare
+> `beam freq` runs at the 35 % ceiling, still above the 25 % operating point. Type
+> `beam duty 2` immediately after `beam clamp`.* Original:
 > ⚠ **The 35 % duty ceiling still only guards `beam duty`.** `beam freq`, `beam clamp` and
 > `beam sweep` reach `beam_configure()` directly and skip it. `beam clamp` leaves the duty at
 > **50 %**, so type `beam duty 2` immediately after. See §9 for the one-line fix.

@@ -2,13 +2,17 @@
 // Copyright (C) 2026 PiTrac contributors
 // beam.h -- Phase 2: the modulated IR beam and its phase-locked demodulator clock.
 //
-//   GPIO31  Modulation_PWM   PWM slice 3 ch B  -> U9 74LVC1G123 -> U10 MCP1416 -> Q11 -> D11
-//   GPIO39  Demodulation_PWM PWM slice 7 ch B  -> U13/U12A sign-switching demodulator
+//   GPIO31  Modulation_PWM   PWM slice 7 ch B  -> U9 74LVC1G123 -> U10 MCP1416 -> Q11 -> D11
+//   GPIO39  Demodulation_PWM PWM slice 11 ch B -> U13/U12A sign-switching demodulator
+//
+// (Slice numbers corrected 2026-09-28: RP2350B maps GPIO >= 32 to slice
+// 8 + ((gpio >> 1) & 3). Only this comment was wrong -- beam.c resolves both
+// slices at runtime with pwm_gpio_to_slice_num(). Full map in board.h.)
 //
 // Two things make this module less trivial than "set up a PWM":
 //
 // 1. PHASE LOCK. The demodulator has to run at exactly the carrier frequency with a
-//    controllable phase offset. Slices 3 and 7 are separate counters, so they are
+//    controllable phase offset. Slices 7 and 11 are separate counters, so they are
 //    locked by loading both counters while DISABLED and then enabling both in a
 //    SINGLE register write. Resolution is one sysclk tick, 6.67 ns, or 0.25 deg at
 //    104 kHz.
@@ -23,8 +27,9 @@
 //    exactly for pulses shorter than the one-shot period, and is HARD CLAMPED above
 //    it. There is no disable path on this watchdog by design: a stuck-high
 //    Modulation_PWM yields one clamped flash, not a cooked LED, and no DC beam mode
-//    can exist. Whether the '123 can *recover* fast enough to reproduce 30 % duty at
-//    104 kHz is open question Q2 -- measure it, do not assume.
+//    can exist. Whether the '123 recovers fast enough to reproduce the commanded
+//    duty was open question Q2 -- ANSWERED 2026-08-13: ~CLR resets the timing cap
+//    through an internal transistor, and duty is exact up to 250 kHz (PROGRESS Q2).
 //
 // Electrically the beam is the biggest continuous load on the board: ~3 A peak at
 // 30 % duty is ~0.95 A average from +5V, ~3.15 W in D11 and ~0.73 W in each ballast

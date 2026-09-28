@@ -16,7 +16,11 @@
 // than just blink:
 //   GPIO11 -> PWM slice 5 channel B
 //   GPIO12 -> PWM slice 6 channel A
-// Neither slice collides with the ones the detector needs later (2, 3, 7, 10).
+// Slice 6A IS SHARED with GPIO28 GATE_PWM, the Phase 6b strobe-current DAC -- same
+// slice AND channel, so one compare register would drive both pins. The ready LED
+// must come off PWM before the gate DAC is ever configured (ARCHITECTURE.md A7,
+// NEXT_BOARD_REV.md CR-01). Slice 5B is shared with GPIO27, which must stay SIO.
+// (This line used to say neither slice collided; that used RP2040 numbering.)
 
 #ifndef PITRAC_PANEL_H
 #define PITRAC_PANEL_H

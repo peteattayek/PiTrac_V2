@@ -31,12 +31,16 @@ Every fact in the output is tagged:
                       relying on it for anything safety- or damage-related.
 """
 
-import argparse, math, os, re, sys, glob, datetime
+import argparse, math, os, re, sys, glob
 
 HERE  = os.path.dirname(os.path.abspath(__file__))
 FW    = os.path.dirname(HERE)
 ROOT  = os.path.dirname(os.path.dirname(FW))
-KICAD = os.path.join(ROOT, "Hardware", "THE_SECOND_BOARD_TO_RULE_THEM_ALL")
+# Exact case matters: the directory is "The_Second_Board_To_Rule_Them_All". An
+# all-caps spelling here used to work only on case-insensitive filesystems
+# (Windows, default macOS) and failed outright on Linux.
+KICAD_DIRNAME = "The_Second_Board_To_Rule_Them_All"
+KICAD = os.path.join(ROOT, "Hardware", KICAD_DIRNAME)
 NET   = os.path.join(KICAD, "The_Second_Board_To_Rule_Them_All.net")
 OUT   = os.path.join(ROOT, "HARDWARE_REFERENCE.md")
 
@@ -71,6 +75,24 @@ def parse_netlist(path):
             if g:
                 gpio[int(g.group(1))] = (cur, pin)
     return nets, values, gpio
+
+
+def netlist_export_date(path):
+    """The export date KiCad writes into the netlist header, as YYYY-MM-DD.
+
+    Read from the file's CONTENT, never its mtime. The mtime is whatever the
+    filesystem says -- a fresh clone or a CI checkout stamps it with the clone
+    time -- so a date taken from it made `--check` report STALE on every machine
+    except the one that generated the file.
+    """
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = re.search(r'\(date "(\d{4}-\d{2}-\d{2})', line)
+            if m:
+                return m.group(1)
+            if "(components" in line:     # the header is over; stop looking
+                break
+    return "unknown"
 
 
 def parse_dnp(kicad_dir):
@@ -137,8 +159,8 @@ def main():
     w("python Hardware/firmware/tools/netlist_report.py --check  # fail if stale")
     w("```")
     w("")
-    w(f"Source: `Hardware/THE_SECOND_BOARD_TO_RULE_THEM_ALL/`, "
-      f"netlist dated {datetime.date.fromtimestamp(os.path.getmtime(NET))}.")
+    w(f"Source: `Hardware/{KICAD_DIRNAME}/`, "
+      f"netlist exported {netlist_export_date(NET)}.")
     w("")
     w("## How to use this file, and when not to")
     w("")

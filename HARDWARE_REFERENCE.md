@@ -10,7 +10,7 @@ python Hardware/firmware/tools/netlist_report.py          # rewrite this file
 python Hardware/firmware/tools/netlist_report.py --check  # fail if stale
 ```
 
-Source: `Hardware/THE_SECOND_BOARD_TO_RULE_THEM_ALL/`, netlist dated 2026-07-28.
+Source: `Hardware/The_Second_Board_To_Rule_Them_All/`, netlist exported 2026-07-15.
 
 ## How to use this file, and when not to
 

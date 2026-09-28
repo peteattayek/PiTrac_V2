@@ -65,11 +65,15 @@ void safe_state_init(void) {
     // Comparator threshold to 0 V.
     out_low(PIN_THRESHOLD_PWM);
 
-    // Baseline HPF: LOW at reset.
+    // Baseline HPF: LOW at reset, which is also TRACK.
     //
-    // Tracking (HIGH) is the right *operating* idle -- the detector follows
-    // ambient drift rather than sitting on a stale frozen baseline -- but this
-    // pin drives the SEL input of U14 (TMUX1219), whose VDD is +5VA. In STANDBY
+    // GPIO33 = 0 selects S1 (R96 to GND), the tracking 0.66 s high-pass, and
+    // GPIO33 = 1 is HOLD. Resolved on hardware 2026-08-17 and against the
+    // TMUX1219 truth table -- see HPF_SEL_TRACK in board.h. (This comment used to
+    // call tracking HIGH; that was the pre-bring-up guess, and it was backwards.)
+    //
+    // LOW is also the only safe level with the rail down. This pin drives the
+    // SEL input of U14 (TMUX1219), whose VDD is +5VA. In STANDBY
     // that rail is dark, so driving SEL high pushes leakage current into an
     // unpowered device and back-feeds the rail: measured on the bench as +5VA
     // floating at ~0.45 V, showing up as ~0.225 V at TP6/TP7 via the R75/R76
@@ -77,8 +81,9 @@ void safe_state_init(void) {
     // Phase 0.5 quiescent readings confusing.
     //
     // The mux does nothing while unpowered, so the level here is irrelevant to
-    // function. Whoever brings up the detector sets this HIGH once +5VA is live
-    // (Phase 3 / on arm), which is where it belongs anyway.
+    // function. HOLD (HIGH) is selected only once +5VA is live -- detect_hpf_set()
+    // refuses otherwise -- and detect_hpf_safe_off() drops it again whenever the
+    // rail goes down.
     out_low(PIN_HPF_TOGGLE);
 
     // Cameras idle, no exposure requested.
@@ -93,15 +98,17 @@ void safe_state_init(void) {
     //
     // CAREFUL, and this used to be documented wrong here: the pad does NOT come
     // out of reset floating. PADS_BANK0_GPIO43_RESET = 0x116, so PDE=1 -- the
-    // output driver is high-Z but a ~50-80K internal PULL-DOWN is active. For an
-    // active-low signal that is the ASSERTED level. From the reset edge until
-    // this line executes, GPIO43 is held low.
+    // output driver is high-Z but an internal PULL-DOWN (~34K, measured) is
+    // active. For an active-low signal that is the ASSERTED level. From the reset
+    // edge until this line executes, GPIO43 is held low.
     //
     // With no Pi seated that is harmless (nothing is listening). With a Pi, that
     // pull-down divides against gpio-shutdown's ~50K pull-up through R39's 1K and
-    // puts J8.37 at roughly 1.7-2.0 V -- at or below RP1's VIH. Unresolved: see
-    // PROGRESS.md Q10, measured in Phase 1b with an emulated pull-up. If it reads
-    // low, the fix is a 10K pull-up from J8.37 to the always-on +3V3.
+    // puts J8.37 below RP1's VIH. MEASURED 2026-07-31 (PROGRESS.md Q10): a real
+    // Pi would see ~1.34 V, so the level fails. It is defence-in-depth rather than
+    // a gate, because every reset also opens the +5V latch -- the Pi is losing
+    // power in the same instant. Optional fix: a 10K pull-up from J8.37 to the
+    // always-on +3V3 (NEXT_BOARD_REV.md CR-04).
     //
     // What this line DOES buy: once we are running, the line is actively driven
     // rather than left to a 1K pull, so noise cannot couple a spurious request

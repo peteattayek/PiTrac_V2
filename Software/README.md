@@ -3,6 +3,9 @@
 
 # Raspberry Pi-side software
 
+> **New to this repo?** Start with [`../DEVELOPER_GUIDE.md`](../DEVELOPER_GUIDE.md) for
+> the repo map, the board pinout, the RP2354 firmware and the Pi-to-board interface.
+
 This directory contains software and setup guides that run on the Raspberry Pi.
 It is separate from the existing board designs and microcontroller firmware in
 [Hardware](../Hardware/); those files have not moved.

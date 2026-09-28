@@ -18,9 +18,9 @@ Step-by-step, with the exact CLI commands. **Record every measurement in
 
 **Historical status: the original phases 0, 0.5, 1, 1b and 1c matrix is ✅ COMPLETE.** First proved
 on **board 1 (2026-07-31)**; re-run on **board 2 (2026-08-21)** and passed again. Results are
-recorded inline below. **The new 2026-09-18 Test 6 is not yet bench-signed-off.**
+recorded inline below. **The 2026-09-18 Test 6 passed — owner-reported 2026-09-28.**
 
-**Regression found 2026-09-18, fixed in source/host tests; bench verification pending:**
+**Regression found 2026-09-18, fixed in source/host tests, and bench-verified (Test 6 PASS, owner-reported 2026-09-28):**
 the **11:11:51 and earlier images** retain `on` sent while running and can restart the
 rail after a later `off`. **Reflash first with the 15:21:18 Release fix**, then run
 **Test 6 below**. New `on` is refused outside STANDBY; no later restart is queued.
@@ -351,8 +351,8 @@ Also record standby current (+3V3 domain only) with the rail down.
 ### Test 6 — stale power requests (added 2026-09-18)
 
 **Reflash first:** this checks the power-request lifecycle fix, not the older text-only
-image. Expected `id` build stamp **Sep 18 2026 15:21:18**. Host tests pass; hardware
-sign-off remains open until this procedure's result is logged.
+image. Expected `id` build stamp **Sep 18 2026 15:21:18**. Host tests pass; ✅ **hardware sign-off: PASS, owner-reported
+2026-09-28** (the readings were not logged in this repo).
 
 | Board state | Required |
 |---|---|

@@ -4,6 +4,13 @@
 
 Board: KiCad 10.0.4, 8 sheets, Rev V1 (2026-02-12) · MCU: Raspberry Pi RP2354B (QFN-80, internal 2 MB flash) · Assembly: JLCPCB turnkey + hand-solder connectors
 
+> **Read this first.** This is the original design document. Bring-up has since measured
+> several values that differ from it — among them the +2V5 level, the one-shot clamp width,
+> the PWM slice numbers, the HPF polarity and the §13.8 calibration method. The corrections
+> are listed in [`../DEVELOPER_GUIDE.md`](../DEVELOPER_GUIDE.md) §4, netlist-derived values
+> are in [`../HARDWARE_REFERENCE.md`](../HARDWARE_REFERENCE.md), and the evidence is in
+> `firmware/PROGRESS.md`. The body below is unchanged.
+
 ---
 
 ## 1. System Overview

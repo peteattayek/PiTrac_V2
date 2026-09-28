@@ -1,6 +1,6 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// PiTrac "The Second Board To Rule Them All" â€” Rev V1 board header
+// PiTrac "The Second Board To Rule Them All" -- Rev V1 board header
 //
 // MCU: Raspberry Pi RP2354B, QFN-80.
 //   - RP2350B core  -> 48 GPIOs, so PICO_RP2350A must be 0.
@@ -40,7 +40,7 @@
 // --- On-board status LEDs ---------------------------------------------------
 // D6 red on GPIO18, D5 yellow on GPIO19. Anode-driven through 120 R to GND:
 // ACTIVE HIGH. Both live on the always-on +3V3 rail, so they work on USB power
-// with the +5V latch open â€” which is what makes them the Phase 0/1 feedback path.
+// with the +5V latch open -- which is what makes them the Phase 0/1 feedback path.
 // (The panel LEDs on J7 are fed from the *switched* +5V rail and cannot indicate standby.)
 #ifndef PICO_DEFAULT_LED_PIN
 #define PICO_DEFAULT_LED_PIN 18
@@ -69,8 +69,10 @@
 // --- USB --------------------------------------------------------------------
 // J6 USB-C, native RP2354 device, used for firmware upload (BOOTSEL) and the
 // CDC bench CLI. VBUS diode-ORs into +5V_IN through D8 (SS14), which is why the
-// board runs at ~4.6-4.7 V on USB alone -- and why firmware must refuse to close
-// the +5V latch in that condition. See V5_MIN_FOR_PI in src/board.h.
+// board runs at ~4.6-4.85 V on USB alone (port dependent; 4.85 V measured) -- and
+// why firmware must refuse to close the +5V latch in that condition, and must
+// drop it if the real supply disappears while latched. See V5_MIN_FOR_LATCH and
+// V5_MIN_SUSTAINED in src/board.h.
 // The default Raspberry Pi VID/PID from the SDK is fine; no override needed.
 
 #endif // _BOARDS_PITRAC_LTB_V1_H

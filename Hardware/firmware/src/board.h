@@ -99,7 +99,7 @@
 #define PIN_MOD_PWM         31   // out (PWM 7B) : beam carrier. R69 1K pulldown.
                                  //   *** shares slice 7B with PIN_LATCH_CONTROL (GPIO15).
                                  //   *** GPIO15 MUST STAY SIO. See the PWM SLICE MAP below.
-#define PIN_HPF_TOGGLE      33   // out : U14 TMUX1219 SEL. Polarity UNVERIFIED -- see below.
+#define PIN_HPF_TOGGLE      33   // out : U14 TMUX1219 SEL. 0 = TRACK, 1 = HOLD -- see below.
 #define PIN_DEMOD_PWM       39   // out (PWM 11B): demod clock, phase-locked to slice 7
 #define PIN_THRESHOLD_PWM   44   // out (PWM 10A): comparator threshold DAC (also ADC4 -- never sample)
 #define PIN_D_COMPARATOR    46   // in  : ball-detect comparator. EXTERNAL 10K pull-up (R103).
@@ -139,8 +139,8 @@
 
 // --- Misc -------------------------------------------------------------------
 #define PIN_USB_ENABLE      32   // out : USB-A accessory VBUS switch (Q6 -> Q7)
-#define PIN_UART_TX         36   // out : UART1 -> Pi RXD  (J8.10, R30 0R)
-#define PIN_UART_RX         37   // in  : UART1 <- Pi TXD  (J8.8,  R31 1K)
+#define PIN_UART_TX         36   // out : UART1 -> Pi RXD  (J8.10, R30 220R)
+#define PIN_UART_RX         37   // in  : UART1 <- Pi TXD  (J8.8,  R31 220R)
 
 // ===========================================================================
 // ADC CHANNELS  (RP2350B: ADC channel n == GPIO 40+n)
@@ -486,10 +486,12 @@
 // PULSE WIDTH, not by the presence of an edge. A few ms of low is the pad
 // default; 200 ms (PI_SHUTDOWN_PULSE_MS) is a real assertion and a failure.
 //
-// Still open (PROGRESS.md Q10): with a Pi seated, that pull-down divides against
-// gpio-shutdown's ~50K pull-up through R39's 1K, putting J8.37 near 1.7-2.0 V --
-// at or below RP1's VIH. Measured in Phase 1b with an emulated pull-up. If it
-// reads low, fit a 10K pull-up from J8.37 to the always-on +3V3.
+// MEASURED 2026-07-31 (PROGRESS.md Q10): with a Pi seated, that pull-down (~34K,
+// stronger than assumed) divides against gpio-shutdown's ~50K pull-up through
+// R39's 1K, so a real Pi would see ~1.34 V at J8.37 -- below RP1's VIH. The
+// level fails, but it is defence-in-depth, not a gate: every reset also opens
+// the +5V latch, so the Pi is losing power in the same instant. Optional: a 10K
+// pull-up from J8.37 to the always-on +3V3 (NEXT_BOARD_REV.md CR-04).
 #define PI_SHUTDOWN_ACTIVE_LOW  1
 #define PI_SHUTDOWN_PULSE_MS   200
 

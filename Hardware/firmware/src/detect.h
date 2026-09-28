@@ -117,8 +117,8 @@ hpf_mode_t  detect_hpf_mode(void);
 const char *detect_hpf_name(hpf_mode_t m);
 
 // Drive GPIO33 low unconditionally. Must be called whenever the +5V rail is
-// dropped, or a preceding `hpf track` leaves SEL high into a dark U14 --
-// reachable through an ordinary `hpf track` then `off`. safe_state.c covers the
+// dropped, or a preceding `hpf hold` leaves SEL high into a dark U14 --
+// reachable through an ordinary `hpf hold` then `off`. safe_state.c covers the
 // boot case; this covers the runtime one.
 void        detect_hpf_safe_off(void);
 
