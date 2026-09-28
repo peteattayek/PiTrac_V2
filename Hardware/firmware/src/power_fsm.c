@@ -163,9 +163,23 @@ void power_fsm_init(void) {
     enter(PS_STANDBY);
 }
 
-void power_request_on(void)        { s_req_on = true; }
-void power_request_shutdown(void)  { s_req_shutdown = true; }
-void power_request_force_off(void) { s_req_force_off = true; }
+bool power_request_on(void) {
+    if (s_ps != PS_STANDBY || s_req_shutdown || s_req_force_off) return false;
+    s_req_on = true;
+    return true;
+}
+
+void power_request_shutdown(void) {
+    s_req_on = false;
+    // Preserve a shutdown requested during startup, but not one made while off.
+    s_req_shutdown = (s_ps != PS_STANDBY && s_ps != PS_FORCE_OFF);
+}
+
+void power_request_force_off(void) {
+    s_req_on = s_req_shutdown = false;
+    s_req_force_off = true;
+}
+
 void power_request_fault_ack(void) { s_req_fault_ack = true; }
 
 pstate_t power_fsm_state(void) { return s_ps; }
@@ -195,8 +209,7 @@ static void begin_shutdown(void) {
     // (Detection/strobe lockout hooks land here in phases 3 and 6.)
     // The panel LEDs are owned by panel.c and follow the state automatically.
     //
-    // The beam is the high-energy thing this comment was written about: ~0.95 A
-    // from +5V at 30 % duty. It goes dark at the START of teardown, not 15 s
+    // The beam goes dark at the START of teardown, not 15 s
     // later when the Pi finally reports down -- there is no reason to keep
     // driving D11 through a shutdown, and PI_SHUTDOWN_MAX_WAIT_MS is long.
     beam_enable(false);
@@ -387,6 +400,9 @@ void power_fsm_step(void) {
     }
 
     case PS_FORCE_OFF:
+        // No command from the old power cycle may restart or stop the next one.
+        s_req_on = s_req_shutdown = s_req_force_off = s_req_fault_ack = false;
+
         // Before the latch, not after. U10 (MCP1416) and D11 both run from the
         // SWITCHED +5V rail, so a carrier still toggling on GPIO31 when the rail
         // goes is 3.3 V logic into an unpowered gate driver -- the same
@@ -406,7 +422,7 @@ void power_fsm_step(void) {
         // +5VA, and SEL held high into an unpowered mux back-feeds the analog
         // rail through its protection structures -- the same condition
         // safe_state.c drives GPIO33 low at boot to prevent. Without this, an
-        // ordinary `hpf track` followed by `off` walks straight into it, because
+        // ordinary `hpf hold` followed by `off` walks straight into it, because
         // nothing else ever puts the pin back.
         detect_hpf_safe_off();
         pi_shutdown_assert(false);

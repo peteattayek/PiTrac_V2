@@ -23,7 +23,7 @@ fails() {
     fi
     ((checks+=1))
 }
-for name in common.sh inspect-platform.sh configure-cameras.sh benchmark-storage.sh record-dual.sh verify-recording.sh buffered-writer.sh; do
+for name in common.sh inspect-platform.sh configure-cameras.sh benchmark-storage.sh record-dual.sh verify-recording.sh buffered-writer.sh focus-preview.sh; do
     script=$SCRIPTS/$name
     bash -n "$script"
     bash "$script" --help > "$work/help.txt"

@@ -16,12 +16,22 @@ Step-by-step, with the exact CLI commands. **Record every measurement in
 - **`PULSE_LIMIT_DISABLE` (GPIO27) stays 0.** It defeats the strobe hardware
   watchdog. There is deliberately no CLI path to it.
 
-**Status: every phase in this document — 0, 0.5, 1, 1b and 1c — is ✅ COMPLETE.** First proved
+**Historical status: the original phases 0, 0.5, 1, 1b and 1c matrix is ✅ COMPLETE.** First proved
 on **board 1 (2026-07-31)**; re-run on **board 2 (2026-08-21)** and passed again. Results are
-recorded inline below.
+recorded inline below. **The new 2026-09-18 Test 6 is not yet bench-signed-off.**
+
+**Regression found 2026-09-18, fixed in source/host tests; bench verification pending:**
+the **11:11:51 and earlier images** retain `on` sent while running and can restart the
+rail after a later `off`. **Reflash first with the 15:21:18 Release fix**, then run
+**Test 6 below**. New `on` is refused outside STANDBY; no later restart is queued.
+Until reflashed, issue `on` **only from confirmed STANDBY**; skip it if already running.
+After shutdown, require `stat` **STANDBY / latch 0**; "requested shutdown" is not proof.
+Board 3 needed a second `off` to reach that state. See PROGRESS §6/§10 for the live status
+and source trace; the earlier phase passes do not close this new finding.
 
 ⚠ **Board 1 is out of service** — U11B died on 2026-08-17 (foil across D12; `PROGRESS.md` §11).
-**Board 2 is the live board.** Everything below still applies to it and to any board after it.
+The historical results below include board 2; **board 3 is currently active**. Use
+PROGRESS §10 for live state rather than the older inline measurement dates.
 
 > ### Bringing up a NEW board? Use `BRINGUP_NEW_BOARD.md` instead.
 >
@@ -29,7 +39,8 @@ recorded inline below.
 > than to the *design*. This document is the full reasoning; that one is the checklist. Come
 > back here when something does not match.
 
-**Next: `BENCH_P2_BEAM.md`.**
+**Original phase order:** continue to `BENCH_P2_BEAM.md` after this matrix; the current
+resume action is in PROGRESS §10.
 
 ## How to read the procedures below
 
@@ -336,6 +347,112 @@ Test 4 is the important one. R12 pulls GPIO15 low through reset and
 rather than trusting it.
 
 Also record standby current (+3V3 domain only) with the rail down.
+
+### Test 6 — stale power requests (added 2026-09-18)
+
+**Reflash first:** this checks the power-request lifecycle fix, not the older text-only
+image. Expected `id` build stamp **Sep 18 2026 15:21:18**. Host tests pass; hardware
+sign-off remains open until this procedure's result is logged.
+
+| Board state | Required |
+|---|---|
+| Board/config | Board 3, saved slot A seq 5; check `id`/`cfg` after flash, do not save over a mismatch |
+| Supply | USB CDC + validated **5.20 V** bench supply/current limit |
+| Initial rail | **STANDBY**, latch **0**, no fault |
+| Beam/detection | **OFF / disarmed throughout**; carrier/duty/optics are not exercised |
+| ADC / HPF | ADC **idle**; HPF **TRACK** when rail up (safe low while off) |
+| Connections | **No Pi on J8, no camera on J4**, GPIO27 remains **0** |
+| Logging/safety | Serial file logging ON; nothing conductive near D12; no fixture adjustment while rail up |
+
+1. **Verify the image and standby state:**
+
+   ```
+   id
+   cfg
+   stat
+   ```
+
+   **Pass:** build stamp above, UID `6d6fda754e367a40`; saved carrier **104166 Hz**,
+   phase **1311**, cal duty **25 %**, TRACK polarity **0**; STANDBY/latch 0,
+   fault none, watchdog off. Do not continue on an older image.
+
+2. **Start once from STANDBY:**
+
+   ```
+   on
+   ```
+
+   Wait **at least 3 s** for the no-Pi detection window, then:
+
+   ```
+   hpf track
+   adcmode idle
+   beam
+   stat
+   ```
+
+   **Pass:** beam OFF, BENCH_RUNNING/latch 1/railsready 1, no fault.
+
+3. **Reproduce the formerly failing sequence, now with explicit refusal:**
+
+   ```
+   on
+   on
+   stat
+   off
+   ```
+
+   Each redundant `on` must print:
+
+   ```
+   REFUSED: 'on' needs STANDBY with no pending stop (state BENCH_RUNNING).
+     No power-on request was queued.
+   ```
+
+   The intermediate `stat` must remain BENCH_RUNNING, with no fault. After the single
+   `off`, wait **1 s** and run `stat`, then wait **another 5 s** and run it again.
+   **Pass:** both show **STANDBY / latch 0 / railsready 0**, no fault, beam stays OFF.
+   **Fail:** POWERING_ON/BENCH_RUNNING returns, latch 1, or a second `off` is needed.
+
+4. **Prove a redundant stop does not poison the next intentional start:**
+   starting from the confirmed STANDBY state, send:
+
+   ```
+   off
+   on
+   ```
+
+   Wait **at least 3 s**, run `stat`, then wait **another 5 s** and run `stat` again.
+   **Pass:** both show BENCH_RUNNING/latch 1, not a delayed spontaneous shutdown.
+   Beam must still be OFF.
+
+5. **Check forced teardown and leave the board off:**
+
+   ```
+   on
+   forceoff
+   ```
+
+   `on` must again be refused. After **1 s**, then **another 5 s**, run `stat`.
+   **Pass:** STANDBY/latch 0/railsready 0, fault none, watchdog off. Save the entire log.
+   Latch 0 does not prove stored VIR charge has discharged; still keep metal clear of D12.
+
+#### Host regression tests for Test 6
+
+`tests/CMakeLists.txt` is a **separate native CMake project**, not an RP2350 target.
+It compiles the actual `src/power_fsm.c` with the real board constants and mocked
+GPIO/time/ADC/beam/fault interfaces. It does not communicate with the board.
+
+In CMake Tools, select `Hardware/firmware/tests` as source and `tests/build` as its
+separate build directory, use a **native compiler/generator** (Visual Studio 17 2022
+on this machine), select Release, build, then run CTest through CMake Tools.
+The **20 tests** cover stale/redundant requests, cancellation/force-off precedence,
+fresh starts, startup shutdown, button paths, fault recovery, supply guards and Pi
+timeout/pulse/hold-off behavior. The tests keep checking for unintended latch rises
+for **6 s of simulated time** after teardown and reject GPIO27 writes.
+
+**Restore the firmware source directory, its original `build/`, Ninja generator and
+Release variant before building a UF2.** Host-test success is not physical rail proof.
 
 ### 1.3 If test 2 shows `PI_BOOTING` instead of `BENCH_RUNNING`
 

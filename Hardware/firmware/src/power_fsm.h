@@ -38,10 +38,12 @@ const char *power_state_name(pstate_t s);
 // finished its ~86 ms soft start. Nothing high-energy may run before this.
 bool power_rails_ready(void);
 
-// Requests. All are honoured only from a state where they make sense.
-void power_request_on(void);
+// Start only from STANDBY with no pending stop. False means no start was queued.
+bool power_request_on(void);
+// Cancels a pending start. During startup, shutdown waits for the normal ready
+// state; in STANDBY it leaves no request for a future power cycle.
 void power_request_shutdown(void);
-void power_request_force_off(void);   // escape hatch; skips the orderly sequence
+void power_request_force_off(void);   // cancels pending requests; skips the orderly sequence
 
 // Acknowledge a latched PS_FAULT, exactly as a button press does: clear the
 // fault code AND leave PS_FAULT via FORCE_OFF, so the rail drops and we return

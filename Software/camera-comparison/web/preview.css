@@ -1,0 +1,427 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright (C) 2026 PiTrac contributors */
+
+:root {
+    color-scheme: dark;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #e3e9ed;
+    background: #10161b;
+    font-synthesis: none;
+    line-height: 1.45;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 20px;
+}
+
+button, select {
+    min-height: 36px;
+    padding: 6px 12px;
+    border: 1px solid #56636e;
+    border-radius: 5px;
+    font: inherit;
+    color: #e3e9ed;
+    background: #27333d;
+    cursor: pointer;
+}
+
+button:hover {
+    border-color: #b6c8d7;
+    background: #354552;
+}
+
+button[aria-pressed="true"] {
+    color: #06191b;
+    background: #7ddad1;
+    border-color: #7ddad1;
+    font-weight: 700;
+}
+
+button:focus-visible,
+select:focus-visible,
+.viewport:focus-visible {
+    outline: 3px solid #ffda85;
+    outline-offset: 2px;
+}
+
+h1,
+h2,
+p {
+    margin: 0;
+}
+
+h1 {
+    font-size: 1.7rem;
+    line-height: 1.2;
+}
+
+h2 {
+    font-size: 1.25rem;
+}
+
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.eyebrow {
+    color: #9aadb9;
+    font-size: 0.8rem;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+}
+
+.connection-summary {
+    text-align: right;
+    font-size: 0.85rem;
+}
+
+#connection-state {
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+#connection-state[data-tone="error"] {
+    color: #ffb1a8;
+}
+
+#refresh-budget {
+    color: #aebec9;
+}
+
+.lock-banner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    padding: 12px 15px;
+    border: 1px solid #a08242;
+    border-left: 4px solid #edc46c;
+    border-radius: 5px;
+    background: #30291b;
+    color: #ffdfa0;
+    font-size: 0.9rem;
+}
+
+.pipeline-note {
+    margin: 14px 0;
+    font-size: 0.85rem;
+    color: #b6c5d0;
+}
+
+.pipeline-note p + p {
+    margin-top: 4px;
+}
+
+.transport-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-top: 12px;
+}
+
+.focus-tip {
+    margin-bottom: 12px;
+    font-size: 0.85rem;
+    color: #b6c5d0;
+}
+
+.exposure-controls, .capture-controls {
+    margin: 16px 0;
+    padding: 14px;
+    border: 1px solid #3a4854;
+    border-radius: 7px;
+    background: #19232b;
+}
+
+.exposure-heading, .exposure-inputs, .capture-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 10px;
+}
+
+.exposure-inputs label {
+    display: grid;
+    gap: 5px;
+    font-size: 0.85rem;
+}
+
+.exposure-inputs input {
+    width: 180px;
+    padding: 8px;
+    color: #e1ebf1;
+    background: #111b23;
+    border: 1px solid #748896;
+    border-radius: 4px;
+    font: inherit;
+}
+
+.exposure-controls p, .capture-controls p {
+    margin: 6px 0;
+    font-size: 0.82rem;
+}
+
+.capture-heading span, [data-capture-message] {
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+}
+
+[data-capture-button]:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.exposure-feedback {
+    color: #a6f0d8;
+    font-family: ui-monospace, Consolas, monospace;
+}
+
+.focus-tip strong {
+    color: #7ddad1;
+}
+
+.camera-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 16px;
+}
+
+.camera-panel {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #3a4854;
+    border-radius: 7px;
+    background: #19232b;
+}
+
+.panel-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 14px 8px;
+}
+
+.format-summary {
+    margin-top: 3px;
+    color: #aebec9;
+    font: 0.77rem ui-monospace, Consolas, monospace;
+    overflow-wrap: anywhere;
+}
+
+.state-badge {
+    flex: none;
+    border: 1px solid #7c714f;
+    border-radius: 4px;
+    padding: 3px 7px;
+    font-size: 0.73rem;
+    font-weight: 800;
+    color: #ffdfa0;
+    background: #383020;
+}
+
+.state-badge[data-tone="live"] {
+    border-color: #498979;
+    color: #a6f0d8;
+    background: #153c31;
+}
+
+.state-badge[data-tone="error"] {
+    border-color: #aa665e;
+    color: #ffd0cb;
+    background: #4b2623;
+}
+
+.view-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 14px 12px;
+    font-size: 0.8rem;
+}
+
+.zoom-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.scale-label {
+    margin-left: auto;
+    color: #aebec9;
+}
+
+.image-shell {
+    position: relative;
+    border-top: 1px solid #3a4854;
+    border-bottom: 1px solid #3a4854;
+    background: #050708;
+}
+
+.viewport {
+    height: clamp(300px, 52vh, 720px);
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: #748896 #16222a;
+    touch-action: none;
+    cursor: grab;
+}
+
+.viewport.is-dragging {
+    cursor: grabbing;
+}
+
+.viewport.view-fit {
+    overflow: hidden;
+    touch-action: auto;
+    cursor: crosshair;
+}
+
+.canvas-surface {
+    display: grid;
+    place-items: center;
+    width: max-content;
+    height: max-content;
+    min-width: 100%;
+    min-height: 100%;
+}
+
+canvas {
+    display: block;
+    max-width: none;
+    image-rendering: pixelated;
+    user-select: none;
+}
+
+.view-double canvas {
+    transform: scale(2);
+    transform-origin: top left;
+}
+
+.view-fit .canvas-surface {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+
+.view-fit canvas {
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.frame-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 24px;
+    color: #fff0d1;
+    background: rgb(11 14 17 / 79%);
+    text-align: center;
+    pointer-events: none;
+    overflow-wrap: anywhere;
+}
+
+.frame-overlay[hidden] {
+    display: none;
+}
+
+.frame-overlay strong {
+    letter-spacing: 0.05em;
+}
+
+.frame-overlay span {
+    max-width: 48ch;
+    font-size: 0.85rem;
+}
+
+.pixel-readout {
+    display: block;
+    min-height: 2.8em;
+    padding: 9px 14px;
+    color: #c7e4e6;
+    background: #142029;
+    font: 0.78rem ui-monospace, Consolas, monospace;
+    overflow-wrap: anywhere;
+}
+
+.camera-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0;
+    padding: 14px;
+}
+
+.camera-metrics dt {
+    color: #aebec9;
+    font-size: 0.72rem;
+}
+
+.camera-metrics dd {
+    margin: 3px 0 0;
+    font-size: 0.88rem;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+.timing-note {
+    padding: 0 14px 12px;
+    color: #aebec9;
+    font-size: 0.8rem;
+}
+
+.timing-note.has-warning {
+    color: #ffcf85;
+    font-weight: 700;
+}
+
+.page-footer {
+    margin-top: 16px;
+    color: #aebec9;
+    font-size: 0.8rem;
+}
+
+.page-footer p + p {
+    margin-top: 6px;
+}
+
+@media (max-width: 760px) {
+    body {
+        padding: 12px;
+    }
+
+    .page-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .connection-summary {
+        text-align: left;
+    }
+
+    .camera-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .viewport {
+        height: 55vh;
+    }
+}

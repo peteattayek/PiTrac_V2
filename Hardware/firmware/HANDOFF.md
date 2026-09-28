@@ -1,7 +1,8 @@
 # Handoff — PiTrac V2 firmware bring-up
 
 **For a person or model taking over this work with no prior context.** Written 2026-09-17.
-The last bench session was 2026-08-31.
+At writing, the last bench session was 2026-08-31. For subsequent bench work, use
+`PROGRESS.md` §10, not this historical date.
 
 This file holds what the other docs do *not*: how the work is done, the traps on this machine,
 and the lessons that cost real bench time. **It deliberately does not hold live status** — that
@@ -61,6 +62,10 @@ explicit decision from the owner.
 5. ⚠ **Beam duty: 25 % operating, 35 % is a destruction ceiling, not a setting** (CR-12 thermal:
    junction 123–133 °C at 30 % against 145 °C max). The beam powers up at 2 % by design.
 6. ⚠ **Do not connect J4 (camera)** — the Mira220 I/O is 1.8 V with no 3.3 V tolerance (CR-09).
+7. **Power-command acknowledgements are not rail-state evidence.** Always check `stat`
+   for **STANDBY / latch 0** after shutdown before adjusting the exposed fixture.
+   A stale `on` request caused an unexpected restart on 2026-09-18; the active workaround
+   and fix status belong in `PROGRESS.md` §10.
 
 ---
 
@@ -79,11 +84,26 @@ arm-none-eabi-size build/pitrac.elf
 `build/` is already configured. A fresh configure needs
 `-DPICO_BOARD=pitrac_ltb_v1 -DPICO_PLATFORM=rp2350`.
 
+**CMake Tools:** use the private CMake/Ninja/ARM tools, the existing `build/` directory,
+and the **Release** variant for the established bench build. `[Unspecified]` lets the
+Pico SDK select its ARM toolchain; do not choose a desktop Visual Studio kit. Verify
+`CMAKE_BUILD_TYPE` in `build/CMakeCache.txt`: the extension can default to **Debug**.
+Selecting Release may only reconfigure; **CMake: Build** must then finish. Check the UF2
+timestamp and `picotool info -a` build attributes as well as the cache before approving flash.
+
 **Flash:** type `bootsel` at the board's CLI (it disarms the watchdog itself), or hold SW1 and tap
 SW2. Drag `build/pitrac.uf2` onto the `RPI-RP2` drive.
 
 **Serial:** USB CDC on J6. The owner's port is **COM11**. `help` lists every command, and also
 flags any command in the dispatch table that its own text fails to document.
+
+**Save serial data to a file, not by copying scrollback.** Microsoft Serial Monitor 0.13.1
+defaults to **9000 lines**, less than a normal ADC capture. With monitoring stopped, set
+**Log File Directory** to `captures/`, enable **Toggle File Logging**, then start monitoring.
+After the capture ends, stop and use **Open the last used log file**. Verify with a short
+`id` log first. Logging only saves subsequent output; increasing scrollback cannot recover
+discarded lines. **Logging Verbosity** controls extension diagnostics, not serial capture.
+Stop monitoring before giving COM11 to the host scope tool.
 
 **Host tool:** `tools/scope.py` (needs `pyserial`, `matplotlib`). Block capture, `--roll` live
 view, and `--trig` hardware-triggered single shot. Auto-named output goes to `captures/`
@@ -141,6 +161,7 @@ design respin would change it, it is done once.
 | **Files mix CRLF and LF.** An exact-match replace silently finds nothing. | Detect the file's EOL, convert the search string to it, and **assert exactly one match** before replacing. |
 | **Encoding damage recurs.** Double-encoded em-dashes (`â€"`) and BOMs appeared in 13 source files and printed garbage to the serial console. A BOM before a shebang breaks the script. | Sweep `src/` and `tools/` for non-ASCII after edits. Source should be ASCII apart from deliberate emoji in comments. |
 | **The shell's working directory can reset between tool calls.** | Use absolute paths, or `cd` in the same command. |
+| **CMake Tools can retain an `EEXIST` failure creating `build/.cmake/api`, even when it is a normal directory.** | Inspect the path first. On 2026-09-18, selecting a kit and temporarily moving the generated metadata did not recover it; **Developer: Reload Window** did. No build-directory deletion was needed. Recheck the **Release** variant afterwards. |
 | **Logic-analyser CSVs are 0.6–1.5 GB.** | Stream line-by-line and block-reduce; never load whole. Only numpy is installed — **no pandas**. |
 | **Python 3.14 / numpy 2.x**: `ndarray.ptp()` is gone. | Use `np.ptp(arr)`. |
 | **Primary shell is PowerShell 5.1**; bash (Git Bash) is also available. | Don't mix their syntax in one command. |

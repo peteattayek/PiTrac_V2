@@ -1,0 +1,4 @@
+# Optional beam-waveform composite renderer; raw capture does not need these.
+av>=14.2
+numpy>=2.2
+Pillow>=11

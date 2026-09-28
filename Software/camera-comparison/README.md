@@ -38,6 +38,10 @@ A [public Mira220 Pi 5/CFE streaming failure][mira-issue] remains open as of
 
 ## What this setup records
 
+For live focusing with optional lossless paired-image downloads, see
+[the raw browser preview](FOCUS.md).
+It uses the same direct V4L2 configuration and must be stopped before recording.
+
 | Camera | Physical Pi port | Full active image | Sensor bus format | Memory fourcc | Timing target | Unity analogue gain code |
 |---|---|---|---|---|---|---|
 | Mira220 EVM-SE mono | CAM/DISP1 | 1600 x 1400 | `Y8_1X8` | `GREY`, native RAW8 | about 89.080 fps, VBLANK 18 | `1` = fixed 1x |
@@ -235,8 +239,14 @@ sudo apt-get install --no-upgrade \
 `v4l-utils` supplies `v4l2-ctl` and `media-ctl`; `util-linux` supplies `flock`,
 `findmnt`, and `lsblk`; `psmisc` supplies `fuser`. The helpers need GNU coreutils
 (including `timeout`, `stat`, `sha256sum`, and `sync -f`), `awk`, and the **fio
-I/O benchmark**, not a different command with the same name. No `jq`, Python,
-or CMake is required. Build dependencies above are for the external kernel
+I/O benchmark**, not a different command with the same name. The raw recording
+helpers need no `jq`, Python or CMake. The optional [browser focus preview](FOCUS.md)
+uses Python 3.11+ and Pillow (`python3-pil`) for smooth JPEG display and lossless
+PNG capture downloads. Its lossless
+raw display mode uses only the standard library. Both bypass the Pi ISP and
+save no image files on the Pi; the Capture button downloads full-bit-depth
+PNGs and original raw buffers to the PC. JPEG affects only the browser preview.
+Build dependencies above are for the external kernel
 module and device-tree overlay. With the supported stock auto-initramfs layout,
 the installer also needs `update-initramfs`, `lsinitramfs`, and `unmkinitramfs`
 (normally supplied by `initramfs-tools`/`initramfs-tools-core`). If a check reports
@@ -841,6 +851,10 @@ control is **not** evidence that a correction is disabled, and a register
 constant is not a per-frame measurement. Do not claim all corrections are off.
 
 ## Interpreting native raw pixels
+
+For MP4 viewing copies using every recorded frame timestamp, including correct
+IMX296 RAW10 packing and first-N-seconds trimming, see [CONVERT.md](CONVERT.md).
+Do not use a constant-FPS rawvideo command when precise recorded timing matters.
 
 - **Mira220 `GREY`:** one unsigned 8-bit pixel per byte, 1600 active pixels per
   row and 1400 rows. Native precision here is 8 bits, values 0..255.

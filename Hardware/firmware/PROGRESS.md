@@ -3,7 +3,11 @@
 **Read this first when resuming work.** It records what is done, what is next, and the
 decisions/measurements that must not be lost between sessions.
 
-Last updated: **2026-08-24** · **Phases 0, 0.5, 1, 1b, 1c and 2 are complete and closed.**
+Last updated: **2026-09-18**. **Current status is in §0 and the TOP block of §10.**
+
+**Historical overview from 2026-08-24 (superseded for live board/build status):**
+
+**Phases 0, 0.5, 1, 1b, 1c and 2 are complete and closed.**
 `BENCH.md` and `BENCH_P2_BEAM.md` are finished end to end. The power path and the optical
 transmit chain are both proven on hardware. **Q1, Q2 and Q12 answered; Q5, Q7, Q9 closed. Open: Q3, Q4, Q6, Q8, Q10, Q11.**
 **Phase 3 is IN PROGRESS on board 2.** §3.1–3.4 are done: ambient rejection proven at ~48 dB,
@@ -23,7 +27,8 @@ DMA ring dominate the RAM.
 No warnings.
 Includes phases 0–2 (`safe_state`, `adc_engine`, `power_fsm`, `panel`, `beam`, `cli`).
 
-**Firmware fixes made during Phase 2 bring-up (2026-08-13)** — reflash before any bench work:
+**Firmware fixes made during Phase 2 bring-up (2026-08-13)** — already flashed on board 3;
+see §10 for the current pending-flash state:
 
 | Fix | Symptom it caused |
 |---|---|
@@ -63,9 +68,9 @@ Includes phases 0–2 (`safe_state`, `adc_engine`, `power_fsm`, `panel`, `beam`,
 | **Boards** | ✅ **Board 3 — the active bench board.** UID `6d6fda754e367a40`, **reworked TIA (Rf 116 kΩ, Cf 0.99 pF)**, calibrated and saved (carrier 104166 Hz, phase 1311 ticks, slot A seq 5). ✅ **Board 2** — healthy, calibrated, stock 470 kΩ TIA. 🔴 **Board 1 — OUT OF SERVICE**: U11B destroyed 2026-08-17 by foil across D12 (§11); needs U11 replaced. |
 | Toolchain | Installed — VS Code Pico extension, private copies in `%USERPROFILE%\.pico-sdk`. SDK 2.3.0, toolchain 15_2_Rel1, ninja 1.13.2, cmake 4.3.4. ⚠ **Not on PATH** — see `HANDOFF.md` for the export line. |
 | Bench equipment | Scope, logic analyzer (analog inputs **12 V max**, up to 50 MS/s), DMM, current-limited PSU, FLIR thermal camera. |
-| **Firmware** | ✅ **Builds clean (144136 text / 88308 bss).** Written: power FSM, safe state, beam carrier + demod, ADC engine (DMA ring, block capture, **triggered capture**), detect (threshold DAC, gated HPF, comparator PIO timing, pass log + retained waveforms), cal (`cal demod`, `cal model`, `scan carrier`), dual-slot config store, service/yield layer, shot-sequencer **skeleton**, CLI. ❌ **Not written:** Phase 5 onset detector + mic veto, **all Phase 6 strobe firmware**, Phase 7 camera handshake, Phase 8 Pi integration. |
-| **Bench work done** | ✅ Phases 0, 0.5, 1, 1b, 1c, 2. ✅ **Phase 3 §3.1–3.6 on board 3** — §3.6b is a *design finding* (Q8 ×7.43, CR-02), §3.6 Check 2 PASS. ✅ **Phase 5 mic bring-up** (2026-08-31). |
-| **Next** | 🔴 **`detect` has never run on board 3** — 30 s, do it first. Then **§3.7, the first real transits.** Open in parallel: a real **ball impact** on the mic (decides CR-18). Full list in §10. |
+| **Firmware** | ✅ **Power-request fix built in Release: 145152 text / 0 data / 88308 bss**, stamp **Sep 18 2026 15:21:18**; **20/20 host regression tests PASS**. **Flash and physical regression pending**; board still last verified on **11:11:51**. Fix changes request lifecycle/CLI refusal, not safety thresholds, shutdown timings, optical acquisition or config format. Written: power FSM, safe state, beam carrier + demod, ADC engine (DMA ring, block capture, **triggered capture**), detect (threshold DAC, gated HPF, comparator PIO timing, pass log + retained waveforms), cal (`cal demod`, `cal model`, `scan carrier`), dual-slot config store, service/yield layer, shot-sequencer **skeleton**, CLI. ❌ **Not written:** reported ball velocity, Phase 5 onset detector + mic veto, **all Phase 6 strobe firmware**, Phase 7 camera handshake, Phase 8 Pi integration. |
+| **Bench work done** | ✅ Phases 0, 0.5, 1, 1b, 1c, 2 previously passed; **new power-request regression found 2026-09-18**, see §6/§10. ✅ **Phase 3 §3.1–3.6 on board 3** — §3.6b is a *design finding* (Q8 ×7.43, CR-02), §3.6 Check 2 PASS. ✅ **Phase 5 mic bring-up** (2026-08-31). ✅ Board 3 detect control-path smoke and **first real optical ball waveform** (2026-09-18), **3.102 V peak / ~22.7 ms FWHM**, no observed clipping. Comparator edge timing and full §3.7/Phase 4 remain open. |
+| **Next** | **Reflash first: power-request fix, 15:21:18 Release build.** Then run **BENCH.md Test 6** with beam OFF/no Pi: redundant `on` is refused, one `off` leaves STANDBY/latch 0 for at least 5 s, repeated `off` does not poison the next start, force-off remains down. Board 3 is currently **STANDBY, latch 0** on the older image. After that, resolve the optical acquisition-window constraint before the normal 20-pass comparison. Real mic ball impact remains open in parallel (CR-18). |
 
 **Bug found and fixed on the bench 2026-07-30 — ✅ fix verified (Phase 1 test 5).**
 
@@ -604,6 +609,404 @@ See `tools/openocd_pi5.cfg`.
 > true "firmware not yet running" window, independent of press duration. **Not yet
 > taken** — it needs a two-channel capture.
 
+### 2026-09-18 - Board 3 detect control-path smoke test
+
+**Owner confirmed no intervening bench work since 2026-08-31.** This result supersedes
+the 2026-09-17 handoff's "detect never run on board 3"; it does not close §3.7.
+
+| Evidence | Result |
+|---|---|
+| Commanded state | `detect disarm`, `beam off`, `on`, `hpf track`, `adcmode idle`; no ball stimulus |
+| Power/status readback | `BENCH_RUNNING`, fault `none`, **5.207 V** firmware reading, latch `1`, railsready `1`, Pi absent, watchdog `off` |
+| ADC | Mode **1 (idle)**, ring `RUNNING`; the held +5V_IN sample was only **1 ms** old, not a stopped ring |
+| Config readback | **slot A, seq 5, v1**; carrier **104166 Hz**, phase **1311 ticks**, ADC5V scale **1.0620**, gain **14.5**, coalesce **2000 us**, path **0.00 mm**, threshold **level 0** |
+| Calibration readback | HPF **TRACK = 0** confirmed; phase model fitted/pure delay **80-200 kHz**, calibration duty **25.00 %** |
+| Firmware evidence | `help` includes `capture trig`; `stat` shows watchdog `off`. Consistent with the expected image, but no build ID or binary identity was captured |
+| Arm/disarm | `detect arm` acknowledged, status **ARMED**; `detect disarm` acknowledged, status **disarmed**. **PIO2, GPIOBASE 16, SM0** reported throughout |
+| Comparator/data | GPIO46 **1 (ABOVE threshold)** throughout; **0 passes, 0 raw FIFO words**, no last pass |
+
+**PASS: command/control-path smoke test only.** Bare `detect` is a status read, not an
+arm command. At a zero threshold, a high comparator reading is consistent with the
+quiescent signal/offset. `detect.pio` first waits for LOW, then a complete HIGH pulse:
+this transcript contains no evidence of that sequence. It proves neither edge timing
+nor optical detection. The board was left **disarmed, beam OFF, HPF TRACK, ADC idle**;
+no shutdown or config save was commanded.
+
+**Next gate:** establish the final ball-path geometry and a usable threshold above the
+quiescent background but below the measured ball signal. Confirm GPIO46 is LOW at rest.
+Do not use the saved zero threshold or an unmeasured `detect path 20` as a transit setup.
+Keep the rail/load steady while in HOLD (CR-02); the scope-ground issue is still open.
+
+**Related text audit:** the transcript exposed stale `help` guidance (the old 30 % duty
+example, "sense is unverified" despite saved HPF confirmation, literal `25%%`, and
+carrier-ranking language). Corrected those, documented arm-only counter reset and
+unchanged HPF, updated `id` for existing mic capture, removed a board-specific rail
+measurement from `threshold` output, and corrected the phase-model persistence comment.
+Only text/comments changed; detection, safety, sampling and config logic are unchanged.
+**Initial build blocker (historical; recovery and flash confirmation below):** CMake Tools twice returned **"Unable to configure the
+project"**, with no CMake diagnostics or available targets. The private CMake/Ninja/ARM
+tools exist; adding their paths and the existing build directory to the ignored local
+`.vscode/settings.json` did not resolve the failure. **At that point the UF2 on disk still
+dated from 2026-08-31 and did not contain these corrections.** Source diagnostics, help-text
+assertions and `git diff --check` pass. Encoding audit found no BOMs; existing non-ASCII
+in firmware source is confined to deliberate comment emoji, and the netlist-report tool
+has intentional Unicode input/output. No new non-ASCII source text was added.
+
+The §3.7 audit also corrected "HOLD is safe for as long as you need": the leakage budget
+does not bound rail-step errors, and board 2's drift measurement must not be presented as
+board 3's. This is a documentation correction, not a new measurement.
+
+**Build-blocker follow-up, same day:** the owner's CMake Tools log reports `EEXIST` while
+creating `build/.cmake/api`. That path is a normal directory with owner full control,
+not a stray file; a complete file-API reply and Ninja build files were generated at
+10:51. Selecting `[Unspecified]` also raised the same error, so kit selection did not
+resolve it. With no CMake/Ninja process running, temporarily renamed **only** `.cmake`
+to preserve it and retried: the extension returned the same exception without recreating
+the directory. Restored the original metadata; no build data was deleted and no temporary
+backup remains. This suggests retained extension/driver error state, not a demonstrated
+firmware or compiler failure. **The next recovery step was to reload VS Code and retry.**
+The precise initiating cause is still unproven.
+
+**Recovery, intermediate Debug build (superseded by Release below):** the owner reported
+a successful build after **Developer: Reload Window**.
+Host verification found fresh UF2/ELF/BIN at **11:07:46-47**, embedded build stamp
+**Sep 18 2026 11:07:41**, all corrected CLI strings, and none of the four superseded help
+strings. The UF2 has valid block magic and family **0xE48BFF59**; ELF is ARM.
+However, CMake Tools selected **Debug (`-Og -g`)**, replacing the previous **Release
+(`-g -O3 -DNDEBUG`)** configuration. Debug size is **137600 text / 0 data / 88304 bss**.
+**The intermediate Debug build was not approved for flashing; Release was required to
+preserve the established bench configuration.** The editor tool connection disconnected on reload; host artifact
+checks remain available. Build success is owner-reported, not an independently captured
+full build log.
+
+**Host-check error corrected:** my first UF2 check falsely reported an invalid first block
+because PowerShell interpreted `0x9E5D5157` as signed while the file read was unsigned.
+Explicit unsigned conversion makes every block pass. That was a validation-script error,
+not a corrupt UF2.
+
+**Final Release verification - PASS (flash was pending here; confirmed below):** selecting Release first regenerated
+the cache/Ninja files but left the old Debug UF2 in place. A subsequent **CMake: Build**
+performed all **106** build steps and finished with **exit code 0** in **15.771 s**, with
+no warnings in the owner's supplied log. Verified the **artifact**, not just the cache:
+`picotool info -a build/pitrac.uf2` reports **Release**, SDK **2.3.0**, board
+**pitrac_ltb_v1**, family **rp2350-arm-s**, target **RP2350**, image **ARM Secure**.
+UF2 timestamp **2026-09-18 11:12:05**; embedded CLI `built` stamp
+**Sep 18 2026 11:11:51**. Size **144768 text / 0 data / 88308 bss**: text +632 bytes,
+BSS unchanged from the previous Release build. Corrected help/identity strings are
+present in the linked image; the four checked stale help strings are absent.
+
+UF2 SHA-256: `64E9632B3AF97508CF0B6ACD66F6E49E3D74C902DF5CB3AC6BC192633E14BDE0`.
+The preserved file-API metadata was restored; no temporary backup remains.
+**At this checkpoint flash/readback was still pending.** The planned checks were `id` for the stamp above and
+board UID **6d6fda754e367a40**, and `cfg` for **slot A seq 5**, carrier **104166 Hz**,
+phase **1311 ticks**, **TRACK = 0**, cal duty **25.00 %**.
+
+### 2026-09-18 - Post-flash PASS; preparing the first physical ball setup
+
+**Owner serial transcript confirms the new image is running on board 3:**
+
+| Evidence | Readback |
+|---|---|
+| Identity | `pitrac phases 0-4 + mic capture (block/triggered)`, built **Sep 18 2026 11:11:51**, UID **6d6fda754e367a40**, sysclk **150000000 Hz** |
+| Saved config | **slot A seq 5 v1**, carrier **104166 Hz**, phase **1311 ticks**, cal duty **25.00 %**, pure-delay model **80-200 kHz**, saved **TRACK = 0** |
+| Other saved values | Threshold **0**, coalesce **2000 us**, ADC5V scale **1.0620**, gain **14.5**, path **0.00 mm** |
+| Power | **BENCH_RUNNING**, firmware supply reading **5.207 V**, latch **1**, railsready **1**, fault **none**, Pi absent, watchdog **off** |
+| ADC | **idle (mode 1)**, ring RUNNING, supply sample **1 ms** old |
+| Last commands | `detect disarm`, `beam off`; both acknowledged |
+| Physical optics | Owner confirmed **lenses fitted, no enclosure** |
+
+**PASS: post-flash identity, retained configuration and powered idle health.** Saved HPF
+polarity is not a live-mode readback; this transcript did not include bare `hpf`, so the
+next powered procedure explicitly sets TRACK. No new calibration/config save, comparator
+edge proof or ball transit is implied by this result.
+
+**Initial proposed procedure (physical layout superseded by the extrusion choice below):**
+power down for fixture work;
+rigid lens/board mount; perpendicular flat rolling lane; marked crossing C; initial gentle
+100 mm release height; smooth transition and remote catch; three unpowered dry rolls.
+Measure the lens-to-ball range, ball-centre height/drop, lane/guide geometry and lighting,
+and take top/side photos. About 400 mm range is only a provisional layout based on the
+previous calibration-card plane, **not a proven ball-detection range**. Keep lenses/focus
+unchanged. Then take a no-ball **ADC5 100 ksps / 100 ms** raw record in the final scene,
+with beam **104.1667 kHz / 25 %**, warmed at least **5 min**, HPF TRACK, detect disarmed.
+Do not arm at the saved zero threshold or enter an invented `detect path`.
+
+**Corrections to my earlier guidance and the bench document:**
+
+- I called the ramp a known/independent speed reference. That was too strong. The
+  `sqrt(2*g*h*5/7)` values assume a lossless solid sphere rolling without slip; a golf ball,
+  real ramp/transition and guide contacts do not establish few-percent speed accuracy.
+  Use height for repeatable release, and an independently timed local speed with uncertainty
+  if validating accuracy. The old few-percent ramp-speed exit criterion is superseded.
+- I implied setting `detect path` would enable a speed readout. **The current CLI does
+  not report velocity.** Code-intelligence references for `detect_path_mm` lead only to
+  config snapshot/status uses, and the transit CLI emits durations. The field is stored;
+  the sequencer's analysis stage is still a stub. This is not a gate to recording a
+  waveform. Board-to-ball range is not the travelled distance between waveform crossings.
+- The ordinary ADC ring holds **32.768 ms**, but that is not the available pulse-width
+  budget. In armed mode `refine()` needs approximately **age + 2.5*T + 1.024 ms** of
+  history for one fragment. At the saved **2 ms** coalesce delay, **T < about 11.9 ms**
+  is needed before allowing for service latency; chatter needs more guard. The older
+  source comments' "about 1.4 m/s" shortcut does not include this indexing budget or a
+  measured optical response width. Slow ramp passes can set **WINCLIP (0x04)**. Measure
+  a long pilot waveform first: single-channel **100 ksps** triggered capture can hold
+  **163.84 ms** (25 % pre = **40.96 ms**, post = **122.88 ms**), or use the external scope.
+  Do not raise the ramp to an unsafe height just to fit the normal ring.
+
+**Printed-output/comment audit, no firmware edits:** current `capture trig` always says
+"Make the sound", even for ADC5; the revised optical procedure explains that this means
+release the ball, not clap. `level`'s 50-70 % target is a calibration-target criterion,
+not a required ball amplitude. The path/speed and ring-speed comments above are known
+overstatements, now explicitly qualified in the bench instructions; do not change code
+or demand another reflash just to build the physical fixture. First review deliverables
+are dimensions/photos and a raw no-ball baseline; real-transit measurements remain pending.
+
+### 2026-09-18 - Extrusion ramp selected; serial logging setup
+
+The owner will use a **grooved aluminum extrusion** rather than the proposed flat-lane
+cardboard ramp. The ball crosses the optics **on the slope**:
+
+| Owner-provided dimension | Meaning / status |
+|---|---|
+| **295 mm** above mat | Release location, **top surface of extrusion / bottom of ball**, clarified by owner |
+| **85 mm** above mat | Approximate beam-crossing location, same surface/bottom-of-ball reference, **not ball centre** |
+| **740 mm downrange** | Release to where extrusion touches mat; horizontal versus along-ramp reference not yet established |
+| **210 mm inferred drop to crossing** | Difference of surface heights; also centre drop only if straight uniform groove and unchanged seating offset |
+
+No incline angle, lens-to-ball distance, actual seated centre height, groove contact
+geometry, arrival speed, dry-roll result or baseline capture has yet been supplied.
+The 1.715 m/s lossless flat-surface solid-sphere value for 210 mm is **not a prediction
+to trust for this groove**. Grooves change the rotation/contact geometry; use the fixture
+for repeatability and measure speed independently if needed. Aim at the actual ball
+centre, not the 85 mm-high aluminum surface. Secure the metal away from the PCB/D12 and
+retain it in the no-ball scene so its reflected background is represented in the baseline.
+Updated the §3.7 procedure to distinguish this adopted fixture from the earlier alternative.
+
+**Serial truncation:** the owner reports the first output disappearing before copying.
+Inspected the installed **Microsoft Serial Monitor 0.13.1**: its default scrollback is
+**9000 lines**, below the requested 10000 ADC samples plus header. Verified built-in
+**Toggle File Logging**, **Open the last used log file**, and
+`vscode-serial-monitor.logFileDirectory`. The logging toggle is disabled while monitoring
+or without a directory. Added the existing, gitignored `captures/` directory to the
+ignored local workspace setting. **This configures a destination; it does not enable
+logging or prove a file was captured.** Owner should stop monitoring, enable file logging,
+restart, test with `id`, stop/open the log, then restart for the baseline.
+Do not rely on scrollback or assume already-discarded output can be recovered.
+
+The existing `scope.py --csv --no-plot` path was inspected as an alternative; a `--help`
+check failed because **pyserial is absent in the selected Python 3.14.6 repo venv**.
+No package installed or Python code changed: the built-in serial logger needs neither.
+No firmware changes/reflash. At this checkpoint serial logging and all physical-transit
+results were still unverified; the short logging test is confirmed below.
+
+**Serial file-logging test - PASS:** inspected
+`captures/COM11_2026_09_18.14.43.36.091.txt` (14 lines). It contains the complete
+`detect disarm` / `beam off` acknowledgements and `id` response through the final prompt:
+build **Sep 18 2026 11:11:51**, UID **6d6fda754e367a40**, sysclk **150000000 Hz**.
+The owner stopped monitoring after saving the log. This proves the short file-logging
+path, **not yet a 10000-sample capture**. No `stat` or ADC data in this file; it does not
+establish a new rail/HPF state or a physical-transit result. Last commanded beam is OFF
+and detection disarmed; stopping the host monitor is not an `off` command.
+**Next at that checkpoint (superseded by the later capture below):** restart monitoring with file logging enabled, complete the safe fixture/optical
+setup, warm at 25 % with HPF TRACK, and save the final-scene no-ball ADC5 baseline.
+
+### 2026-09-18 - Complete no-ball ADC5 capture; serial logging proven at full length
+
+**Correction to my response:** I inspected only the earlier 14:43 short logging-test file,
+called the baseline pending, and sent the owner the procedure again. The later
+`captures/COM11_2026_09_18.14.44.19.918.txt` already held the completed procedure and
+capture. **That was my file-selection/status error, not missing bench work.** Check the
+latest supplied file and adjacent newer captures before asking for a repeated measurement.
+
+**Validated the entire later file:** exactly **10000 integer ADC5 samples**, all in
+0-4095, one capture header, `# columns: ch5`, and the closing `# end` plus prompt.
+Header: `# capture mask=0x20 n=10000 rate=100000 overran=0`.
+**PASS: full-length logging/capture integrity**, 100 ksps, **100 ms**, 10 us/sample.
+
+| Measurement | Result |
+|---|---|
+| Commanded/read-back optics | **104166 Hz**, TOP **1439**, **25.00 %** commanded/effective, phase **1311 ticks**, PWM hardware checks OK |
+| HPF and ADC before capture | Live **TRACK (GPIO33 = 0)**, ADC **idle**, ring RUNNING |
+| Chopped `level` | Rose while settling, ended at **2254 codes / 55 %**, GOOD. This is chopped-scene response, not the steady baseline voltage |
+| Comparator | Threshold **level 0**, GPIO46 **HIGH**; no working ball threshold established |
+| Pre-capture power | **5.178 V**, BENCH_RUNNING, latch/railsready **1**, fault none, Pi absent, watchdog off |
+| Mean baseline | **16.6441 codes = 13.4128 mV** |
+| Population standard deviation | **4.5435 codes = 3.6615 mV** |
+| Minimum / maximum | **9 / 31 codes = 7.2527 / 24.9817 mV** |
+| Peak-to-peak | **22 codes = 17.7289 mV** |
+| Clipping checks | **0 samples <= 1**, **0 samples >= 4080**; no clipping observed in this window |
+| Mean over each 10 ms block | **12.94-14.07 mV**; no large baseline step in the 100 ms record |
+
+Voltages use nominal **3.3 V / 4095** ADC conversion, not the separate ADC5V supply scale.
+This is measured variation in this scene, not an isolated electronics-noise specification
+or proof against rare false triggers.
+
+**Thermal qualification:** the first status (before beam setup) reports BENCH_RUNNING
+**785367 ms**, and the pre-capture status reports **869396 ms**, an interval of **84.029 s**.
+Beam ramp and `level` are between them. The record therefore does **not establish the
+required 300 s steady-beam warm-up**. Keep this useful baseline; do not describe it as a
+thermally qualified final measurement or repeat the whole procedure merely because I
+opened the wrong file. Establish the steady-beam warm-up before the next pilot record.
+
+**Last recorded state:** beam **ON at 25 %**, rail **UP**, HPF TRACK, detector last commanded
+disarmed. Capture restores ADC idle in firmware. There is **no post-capture `stat`, `beam off`
+or `off` in this file**; stopping the monitor is not evidence of shutdown. No ball
+transit, pilot width, or comparator-edge proof yet. No firmware changes.
+
+**Next prescribed experiment at that checkpoint (completed below):** one no-ball HOLD trigger control, then
+one ball pilot if the control stays quiet. **`capture trig 5 64 100000 25 10`**:
+ADC5, **64 codes = 51.6 mV deviation** from a newly measured baseline, **100 ksps**,
+**25 % pre-trigger**, **10 s timeout**. About **14.1 times measured TRACK sigma**, with
+**163.84 ms** total history (**40.96 ms pre / 122.88 ms post**). This is a conservative
+starting trigger, not the eventual comparator threshold or a validated detection limit.
+The trigger is either-polarity; require a ball-correlated positive waveform in review.
+HOLD gets a separate quiet control because the measured 100 ms TRACK baseline does not
+bound rail disturbances or long-term drift while armed.
+
+Use the existing steady beam if it has remained on; establish **at least 5 min** total
+warm-up without needlessly restarting it. Detector stays disarmed. TRACK for **at least
+5 s** before each trial; HOLD immediately before the capture. No-ball **NO TRIGGER**
+after 10 s is the desired control result; an unsolicited capture means stop and review.
+For the ball trial, stage it at the existing **295 mm** release-surface mark outside the
+view before settling, wait about **1 s** after `armed`, then release once without pushing.
+After prompt/#end return to TRACK/idle, save `stat`, and power down if pausing for review.
+Exact commands and output checks are in BENCH_P3_DETECT §3.7 step 1d. No new firmware,
+config save or physical result is implied by these instructions.
+
+### 2026-09-18 - First real optical ball capture PASS; power-request bug exposed
+
+Newest file: `captures/COM11_2026_09_18.14.54.08.428.txt`, not the still-tagged 14:44
+baseline. The owner confirmed **one clean ball crossing, no hand in view**, with the
+capture starting after release. Same grooved aluminum extrusion fixture.
+
+**Control:** initial typo `capture triv ...` returned `ERR: capture failed`; corrected
+`capture trig 5 64 100000 25 10` then returned **NO TRIGGER in 10 s**, baseline
+**136 codes / 109.60 mV**. This passes the prescribed no-ball HOLD control, not a
+long-duration false-alarm qualification. The typo was not a successful acquisition.
+
+**Ball capture integrity PASS:** exactly **16384 samples**, one header and `# end`,
+`mask=0x20`, `rate=100000`, `overran=0`, `trig=4096`, `base=96`.
+That is **163.84 ms**, **40.96 ms pre-trigger / 122.88 ms post-trigger**.
+Beam **104166 Hz / 25 % / phase 1311**, HPF **HOLD**, detector disarmed. Initial supply
+**5.179 V**; after capture/restoring TRACK/idle, **5.191 V**, no fault, watchdog off.
+
+| Pilot measurement | Result / method |
+|---|---|
+| Waveform | Single smooth positive bump, both edges and return toward baseline captured; owner confirms a clean ball transit |
+| Raw peak | **3849 codes = 3.10176 V**, at **+30.25 ms** relative to ADC trigger |
+| Local pre-event baseline | **115.332 codes = 92.942 mV**, mean over **-40 to -10 ms** |
+| Peak above that baseline | **3.00882 V** |
+| Tail baseline | **109.4265 codes = 88.183 mV**, mean over **+100 to +120 ms** |
+| Half-height duration | **~22.7 ms**; 0.2 ms box-averaged waveform, linearly interpolated crossings at **+19.754 / +42.463 ms**, using the local pre-event baseline |
+| ADC headroom | **246 codes = 198.24 mV**, **6.01 %** of nominal full scale remains |
+| Clipping checks | **0 samples >= 4080**, **0 samples <= 1**; no ADC rail clipping observed, not a proof of every upstream stage's linearity |
+
+Voltages use nominal **3.3 V / 4095**. The arm-time `base=96` (**77.36 mV**) is not the
+same as the later pre-event mean. Nor are the HOLD baselines interchangeable with the
+earlier **13.41 mV TRACK** mean. Do not attribute those differences to one cause without
+elapsed HOLD time and rail/optical evidence. A plot and reproducible standard-library
+analysis are retained as session artifacts; no Python packages were installed.
+
+**Pilot PASS is not full §3.7 closure.** There is no comparator timing/chatter result
+because the PIO detector stayed disarmed, no velocity reference, and no repeatability
+distribution. The baseline-to-pilot status ages differ by **483.281 s**, consistent with
+the requested warm-up if the beam stayed on; uninterrupted beam-on time is not directly
+timestamped in the log.
+
+**Normal refinement does not fit this pulse at half-height:** with comparator width
+T approximately **22.709 ms**, the current single-fragment indexing needs
+**2 + 2.5*T + 1.024 = 59.80 ms**, against **32.768 ms** available. Lower comparator
+thresholds would normally lengthen the pulse further. Do not proceed to a normal
+20-pass `detect`/ADC-bias dataset and mistake WINCLIP for an optical failure.
+Continue with long captures for amplitude/repeatability, or change the acquisition
+approach deliberately after resolving the power issue. Do not move the ramp or narrow
+the pulse by threshold alone merely to hide the buffer limit.
+
+**Shutdown anomaly and confirmed present state:**
+
+1. The log ends with `beam off`, `off` -> `requested shutdown`, but then
+   **POWERING_ON (1486 ms), latch 1, railsready 0**. This was not successful shutdown.
+2. Asked the owner to inspect current status before touching the fixture. The board
+   had returned to **BENCH_RUNNING (99516 ms), latch 1**.
+3. A second `off` then produced **STANDBY (11766 ms), latch 0, railsready 0,
+   fault none, watchdog off**. Supply input still reads **5.209 V**; that upstream
+   voltage does not mean the switched rail is enabled. Beam was explicitly turned off.
+   **This is the current board state.** D12/VIR discharge has not been measured.
+
+**Source-confirmed mechanism matching the bench sequence:** `power_request_on()` sets
+`s_req_on = true` regardless of current state. `power_fsm_step()` consumes/clears it only
+in **STANDBY**. The earlier 14:44 log issued `on` while already BENCH_RUNNING, so the
+request remained pending until `off` took the FSM through FORCE_OFF back to STANDBY.
+The stale request then closed the latch again; the second `off` succeeded because that
+one pending request had been consumed. Code-intelligence references confirm the CLI is
+the only caller besides the declaration/definition. **This is not a debounce or Pi
+shutdown delay.** It is an untested stale-command sequence despite the older Phase 1
+matrix passing.
+
+**My procedural error:** I used `on` as though it were idempotent in the setup recipes;
+that exposed a pre-existing firmware defect. Until fixed, send `on` **only from confirmed
+STANDBY**, never to reconfirm an already-running rail, and verify actual latch 0 after
+shutdown. The CLI's "requested shutdown" is an acknowledgement, not proof of rail-down.
+The source header's request-state contract was not met for stale `on`. No source change
+or reflash was made during that analysis; the subsequent fix/host verification is below.
+
+### 2026-09-18 - Stale power requests fixed in source; reflash/bench verification pending
+
+**User requested the fix. Implemented in `power_fsm.c/.h` and the CLI:**
+
+- `power_request_on()` now returns acceptance status and queues only from **STANDBY**,
+  with no shutdown/force-off pending. Repeated `on` while already powered, booting,
+  shutting down or faulted is **refused**, not remembered for the next cycle.
+- `power_request_shutdown()` cancels a pending start. In STANDBY/FORCE_OFF it leaves
+  no stale shutdown that could stop the next intentional start. **Shutdown requested
+  during startup/PI_BOOTING still waits for the existing normal shutdown path.**
+- Force-off requests cancel pending starts/shutdowns; **all request flags are cleared
+  in FORCE_OFF**, including teardown reached by button, supply failure or fault recovery.
+- CLI prints **`REFUSED: 'on' needs STANDBY with no pending stop (state ...).`** and
+  **`No power-on request was queued.`** for rejected starts. Its help text describes the
+  new admission rule. Valid STANDBY starts still print `requested on` and obey the USB guard.
+
+**Unchanged:** GPIO27 policy, all supply thresholds/debounce periods, Pi detect/boot/
+shutdown timing, beam/detect/ADC behavior, phase/calibration/config record and flash layout.
+Updated the related power header contract and corrected teardown comments referring to
+30 % beam operation and `hpf track` rather than the actual high-level `hpf hold` case.
+
+**Regression proof against the actual C producer:** added standalone native
+`tests/CMakeLists.txt` and `tests/power_fsm_test.c`, compiling **`src/power_fsm.c`** with
+real board constants and small mocked GPIO/time/ADC/beam/fault interfaces. No test
+framework, package or SDK dependency was added to the host test project; it is not
+linked into the firmware.
+
+1. Built/ran the initial **17 tests before changing production code**: **13 FAIL / 4 PASS**.
+   Failures reproduced the observed restart to POWERING_ON/latch 1, stale standby `off`,
+   pending-request collisions, and restart after button/supply/fault teardown.
+   Existing startup-shutdown handling, USB guard and stale fault-ack checks passed.
+2. Applied the fix and added API acceptance plus Pi timeout coverage: **20/20 PASS** via
+   CMake Tools/CTest, native **Release**, warnings treated as errors. Tests verify no
+   new latch rise during 6 s after shutdown, fresh starts still work, 200 ms Pi shutdown
+   pulse and 15 s floor remain, startup shutdown remains pending correctly, 90 s boot/
+   60 s shutdown timeout behavior is unchanged, supply guards/debounce remain, and no
+   GPIO27 writes occur. These are host logic tests, **not physical rail measurements**.
+3. Restored the local CMake Tools source/build directory and Ninja generator to the Pico
+   firmware after the native test run. **Release ARM build passed, no warnings/errors.**
+   Editor diagnostics are clear for changed C/header files.
+
+**Verified artifact:** `build/pitrac.uf2`, timestamp **2026-09-18 15:21:20**, CLI build
+stamp **Sep 18 2026 15:21:18**. `picotool` confirms **Release**, SDK **2.3.0**,
+**pitrac_ltb_v1**, family **rp2350-arm-s**, target **RP2350**, **ARM Secure**.
+Size **145152 text / 0 data / 88308 bss** (text +384 bytes, BSS unchanged from 11:11:51).
+The linked image contains the new refusal/help strings. UF2 SHA-256:
+`B05C1624BB4186E7E52DB7DB3DFE80C97DF4976BB438E92E203631E4F2962745`.
+
+**Reflash first.** Nothing has been flashed by the assistant. The board's last confirmed
+state remains **STANDBY / latch 0**, on the **11:11:51** image. After flash, verify `id`,
+UID **6d6fda754e367a40**, and `cfg` **slot A seq 5**, carrier **104166 Hz**,
+phase **1311 ticks**, cal duty **25.00 %**, HPF polarity **TRACK = 0**.
+Then perform **BENCH.md Test 6**: beam OFF, ADC idle, HPF TRACK whenever rail up,
+no Pi/camera, supply 5.20 V. Do not mark the hardware regression passed until one `off`
+after redundant `on` stays down and subsequent intentional starts still work.
+No commits; unrelated Software changes left untouched.
+
 ---
 
 ## 7. Source layout
@@ -808,19 +1211,55 @@ firmware/
 
 ## 10. Next session — start here
 
-> ### ✅ RESUME POINT — handoff 2026-09-17 (bench state as of 2026-08-31)
+> ### ✅ RESUME POINT — 2026-09-18: reflash power-request fix, then bench regression
 >
 > 🔵 **Taking over? Read `HANDOFF.md` first.** It carries the working conventions, the safety
 > rules, the tooling traps on this machine, and the analysis lessons that were expensive to
 > learn. This block is the live state; **if the two ever disagree, this block wins.**
 >
-> **Active board: board 3** (reworked TIA, calibrated, saved slot A seq 5). **Firmware in the
-> tree = firmware on the board**, very probably: the last UF2 was built 2026-08-31 13:43 and
-> the `capture trig` captures at 14:03 needed it. ✅ Confirm with `help` listing
-> `capture trig`, and `stat` showing `watchdog : off`.
+> **Active board: board 3** (reworked TIA, calibrated, saved slot A seq 5), **lenses fitted,
+> no enclosure**. Post-flash `id` reports **Sep 18 2026 11:11:51**, UID
+> **6d6fda754e367a40**. Saved calibration matches. **Current state confirmed in owner
+> follow-up: STANDBY, latch 0, railsready 0, no fault, Pi absent, watchdog off.** Beam was
+> explicitly turned off, HPF restored to TRACK, ADC idle, detector disarmed. First `off`
+> unexpectedly restarted the rail; a **second `off`** achieved this confirmed shutdown.
+> Input supply **5.209 V** is upstream of the latch, not a switched-rail measurement.
 >
-> ⚠ **About two weeks passed between the last bench session and this handoff.** Ask what was
-> done in between before trusting any "not yet run" line below.
+> **Reflash first:** power-request fix built/verified in **Release**, expected `id` stamp
+> **Sep 18 2026 15:21:18**, **145152 text / 88308 bss**. **20/20 native C regression tests
+> PASS**; the initial tests reproduced the bug before the fix. The board still last ran
+> **11:11:51**: **flash and physical Test 6 in BENCH.md are pending**.
+> New `on` is refused outside STANDBY and never queues a later restart; stop requests
+> cancel pending starts and teardown clears all requests. Supply/Pi timing, optical
+> acquisition and config layout are unchanged. Until reflashed, keep the old-image
+> workaround (`on` only from STANDBY). Always verify latch 0 after shutdown.
+>
+> **The owner confirmed nothing happened between 2026-08-31 and the handoff.** The new
+> smoke-test, post-flash and no-ball capture evidence are recorded in §6. **Live TRACK
+> is now confirmed** by `hpf` in the capture log; do not infer mode from saved polarity alone.
+> Power down the switched rail before building/adjusting the exposed-board fixture.
+>
+> **Adopted fixture:** grooved **aluminum extrusion**, crossing on the incline; surface
+> heights **295 mm at release / about 85 mm at crossing**, mat contact **740 mm downrange**.
+> Heights are not ball-centre heights. Nominal drop **210 mm** assumes constant seating;
+> angle, optical alignment and speed are not established. See §6 and §3.7 before using
+> the superseded flat-lane dimensions. Secure the metal clear of D12/the PCB.
+>
+> **Full-length serial logging/capture PASS:** the newer
+> `captures/COM11_2026_09_18.14.44.19.918.txt` contains **all 10000 ADC5 samples and # end**,
+> 100 ksps / 100 ms, overran **0**. Mean **13.41 mV**, sigma **3.66 mV**, range
+> **7.25-24.98 mV**, no observed clipping. I initially missed this newer file and wrongly
+> requested a repeat; correction logged in §6. This was the initial TRACK baseline,
+> not the later HOLD baseline; the completed ball pilot is below.
+> Do not infer rail-down from stopping the monitor.
+>
+> **Pilot PASS:** `captures/COM11_2026_09_18.14.54.08.428.txt`: no-ball HOLD control
+> **NO TRIGGER / 10 s**, then a complete **16384-sample** ball waveform, no overrun.
+> Owner confirmed clean crossing/no hand in view. Peak **3.102 V**, local baseline
+> **92.94 mV**, half-height width **~22.7 ms**, no observed clipping but only **0.198 V**
+> ADC headroom. Comparator edge timing is still untested. At half-height threshold this
+> pulse would need **~59.8 ms** of refinement history vs **32.768 ms** available:
+> do not start the normal 20-pass comparison yet. Full evidence/power fault trace in §6.
 >
 >
 > | | | |
@@ -830,8 +1269,9 @@ firmware/
 > | ✅ | **§3.6b Method A** | **DONE — and it FAILS.** Q8 measured **×7.43** in HOLD against ×7.25 predicted. See Q8 |
 > | ✅ | **§3.6 Check 2** | **DONE — PASS.** σ_noise flat 4.57–5.08 across 95–115 kHz |
 > | 🟡 | §3.6 Check 1 | **Deferred**, needs a scope. Downgraded: Check 2 already answered the question it supports |
-> | 🔴 | **`detect`** | **STILL NEVER RUN ON BOARD 3.** 30 s. Confirms GPIO46 reads and the SM arms |
-> | 🔴 | **§3.7** | **NEXT** — the first real transits |
+> | ✅ | **`detect` / arm / disarm** | **Control-path smoke PASS 2026-09-18.** PIO2/base16/SM0; GPIO46 remained HIGH at saved threshold 0; zero passes/FIFO words. **Edge timing is still untested** |
+> | 🟡 | **Power regression** | Source fix + **20/20 host tests PASS**. **Reflash 15:21:18 and run BENCH.md Test 6**; physical proof pending |
+> | 🟡 | **§3.7** | First real ball pilot **PASS**, **3.102 V / ~22.7 ms**. Full repeatability, comparator/ADC comparison and gain decision remain open. Finish power-fix bench verification and resolve acquisition-window limit before the normal 20-pass set |
 > | ✅ | **Phase 5 mic bring-up** | **DONE 8/31.** Front end validated: sub-LSB noise, 51–54 dB SNR, ~7× headroom, no enclosure ring |
 > | 🔴 | **Phase 5: a real BALL impact** | Not captured. It decides **CR-18** — whether the 2.41 kHz high-pass corner is throwing away the signal band |
 >
@@ -854,8 +1294,9 @@ firmware/
 > optical background, not the electronics (0.65 / 2.91 / 6.5–14 mV on one board in one
 > session), and the scan divides by it.
 >
-> ⚠ **Two config fields still gate Phase 4:** `path 0.00 mm` (`detect path <mm>`; nothing
-> reports velocity until it is set) and the R98 decision, which waits on §3.7.
+> ⚠ **Still open:** `path 0.00 mm` and the R98 decision. Neither blocks the pilot waveform.
+> The present CLI reports **durations, not velocity**, even if a path is set. Do not enter
+> the lens-to-ball range as path width. R98 still waits on measured ball-signal range.
 >
 > ⚠ **The chopped calibration is over-driven by crosstalk alone on this board.** With no
 > reflector at all, D11→D12 leakage plus floor return puts 6.30 V at ADC5 against a 3.3 V

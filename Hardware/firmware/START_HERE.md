@@ -306,10 +306,14 @@ up once you're iterating; the buttons get old around the twentieth cycle.
 | `ARCHITECTURE.md` | What runs on PIO/PWM/DMA vs the CPU |
 | `SETUP.md` | Toolchain detail and the manual install path |
 
-**Current status (2026-08-31): phases 0 through 2 are complete and closed. Phase 3 §3.1–3.6
+**Current status (2026-09-18): phases 0 through 2 are complete and closed. Phase 3 §3.1–3.6
 are complete on board 3** — including §3.6b (Q8 measured at **×7.43, FAILS**) and §3.6 Check 2
-(`scan carrier` flatness, **PASS**). **§3.7, the first real transits, is next**, with `detect`
-still never run on board 3. ✅ **Phase 5 mic bring-up is complete** (2026-08-31): front end
+(`scan carrier` flatness, **PASS**). **§3.7's first real ball waveform passed**
+(3.102 V peak, ~22.7 ms half-height width); full timing comparison remains open.
+A **stale-`on` shutdown/restart bug** was exposed; its source fix and 20 host tests pass,
+but **reflash and BENCH.md Test 6 remain pending**. See `PROGRESS.md` §10 rather than
+repeating the completed pilot.
+✅ **Phase 5 mic bring-up is complete** (2026-08-31): front end
 validated, `capture trig` added. See `PROGRESS.md` §10 for the resume block — it is always more
 current than this line.
 

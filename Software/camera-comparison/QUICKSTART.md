@@ -52,7 +52,18 @@ It contains `mira220.raw` (12,174,400,000 bytes), `imx296.raw`
 results. They are native raw streams, not MP4 files. Earlier failed trial
 directories remain explicitly invalid; do not use them as accepted results.
 
+[Timestamp-faithful MP4 conversion](CONVERT.md) can create viewing copies from
+either camera, using every frame's recorded time and optionally keeping only the
+first 10 seconds. The original raw data and timing evidence are preserved.
+
 ## Record another run in the current boot
+
+To focus both cameras first, use [the live raw browser preview](FOCUS.md).
+Stop the preview service before running the recorder; both use the same camera lock.
+Its exposure controls default to linked values, can be unlinked for independent
+adjustment, and restore startup exposure/timing when preview stops normally.
+Preview permits up to 500 ms with lower FPS; recording keeps its existing
+maximum-frame-rate limits.
 
 Run in a Bash terminal on the Pi as the normal `pitrac` user:
 

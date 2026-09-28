@@ -1,0 +1,202 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 PiTrac contributors -->
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>PiTrac | Focus preview</title>
+    <link rel="stylesheet" href="/preview.css">
+    <script type="module" src="/preview.js"></script>
+</head>
+<body>
+    <header class="page-header">
+        <div>
+            <p class="eyebrow">PiTrac / Camera comparison</p>
+            <h1>Focus preview</h1>
+        </div>
+        <div class="connection-summary">
+            <p id="connection-state" role="status">Connecting to preview...</p>
+            <p id="refresh-budget">Browser request cap: waiting for server</p>
+        </div>
+    </header>
+
+    <aside class="lock-banner" aria-label="Camera lock warning">
+        <strong>Preview holds the camera lock. Stop preview before recording.</strong>
+        <span>Closing this tab or the SSH tunnel does NOT stop capture.
+            Stop the preview in the Pi terminal (Ctrl+C), or stop its service.</span>
+    </aside>
+
+    <section class="pipeline-note" aria-label="Raw display information">
+        <p><strong>Direct V4L2 raw acquisition. No automatic saving.</strong>
+            Native capture continues at the configured sensor rates; the browser
+            skips intermediate frames and fetches only the latest.</p>
+        <p>No Pi ISP, AE/AGC, gamma curve, denoising, sharpening, or per-frame normalization.
+            GREY maps directly to grayscale; Y10P maps native value &gt;&gt; 2.
+            Smooth mode compresses this display with JPEG. Raw mode preserves native data.</p>
+        <div class="transport-controls">
+            <label for="transport-mode">Preview mode</label>
+            <select id="transport-mode" disabled>
+                <option value="jpeg">Smooth (JPEG)</option>
+                <option value="raw">Raw pixels (lossless)</option>
+            </select>
+            <span id="transport-note" role="status">Waiting for server capabilities.</span>
+        </div>
+    </section>
+
+    <section id="capture-controls" class="capture-controls" aria-label="Lossless paired image capture">
+        <div class="capture-heading">
+            <h2>Save both cameras</h2>
+            <button type="button" data-capture-button disabled>Capture</button>
+            <span data-capture-availability role="status">Waiting for both cameras.</span>
+        </div>
+        <p>One ZIP with full-resolution lossless PNGs, original raw buffers and metadata.
+            Mira220: 8-bit. IMX296: all 10 bits in a 16-bit PNG, without brightness scaling.
+            Works in either preview mode; zoom does not affect the saved images.</p>
+        <p>Uses the latest live frame from each camera, not hardware-synchronized exposures.
+            The IMX296 PNG may appear dark in ordinary viewers; its native values are unchanged.</p>
+        <p data-capture-message role="status" aria-live="polite"></p>
+    </section>
+
+    <form id="exposure-controls" class="exposure-controls" aria-label="Camera exposure controls">
+        <div class="exposure-heading">
+            <h2>Exposure</h2>
+            <label class="link-control"><input type="checkbox" data-exposure-link checked disabled>
+                Link camera exposures</label>
+        </div>
+        <div class="exposure-inputs">
+            <label for="mira220-exposure">Mira220 (microseconds)
+                <input id="mira220-exposure" data-exposure-camera="mira220"
+                       type="number" min="30" max="500000" step="any" required disabled>
+            </label>
+            <label for="imx296-exposure">IMX296 (microseconds)
+                <input id="imx296-exposure" data-exposure-camera="imx296"
+                       type="number" min="30" max="500000" step="any" required disabled>
+            </label>
+            <button type="submit" data-exposure-apply disabled>Apply exposure</button>
+            <button type="button" data-exposure-reload disabled>Reload current values</button>
+        </div>
+        <p>30 us to 500,000 us (500 ms). Linked values use the same requested time;
+            actual integration is quantized per sensor. Gain stays at 1x.
+            Longer exposures reduce acquisition FPS. Applying briefly restarts capture.</p>
+        <p data-exposure-message role="status" aria-live="polite">Waiting for exposure controls.</p>
+        <p data-exposure-feedback class="exposure-feedback"></p>
+    </form>
+
+    <p class="focus-tip"><strong>Focus at 1:1.</strong> Fit is for framing.
+        Drag or use the scrollbars to pan; focus the viewport and use arrow keys for keyboard panning.
+        1:1 means one source pixel per CSS pixel; browser/OS scaling affects physical screen pixels.</p>
+
+    <main class="camera-grid" aria-label="Side-by-side camera previews">
+        <article class="camera-panel" data-camera="mira220" aria-labelledby="mira220-title">
+            <header class="panel-header">
+                <div>
+                    <h2 id="mira220-title">Mira220</h2>
+                    <p class="format-summary" data-field="format">Waiting for raw configuration</p>
+                </div>
+                <span class="state-badge" data-field="badge" data-tone="waiting">STARTING</span>
+            </header>
+            <div class="view-controls">
+                <div class="zoom-buttons" role="group" aria-label="Mira220 display scale">
+                    <button type="button" data-zoom="fit" aria-pressed="false">Fit</button>
+                    <button type="button" data-zoom="native" aria-pressed="true">1:1</button>
+                    <button type="button" data-zoom="double" aria-pressed="false">2:1</button>
+                </div>
+                <button type="button" data-action="center">Center view</button>
+                <span class="scale-label" data-field="scale">Native pixels</span>
+            </div>
+            <div class="image-shell">
+                <div class="viewport view-native" tabindex="0" role="region"
+                     aria-label="Mira220 image; drag, scroll, or use arrow keys to pan">
+                    <div class="canvas-surface">
+                        <canvas width="1" height="1" aria-label="Mira220 raw monochrome image">
+                            Canvas support is required for raw pixel display.
+                        </canvas>
+                    </div>
+                </div>
+                <div class="frame-overlay" role="status" aria-live="polite">
+                    <strong data-field="overlay-title">STARTING</strong>
+                    <span data-field="overlay-detail">Waiting for a raw frame.</span>
+                </div>
+            </div>
+            <output class="pixel-readout" data-field="pixel" aria-label="Mira220 native pixel value">
+                Hover over the image to inspect native pixel values.
+            </output>
+            <dl class="camera-metrics">
+                <div><dt>Configured native rate</dt><dd data-field="native-fps">--</dd></div>
+                <div><dt>Received capture rate</dt><dd data-field="capture-fps">--</dd></div>
+                <div><dt>Displayed rate (rolling)</dt><dd data-field="display-fps">0.0 fps</dd></div>
+                <div><dt>Requested exposure</dt><dd data-field="requested-exposure">--</dd></div>
+                <div><dt>Estimated exposure</dt><dd data-field="estimated-exposure">--</dd></div>
+                <div><dt>Analogue gain</dt><dd data-field="gain">--</dd></div>
+                <div><dt>Raw frames received</dt><dd data-field="frames">--</dd></div>
+                <div><dt>Displayed frame ID</dt><dd data-field="frame-id">--</dd></div>
+                <div><dt>Display age (minimum)</dt><dd data-field="age">--</dd></div>
+            </dl>
+            <p class="timing-note" data-field="warnings">Timing warnings: --</p>
+        </article>
+
+        <article class="camera-panel" data-camera="imx296" aria-labelledby="imx296-title">
+            <header class="panel-header">
+                <div>
+                    <h2 id="imx296-title">IMX296</h2>
+                    <p class="format-summary" data-field="format">Waiting for raw configuration</p>
+                </div>
+                <span class="state-badge" data-field="badge" data-tone="waiting">STARTING</span>
+            </header>
+            <div class="view-controls">
+                <div class="zoom-buttons" role="group" aria-label="IMX296 display scale">
+                    <button type="button" data-zoom="fit" aria-pressed="false">Fit</button>
+                    <button type="button" data-zoom="native" aria-pressed="true">1:1</button>
+                    <button type="button" data-zoom="double" aria-pressed="false">2:1</button>
+                </div>
+                <button type="button" data-action="center">Center view</button>
+                <span class="scale-label" data-field="scale">Native pixels</span>
+            </div>
+            <div class="image-shell">
+                <div class="viewport view-native" tabindex="0" role="region"
+                     aria-label="IMX296 image; drag, scroll, or use arrow keys to pan">
+                    <div class="canvas-surface">
+                        <canvas width="1" height="1" aria-label="IMX296 raw monochrome image">
+                            Canvas support is required for raw pixel display.
+                        </canvas>
+                    </div>
+                </div>
+                <div class="frame-overlay" role="status" aria-live="polite">
+                    <strong data-field="overlay-title">STARTING</strong>
+                    <span data-field="overlay-detail">Waiting for a raw frame.</span>
+                </div>
+            </div>
+            <output class="pixel-readout" data-field="pixel" aria-label="IMX296 native pixel value">
+                Hover over the image to inspect native pixel values.
+            </output>
+            <dl class="camera-metrics">
+                <div><dt>Configured native rate</dt><dd data-field="native-fps">--</dd></div>
+                <div><dt>Received capture rate</dt><dd data-field="capture-fps">--</dd></div>
+                <div><dt>Displayed rate (rolling)</dt><dd data-field="display-fps">0.0 fps</dd></div>
+                <div><dt>Requested exposure</dt><dd data-field="requested-exposure">--</dd></div>
+                <div><dt>Estimated exposure</dt><dd data-field="estimated-exposure">--</dd></div>
+                <div><dt>Analogue gain</dt><dd data-field="gain">--</dd></div>
+                <div><dt>Raw frames received</dt><dd data-field="frames">--</dd></div>
+                <div><dt>Displayed frame ID</dt><dd data-field="frame-id">--</dd></div>
+                <div><dt>Display age (minimum)</dt><dd data-field="age">--</dd></div>
+            </dl>
+            <p class="timing-note" data-field="warnings">Timing warnings: --</p>
+        </article>
+    </main>
+
+    <footer class="page-footer">
+        <p>Exposure changes are preview-only; stopping preview restores its startup settings.
+            Gain remains fixed at 1x.
+            Exposure estimates are not optical measurements. Sensor-internal corrections remain
+            those programmed by the recording driver.</p>
+        <p>JPEG compression can affect fine texture; use Raw pixels to confirm fine detail.
+            A retained image with an overlay is NOT live. Display age is a lower bound, not
+            end-to-end latency. Displayed rate counts new frames painted during the last
+            four seconds (or since startup). Hidden tabs pause browser requests, not capture.</p>
+    </footer>
+    <noscript><p class="lock-banner">JavaScript is required for raw preview. Capture may still be running;
+        closing this page does not release the camera lock.</p></noscript>
+</body>
+</html>

@@ -30,8 +30,8 @@
 #define CLI_MAX_LINE 96
 #define CLI_MAX_ARGS 8
 
-// Fitted by `cal model`; consumed by `scan carrier`. RAM only until the flash
-// config block lands -- re-run `cal model` after a reset.
+// Fitted by `cal model`; consumed by `scan carrier`. Persisted by `cfg save`
+// and restored by cli_init().
 static cal_phase_model_t s_phase_model;
 
 static char   s_line[CLI_MAX_LINE];
@@ -40,7 +40,7 @@ static size_t s_len;
 // ---------------------------------------------------------------------------
 
 // How long `level` will run unattended before giving up. It holds the beam on
-// and chopping, which is a LIGHTER thermal load than steady operation (50 %% on),
+// and chopping, which is a LIGHTER thermal load than steady operation (50 % on),
 // so this is about not leaving the bench in an unknown state rather than heat.
 #define LEVEL_MAX_MS  300000u
 
@@ -72,11 +72,12 @@ static const char *k_help =
     "                             TRIGGERED single shot. Runs the DMA in a ring\n"
     "                             and stops AFTER the trigger, so the buffer holds\n"
     "                             the baseline and the leading edge. 80 codes,\n"
-    "                             500 kHz, 25%% pre-trigger, 30 s by default.\n"
+    "                             500 ksps, 25% pre-trigger, 30 s by default.\n"
     "                             e.g. 'capture 0x20 2000 250000' = ADC5 @ 250 ksps\n"
     "  adcmode off|idle|armed|burst\n"
     "\n"
-    "  on                         request power on (obeys the USB-power guard)\n"
+    "  on                         request power on from STANDBY (USB guard applies)\n"
+    "                             refused elsewhere; never queues a later restart.\n"
     "  off                        request orderly shutdown\n"
     "  forceoff                   drop the latch immediately\n"
     "  pisim                      show the simulated-Pi input levels\n"
@@ -94,8 +95,10 @@ static const char *k_help =
     "  -- Phase 2: beam (needs the +5V rail up) --\n"
     "  beam                       show carrier/demod state\n"
     "  beam on | off\n"
-    "  beam freq <hz>             default 104167 (TOP=1439, exact 30% at level 432)\n"
-    "  beam duty <pct>            IMMEDIATE. use 'beam ramp' above ~5%\n"
+    "  beam freq <hz>             use 104166 (actual 104166.67 Hz, TOP=1439)\n"
+    "                             fixed carrier for every board; 25% at level 360.\n"
+    "  beam duty <pct>            IMMEDIATE. 25% operating maximum (CR-12).\n"
+    "                             use 'beam ramp' above ~5%.\n"
     "  beam ramp <pct> [step_ms]  gradual, 1% steps -- watch temps as it climbs\n"
     "  beam phase <ticks>         demod offset, 0..TOP (1 tick = 6.67 ns = 0.25 deg)\n"
     "  beam clamp                 1 kHz / 50% -- scope TP5 to measure the U9 clamp (Q1)\n"
@@ -109,10 +112,11 @@ static const char *k_help =
     "  threshold sweep [lo] [hi] [steps]   find the comparator flip point (3.5)\n"
     "  hpf                        show baseline mode (TRACK / HOLD)\n"
     "  hpf track | hpf hold\n"
-    "  hpf test [ms]              establish the GPIO33 polarity EMPIRICALLY.\n"
-    "                             *** RUN THIS FIRST -- the sense is unverified ***\n"
+    "  hpf test [ms]              per-board polarity + switch-leakage measurement.\n"
+    "                             'hpf' shows this board's saved polarity status.\n"
     "  detect                     comparator + PIO transit timer status\n"
-    "  detect arm | disarm        start/stop the PIO edge timer (resets counters)\n"
+    "  detect arm | disarm        start/stop the PIO edge timer; arm resets counters.\n"
+    "                             HPF unchanged; use HOLD for ball transits.\n"
     "  detect coalesce <us>       chatter-merge window (U15 has no hysteresis)\n"
     "  detect path <mm>           beam width; no velocity is reported until set\n"
     "  detect cond <0|1|2>        tag passes: 0 nominal 1 far 2 low-reflectance\n"
@@ -128,7 +132,8 @@ static const char *k_help =
     "  cal model [f0] [f1] [n]    fit phase vs frequency across a band (~128 s).\n"
     "                             NOTHING may move for the whole run.\n"
     "  cal gain <peak> [frac]     solve R98 from a measured transit peak (3.7)\n"
-    "  scan carrier [f0] [f1] [n] rank carriers by measured SNR (3.6, minutes).\n"
+    "  scan carrier [f0] [f1] [n] verify carrier robustness (3.6, minutes).\n"
+    "                             NOT frequency selection: carrier stays 104166.67 Hz.\n"
     "                             needs a fitted phase model; run in FINAL geometry.\n"
     "\n"
     "  fault                      show / 'fault clear' (also acks FAULT -> STANDBY)\n"
@@ -147,7 +152,8 @@ static void cmd_id(void) {
     // Phases the image actually implements. Was hardcoded "phase0/1/1b" and
     // stayed that way through phases 2, 3 and 4 -- a version string nobody
     // updates is worse than none, because it reads as authoritative.
-    printf("fw       : pitrac phases 0-4  (5/6/7 not implemented)\n");
+    printf("fw       : pitrac phases 0-4 + mic capture (block/triggered)\n");
+    printf("pending  : mic onset/veto, strobe, camera handshake, Pi integration\n");
     printf("built    : " __DATE__ " " __TIME__ "\n");
     printf("board    : pitrac_ltb_v1 (RP2354B, 48 GPIO, 2MB internal flash)\n");
     printf("uid      : ");
@@ -523,7 +529,13 @@ static void cmd_adcmode(int argc, char **argv) {
 static void cmd_on(int argc, char **argv) {
     (void)argc;
     (void)argv;
- power_request_on();        printf("requested on\n"); 
+    if (!power_request_on()) {
+        printf("REFUSED: 'on' needs STANDBY with no pending stop (state %s).\n"
+               "  No power-on request was queued.\n",
+               power_state_name(power_fsm_state()));
+        return;
+    }
+    printf("requested on\n");
 }
 
 static void cmd_off(int argc, char **argv) {
@@ -702,12 +714,12 @@ static void cmd_threshold(int argc, char **argv) {
                detect_threshold_level(), (unsigned long)(DAC_TOP + 1u),
                (double)(detect_threshold_duty() * 100.0f),
                (double)detect_threshold_volts());
-        printf("           vref %.3f V (nominal 3.3; measured +3V3 was 3.246 -- TP8 is the truth)\n",
+        printf("           vref %.3f V (RAM only; TP8 is the measured threshold)\n",
                (double)detect_threshold_vref());
         printf("D_Comparator(46) = %d   (%s -- active HIGH, R103 10K pull-up)\n",
                gpio_get(PIN_D_COMPARATOR),
                detect_comparator() ? "ABOVE threshold" : "below threshold");
-        printf("settle %u ms per change (dominant pole 2.62 ms; the 10 ms in the .md is ~4 tau)\n",
+        printf("settle %u ms per change (dominant pole 2.62 ms)\n",
                (unsigned)DAC_SETTLE_MS);
     
 }
@@ -1784,7 +1796,7 @@ static void restore_phase_model(void) {
         // Recompute rather than trusting the stored flag. A verdict saved by an
         // older build carries that build's test, and the pure_delay test was
         // wrong until 2026-08-24 -- it compared |a0| < 0.15 against a wrapped
-        // constant and called a 3.5 %%-drift chain dispersive.
+        // constant and called a 3.5 %-drift chain dispersive.
         s_phase_model.delay_lo_ns  = cal_model_delay_ns(&s_phase_model, k->phase_f_lo);
         s_phase_model.delay_hi_ns  = cal_model_delay_ns(&s_phase_model, k->phase_f_hi);
         s_phase_model.span_err_deg =

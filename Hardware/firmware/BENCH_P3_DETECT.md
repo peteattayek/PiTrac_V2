@@ -306,8 +306,12 @@ digital outputs on this board. The firmware rejects them.
 
 ## 3.2 Static health, beam OFF — do this before anything else
 
+Read `stat` first. **Only if STANDBY**, send `on` and wait for rail-ready BENCH_RUNNING;
+skip `on` if already running. **11:11:51 and older builds** retain that redundant request
+and can restart after shutdown; the **15:21:18 fix** refuses it. Reflash and complete
+BENCH.md Test 6 before resuming optics. With the beam OFF and rail ready:
+
 ```
-on
 adcmode idle
 adc 2 256          # TIA_Out
 ```
@@ -768,8 +772,14 @@ Record `demod_phase_ticks` in `PROGRESS.md` §6.
 
 **Common state for every section below**, unless a section says otherwise:
 
+**Power-command guard (2026-09-18):** first read `stat`. Send `on` **only if
+STANDBY**; if already RUNNING/BENCH_RUNNING, skip it. Builds through **11:11:51** retain
+an `on` sent while running and may re-latch later; **15:21:18** fixes this with an
+explicit refusal. Reflash and complete BENCH.md Test 6 before further optical work.
+After shutdown, verify **STANDBY / latch 0** rather than trusting "requested shutdown".
+
 ```
-on                     # close the latch -- expect state RUNNING or BENCH_RUNNING
+on                     # ONLY from STANDBY; skip if already running
 beam freq 104166       # confirm with 'beam': freq 104166 Hz, TOP=1439
 beam duty 25           # NOT 30 -- CR-12 puts T_j at 123-133 C against a 145 C max
 beam on
@@ -1615,22 +1625,362 @@ frequency"** — there is no longer such a thing.
 | | |
 |---|---|
 | Rail | **up** |
-| Beam | **ON**, at the carrier you settled on, 25 % duty, **warm** |
+| Beam | **ON**, fixed **104.1667 kHz** (`beam freq 104166`), **25 % duty**, warm **at least 5 min** |
 | HPF | **`hpf hold`** — armed means HOLD, and that is the state you are characterising |
 | ADC | `adcmode armed` |
-| Threshold | set from 3.5 — start at the flip duty you measured, then back off ~20 % |
+| Threshold | Above the final-geometry quiescent noise, below the measured ball signal. Confirm **GPIO46 = 0 at rest** before arming. §3.5 calibrates the DAC/comparator; it does not establish a ball-transit threshold |
 | Gear | **a cardboard ramp**, a golf ball, a ruler |
 
 ⚠ **`detect arm` does NOT set the HPF.** You must type `hpf hold` yourself. Arming with the HPF
 in TRACK means the 0.66 s servo is fighting your transit.
 
-🔵 **HOLD is safe for as long as you need.** Drift is ≤ 2.3 mV/s at ADC5 (board 2), so a 1–10 ms
-transit walks ≤ 23 µV. It takes ~43 s to walk 100 mV. Arming well before a shot is fine; only
-an arm-and-forget of many seconds needs thought. *(F6, closed 2026-08-21.)*
+**Entry gate:** bare `detect` only reports status. An arm/disarm smoke test with no complete
+comparator pulse does **not** validate edge timing or a transit. Board 3 passed that
+control-path check on 2026-09-18, but its saved threshold was **level 0** and GPIO46 stayed
+HIGH. The PIO waits for LOW before timing the next HIGH pulse, so zero FIFO words in that
+state are not evidence of a failed timer. Do not start the 20-ball run at that threshold:
+establish the final optics and baseline, then obtain a pilot transit before collecting the
+full set. Use `level` if optics have moved; do not re-run the completed calibration by reflex.
 
-### Step 1 — the ramp gives you an independent speed reference
+Prepare the baseline in **TRACK**, allowing **at least 5 s** after a beam/HPF change, then
+switch to **HOLD** immediately before the transit window. Keep the rail/load steady in
+HOLD: §3.6b found **x7.43 rail coupling** (CR-02), not a pass.
 
-A ball released from height *h* on a ramp arrives at
+🔵 **Switch leakage is small on the transit timescale, not a guarantee of unlimited HOLD.**
+Measured drift is ≤ 2.3 mV/s at ADC5 on **board 2**, so a 1–10 ms transit walks ≤ 23 µV;
+100 mV takes ~43 s at that rate. Use this board's `hpf test` result for its leakage budget.
+Rail steps are a separate error and are not covered by that budget. *(F6, closed 2026-08-21;
+the older "HOLD is safe for as long as you need" wording was too broad.)*
+
+### Step 1 — build and document the physical fixture
+
+**First session goal:** a repeatable ball path and an unclipped pilot waveform, **not**
+a speed-accuracy sign-off or 20 passes. Board 3 currently has **lenses fitted, no enclosure**
+(owner confirmed 2026-09-18). Keep the lens mounts, focus, baffles and attenuation unchanged
+unless a measured result calls for changing them.
+
+**Current fixture choice (2026-09-18): grooved aluminum extrusion, ball crossing on the
+incline.** This replaces the proposed 100 mm-release/flat-lane layout below for this session.
+The owner reports **295 mm release-surface height**, **85 mm crossing-surface height** above
+the mat, and the extrusion touching the mat **740 mm downrange** from the release.
+The heights refer to the **extrusion top / bottom of ball**, not ball-centre heights.
+Do not infer the incline angle until the 740 mm reference (horizontal or along the ramp)
+is established. For a straight, uniform groove and unchanged ball seating, the constant
+centre-to-surface offset cancels: the drop to the crossing is **210 mm**, not 295 mm.
+
+- Secure the conductive extrusion independently, with no route for it to slide/fall onto
+  the PCB or touch D12. Assemble/adjust with the switched rail off; no foil near the detector.
+- Aim Tx/Rx overlap at the **actual seated ball centre** at the marked crossing, not the
+  aluminum at 85 mm. Groove contact points can change the centre height and rolling inertia.
+- Record an end-on photo of the groove/ball seating and a side/top view of the crossing.
+  No ball-centre height, lens range or independent speed has been measured yet.
+- Include the extrusion in the no-ball optical scene: its IR reflection is part of the
+  baseline. Do not cover/reposition it between baseline and ball capture without recording
+  the change and remeasuring. Keep the catch beyond the ramp end and outside the viewed region.
+- Use the three unpowered dry rolls and the baseline/pilot gates below. Grooves are
+  acceptable for repeatability, **not grounds for using the flat-surface rolling-speed
+  formula as measured truth**. Leave `detect path` unset.
+
+#### 1a. Make the fixture with the beam and switched rail OFF
+
+**State:** USB connected; no Pi on J8, no camera on J4; no ball in the optical path.
+GPIO27 stays **0** throughout this procedure.
+
+```
+detect disarm
+beam off
+off
+stat
+```
+
+**Expect/pass:** after shutdown, `STANDBY`, latch `0`, railsready `0`, no fault.
+ADC/HPF settings are not measurements in this unpowered analog state.
+**Nothing conductive near D12, even after switching off**: do not assume the 36 V rail
+has discharged. No foil, metal ruler, loose screws or probe clips near the exposed PCB.
+Do not look into the powered IR emitter or through its lens.
+
+**Alternative flat-lane construction reference:** items 2-8 and the drawing below describe
+the earlier proposed layout, not a requirement to replace the owner's extrusion. For the
+current fixture, use the measured incline geometry and safeguards above.
+
+1. Secure the board and its lens assembly to a rigid, nonconductive support. The board
+   must not rock when a cable moves. Support the assembly, not the lens glass; do not
+   loosen the lens mounts to aim it. Keep the heatsink/ballast area ventilated.
+2. Make a **flat rolling lane across the optics' view**, not toward the board. This is a
+   **reflection** measurement: D11 illuminates the ball and D12 receives its return.
+   There is no separate receiver across the lane and no permanent reflector behind the ball.
+3. Mark a crossing point **C** on the lane. Aim the overlap of the transmit and receive
+   fields at the **ball centre at C**, not the floor beneath it. A 42.7 mm ball has its
+   centre approximately **21.35 mm above the lane**; use the actual ball diameter if measured.
+   Raise the whole assembly or the lane as needed, without moving one lens relative to the other.
+4. Use the intended working distance if it is already defined. Otherwise **about 400 mm
+   from the lens fronts to the ball centre at C** is a provisional first layout, because
+   board 3's calibration card was recorded at about 400 mm. **That is not a validated
+   ball-detection range.** Measure the actual distance; record the reference surface, and
+   separate Tx/Rx distances if the lens fronts are not in one plane.
+5. Use a supported ramp with a **100 mm vertical release-height difference** as an initial
+   mechanical trial. A roughly **0.5-1 m ramp** allows a gentle slope and a smooth transition
+   onto the flat lane. No lip, step, free fall or unsupported cardboard sag.
+6. Put C initially about **100 mm beyond the ramp-to-flat transition**, on the flat part.
+   Record the actual spacing. Any bounce or remaining sideways wobble at C means this
+   spacing/transition must change before collecting data.
+7. Put a soft catch beyond C, initially **at least 300 mm past it**, outside the optical
+   field. Catch the ball before it can fall off the bench or rebound into the field.
+   No hands catching the ball beside C. The ball must never be able to reach the PCB.
+8. A small card gate at a marked release position is better than pushing the ball.
+   Lift it clear without flicking the ball. Keep the operator and release mechanism
+   outside the optics' view. If guides are needed, keep them out of the viewed region;
+   do not use a V-groove/two-rail contact and then assume the flat-surface rolling model.
+
+```
+TOP VIEW (not to scale)
+
+                  Tx lens   Rx lens
+                    [ board ]
+                        |
+                        | D: lens-front reference to ball centre
+                        |
+ ramp --> flat lane ---- C ------------------> soft catch
+                        ^
+             ball motion crosses the viewing direction
+
+SIDE VIEW OF THE LANE
+
+ release o
+          \        h: VERTICAL drop of ball centre to ball centre at C
+           \____ smooth transition ____ C __________ catch
+```
+
+**Dry-run pass criterion, power still off:** release the same ball **three times** from
+the mark. All three must cross C without a visible hop, side-guide strike, external push,
+board movement or rebound through C. Aim for lateral repeatability within about **2 mm**;
+record what the marks/video actually resolve rather than claiming unmeasured precision.
+
+#### 1b. Record the geometry before powering the beam
+
+Take **one top/oblique photo** showing board, both lenses, lane, C and catch, and **one
+side photo** showing the ramp, its transition and release height. Include a ruler at the
+lane, well away from the PCB; remove it before optical measurements.
+
+| Record | Units / definition |
+|---|---|
+| Setup ID, date, board, lens arrangement | e.g. `B3-P37-A`; lenses fitted/no enclosure; note any focus/baffle/attenuation change |
+| Ball | Same ball for every nominal pass; brand/model, colour, condition, measured diameter if available |
+| D | **mm**, lens-front reference to ball centre at C; state the reference, not "about a foot" |
+| Lens/ball alignment | Actual ball-centre height at C and Tx/Rx aim; identify the reference plane and groove seating for the inclined fixture |
+| h | **mm**, vertical ball-centre difference from release to C, not ramp length; distinguish measured surface heights from inferred centre drop |
+| Ramp and flat lane | Ramp length, surface, transition construction, transition-to-C distance, catch distance, guide contacts |
+| Lateral repeatability | **mm**, estimate/method from the three dry rolls; note bounce or slipping |
+| Background/lighting | Surface behind C, lamp type/on-off state, daylight, operator position |
+| Photos | File names linked to the setup ID |
+
+Black-looking material is not necessarily dark at **850 nm**. Do not add a "black"
+backdrop and assume it removes optical return. No hand-held reflector. Remove the
+calibration card and ball from C before the no-ball baseline.
+
+#### 1c. Establish the final-scene no-ball baseline
+
+**State:** fixture complete, target absent, bench PSU at the validated **5.20 V** setting
+and current limit, USB connected; detection remains **disarmed**. No scope/LA probes are
+needed for the internal ADC record, avoiding the unresolved cross-channel ground artifact.
+
+**Enable serial file logging before collecting data.** The installed Microsoft Serial
+Monitor 0.13.1 defaults to **9000 scrollback lines**, fewer than the baseline's 10000 sample
+rows. Copying the visible buffer cannot preserve this capture.
+
+1. Click **Stop Monitoring** (this closes the host port; it does not switch the board off).
+2. The local workspace setting `vscode-serial-monitor.logFileDirectory` points to
+   `Hardware\firmware\captures`. If needed, find **Serial Monitor: Log File Directory**
+   in VS Code Settings and select that existing folder.
+3. In the Serial Monitor toolbar, enable **Toggle File Logging**. Hover for that exact
+   tooltip; it is disabled while monitoring or if no log directory is set.
+4. Click **Start Monitoring**, send `id`, then **Stop Monitoring** and use
+   **Open the last used log file**. **Pass:** the file contains the complete `id` response,
+   including the expected build stamp. Start monitoring again, with logging still enabled,
+   before the real capture.
+5. After `# end` and the following status output, stop monitoring and open the log.
+   Save/share the file, not a selection of terminal text. Keep its original auto-generated
+   name or rename it only after closing it. Record the setup/trial ID alongside it.
+
+File logging must be enabled **before** the capture; it does not recover lines already
+discarded. Increasing **Scrollback limit** in the monitor's additional settings is optional,
+not a substitute for the file. Do not confuse the extension's **Logging Verbosity**
+(diagnostics) with serial **Toggle File Logging**. Only one application can own COM11:
+stop this monitor before using `scope.py` or another terminal.
+
+Read `stat` first. Send `on` **only from STANDBY**, then wait for BENCH_RUNNING /
+railsready 1; if already BENCH_RUNNING, do **not** send `on` again. With the rail ready:
+
+```
+hpf track
+adcmode idle
+beam freq 104166
+beam duty 2
+beam on
+beam ramp 25 500
+beam
+```
+
+**Expect:** rail up; `freq 104166 Hz (TOP=1439)`, duty/effective **25.00 %**, phase
+**1311 ticks** for this saved board-3 setup. Watch the previously validated thermal/current
+behaviour during the ramp; stop with `beam off` on an unexpected rise or supply limiting.
+**25 % is the operating maximum, not 30 or 35 %.**
+
+If the geometry has changed, use `level` in TRACK to document the settled chopped level;
+allow **at least 5 s**, save the reading and target description, then press a key to stop.
+Its **50-70 % target applies to a calibration target**, not a required ball-reflection
+amplitude. A no-ball `TOO LOW to fit` message is not itself a transit failure.
+Do not change focus/attenuation or re-run `cal demod` just to make that message disappear.
+An over-range reading is a reason to stop and review the scene.
+
+After the final adjustment/`level` run, remove the target and let the beam run steadily
+at **25 % for at least 5 minutes**. Keep hands out of the field. TRACK settling after a
+scene/beam change needs **at least 5 s**; the longer warm-up also covers that.
+
+```
+hpf
+beam
+threshold
+stat
+capture 0x20 10000 100000
+stat
+```
+
+**Save the complete capture**, including `# capture`, `# columns`, all samples and `# end`,
+as e.g. `B3-P37-A_baseline.txt` in `captures/`. This is **ADC5 only, 100 ksps, 100 ms**,
+10 us/sample. Expect `mask=0x20 n=10000 rate=100000 overran=0`, `# columns: ch5`, no fault,
+and the ADC back in idle afterwards. ADC5 normally idles near 0 V, **not 2.5 V**; do not
+invent a board-3 noise limit from board 2's numbers. Saturation/overrun is not a pass.
+Record the PSU voltage setting/current limit, actual steady current, beam-on/warm-up times,
+and any thermal reading with its measurement location alongside the serial transcript.
+
+**Stop here for the first setup review.** The deliverable is the dimensions/photos plus
+the status and raw no-ball record. Keep `detect` disarmed and `path 0.00 mm`; do not
+`cfg save`. If waiting, use `beam off`, `off`, and confirm latch `0` with `stat`.
+
+#### 1d. Pilot waveform before comparator statistics
+
+The next record is a **single ball waveform**, with a trigger chosen from the measured
+background, HPF HOLD immediately before release, and steady beam/rail/load. Use a scope
+with a sufficiently long record, or a **single-channel ADC5 triggered capture at 100 ksps**.
+The existing 16384-sample capture buffer then holds **163.84 ms**, versus only **32.768 ms**
+at its 500 ksps default; 25 % pre-trigger gives **40.96 ms before / 122.88 ms after**.
+No new capture firmware is needed. **The first pilot is now complete** (2026-09-18):
+**3.102 V peak, ~22.7 ms FWHM**, no observed clipping, but only **0.198 V ADC headroom**.
+The 10 s no-ball HOLD control also passed. See PROGRESS §6/§10 before repeating:
+an independent **stale-`on` power-request bug** was exposed during shutdown. Its fix
+passes **20 host tests**; **reflash the 15:21:18 image and run BENCH.md Test 6** next.
+The standard ring is too short for this pulse at half-height
+threshold; **do not advance directly to the normal 20-pass statistics**.
+Capture-trigger thresholds are **ADC codes relative to baseline**,
+not TP8 volts or the comparator threshold. At nominal 3.3 V full scale, one code is
+**0.806 mV**. Select the actual trigger from the baseline, not an unexplained default.
+
+Keep the comparator timer **disarmed** during this separate capture: it temporarily
+replaces the normal ADC ring. The current CLI says **"Make the sound"** even for channel 5;
+for this optical test that means release the ball, **not clap**. Save the entire raw
+capture header/data and any timeout/overrun message. After capture, use `hpf track` and
+allow **at least 5 s** with no ball before another attempt; ADC capture restores idle mode.
+
+**Pilot pass criterion:** a ball-correlated positive excursion with pre-event baseline,
+both edges and a return toward baseline in the recorded window, no clipping/overrun,
+and no operator/rail/load change that could explain it. A missed or clipped capture is
+diagnostic data, not a reason to collect 20 more passes blindly.
+
+**Board 3 first-pilot commands, based on the 2026-09-18 baseline (now run; results above):**
+
+Use an initial **64-code / 51.6 mV** capture trigger. The measured TRACK baseline was
+**13.41 mV mean / 3.66 mV sigma**, with maximum excursion above its mean **11.57 mV**.
+The trigger is about **14 times that measured sigma**, not a claimed false-trigger
+probability or a detection acceptance threshold. HOLD noise/rail coupling and longer-term
+drift have not been bounded by a 100 ms TRACK capture, so first check for unwanted triggers
+in HOLD. Limit each wait to **10 s**, rather than leaving HOLD waiting indefinitely.
+The capture measures its own baseline; 64 codes means a deviation from that value,
+**not an absolute 51.6 mV signal level**. It triggers on either sign of deviation.
+
+**State for both trials:** same secured extrusion/optics, no Pi/camera, GPIO27 = 0;
+rail up, stable beam **104166 Hz / 25 % / phase 1311**, warmed continuously **at least
+5 min**, serial file logging enabled. If the beam stayed on from the baseline, count
+that elapsed warm time; do not switch it off/on or re-run `level` just to start this test.
+Keep the supply setting, loads, lights and operator position steady, especially in HOLD.
+
+1. Check the state and prepare TRACK, with no ball in the field:
+
+   ```
+   detect disarm
+   hpf track
+   adcmode idle
+   beam
+   stat
+   ```
+
+   **Gate:** expected beam readback above, rail ready, no fault, watchdog off.
+   Wait **at least 5 s** after selecting TRACK. The saved zero comparator threshold
+   does not control this ADC capture; do not change it or arm the comparator timer.
+
+2. **One no-ball HOLD trigger control**, with nothing moving:
+
+   ```
+   hpf hold
+   capture trig 5 64 100000 25 10
+   ```
+
+   Send the commands separately. During the wait do not press a key (it aborts).
+   **Expected/pass:** `NO TRIGGER` after 10 s. In this control, that message is the
+   desired result; ignore its generic suggestion to lower the threshold.
+   Once the prompt returns:
+
+   ```
+   hpf track
+   ```
+
+   If it captures with no ball, **stop before the ball trial**, retain the complete
+   capture, and review the disturbance rather than increasing the threshold blindly.
+
+3. **One ball trial:** position the same ball at the **295 mm surface-height release
+   mark**, outside the optical field, before the final TRACK settling wait. Hands clear;
+   wait **at least 5 s** with the ball stationary. The crossing surface is **85 mm** above
+   the mat; do not change height, groove, focus or distance between the control and trial.
+
+   ```
+   hpf hold
+   capture trig 5 64 100000 25 10
+   ```
+
+   After the `armed: ch5...` message, wait about **1 s** for prehistory, then release
+   **one ball without pushing**, preferably within the next few seconds. The CLI's
+   "Make the sound" is stale mic-oriented wording: **do not clap**. Keep hands out of view,
+   and do not send another command until `# end` and the prompt, or a timeout/abort.
+
+   **Expected capture shape:**
+
+   ```
+   # capture mask=0x20 n=16384 rate=100000 overran=0 trig=4096 base=<measured>
+   # columns: ch5
+   ```
+
+   followed by **16384 rows** and `# end`. Retain the entire log, even on timeout.
+   A no-trigger ball trial means this 51.6 mV-deviation criterion was not reached during
+   the wait; it is not proof of a dead detector. Note if acquisition began before release.
+
+4. On return, restore the baseline and collect status:
+
+   ```
+   hpf track
+   adcmode idle
+   stat
+   ```
+
+   ADC capture already restores idle; the command makes the intended end state explicit.
+   If pausing for analysis, then `beam off`, `off`, and confirm `STANDBY`, latch `0` with
+   `stat`. Stop monitoring only after the final output has reached the log.
+   Record file name, ball release/control outcome, bounce or hand movement, and whether
+   the beam had been continuously on for the warm-up. **No `detect arm`, `detect path`,
+   `cfg save`, threshold sweep or recalibration for this pilot.**
+
+#### The ramp-speed estimate is not a calibrated reference
+
+For a solid sphere rolling without slip or losses, a release height *h* would give
 
 ```
 v = sqrt(2 · g · h · 5/7)          (5/7 accounts for rolling inertia)
@@ -1643,36 +1993,77 @@ v = sqrt(2 · g · h · 5/7)          (5/7 accounts for rolling inertia)
 | 200 mm | 1.67 m/s |
 | 400 mm | 2.37 m/s |
 
-**That is a speed reference costing one piece of cardboard**, and it is how you validate the
-firmware's speed math rather than eyeballing it. Hand-waving gives you repeatability you cannot
-measure.
+These are **ideal estimates**, not measured arrival speeds. A golf ball's mass distribution,
+rolling loss, ramp flex, guide rubbing, transition impacts and slip change the result.
+The 100 mm layout is for repeatable, gentle first transits, not a promise of 1.18 m/s.
+**Correction:** the previous "independent speed reference" and few-percent pass criterion
+were too strong. Accuracy testing needs independent timing, for example two external
+photogates with measured separation or calibrated video local to C; record its uncertainty.
 
-### Step 2 — set the geometry, or nothing reports a speed
+### Step 2 — keep range, transit distance and capture limits distinct
+
+**D is the board-to-ball range. It is NOT `detect path`.** A reflective ball moving through
+overlapping lens fields has a response width that depends on optics, ball shape and the
+crossing definition. Neither the ball diameter nor the visible spot width automatically
+equals the travelled distance between the signal's 50 % crossings. Leave `path` unset for
+the pilot; do not enter the old example `detect path 20`.
+
+**Firmware audit, 2026-09-18:** `detect path` currently stores/reports a config value;
+the CLI logs comparator/ADC durations but **does not calculate/report velocity**, even
+after a path is set. The older "set the geometry, then read speed" guidance overstated the
+implemented feature. Timing/shape measurements do not require populating that field.
+
+**Do not assume a slow ramp pulse fits `detect wave`.** The continuous ring stores
+**32.768 ms** at either idle or armed allocation. In armed mode, refinement also needs
+256 baseline samples (**1.024 ms**), the **2 ms** coalescing delay, and guards. For a
+single-fragment pulse of width T, the approximate no-clipping requirement is:
 
 ```
-detect path 20          # beam path width in mm -- MEASURE IT, do not guess
+age since falling edge + 2.5*T + 1.024 ms < 32.768 ms
 ```
 
-🔴 **No velocity is reported until this is set**, and deliberately so: a speed derived from a
-guessed geometry looks authoritative and is wrong.
+At an age of 2 ms that leaves **T < about 11.9 ms**, less with service latency; chatter
+uses a wider guard. This follows from `detect.c`'s actual baseline-window indexing, not
+just the raw buffer duration. `qual` bit **0x04 WINCLIP** means the requested history did
+not fit. Keep the long pilot capture/external scope record for slow pulses; do not raise
+the ramp to an unsafe height merely to fit this window. Decide how to acquire the Phase 4
+comparison only after seeing the actual pilot width and shape.
 
 ### Step 3 — arm and roll
+
+**Only after the pilot and threshold review:** confirm a nonzero comparator threshold,
+GPIO46 LOW at rest, and a pulse width compatible with the intended acquisition method.
+Rail up, beam steady **104.1667 kHz / 25 %**, no ball in the field; settle in TRACK for
+**at least 5 s** before the commands below. No blocking ADC capture while the timer is armed.
+
+Once at the start of a new dataset, **after archiving any preceding pilot data**:
+
+```
+detect clear
+detect cond 0           # nominal geometry
+```
+
+Then for each prepared release window:
 
 ```
 hpf hold
 adcmode armed
-detect cond 0           # 0 nominal, 1 far 1.5x, 2 low-reflectance
-detect clear
 detect arm
 ```
 
-Roll **20 balls** from the same height. Then:
+Roll **one ball first**, with the operator out of view. After the pass closes:
 
 ```
 detect
+detect disarm
+hpf track
+adcmode idle
 ```
 
-**Expect:** `passes` climbing by one per ball, and a `last` line per pass with a transit in µs.
+**Expect:** one completed pass for the pilot and a `last` line with transit in us.
+Save the log/waveform immediately (step 4). **Do not start 20-pass statistics until the
+pilot acquisition is usable.** Re-arm only for each prepared release window; arming resets
+the status counters, so archive the CSV rows rather than treating that counter as a session total.
 
 ### Step 4 — read the data out
 
@@ -1694,10 +2085,17 @@ full waveforms for 60 passes would need 960 KB against 520 KB of SRAM).
 | | good | what it means if not |
 |---|---|---|
 | TP9 on a scope | a **smooth positive bump** per pass | if it is not smooth, the transit is not what you think |
-| `cmp_us` vs `adc_us` | within a few % | the comparator and ADC disagree — that is Phase 4's whole subject |
-| computed speed | within a few % of the ramp prediction | check `detect path` first, it is the usual culprit |
+| `cmp_us` vs `adc_us` | both acquired without invalid ADC flags; record their difference | fixed comparator threshold and ADC 50 %-of-peak need not give the same width; the difference is the Phase 4 measurement, not an automatic failure |
+| speed, if independently measured | retain raw external timing/distance and uncertainty | ramp height alone is not a few-percent truth reference; the current CLI does not emit speed |
 | `frag` | 1 | see below — **more than 1 is expected, not a bug** |
 | `qual` | 0x00 | bits: `01` SAT `02` NOCROSS `04` WINCLIP `08` LAPPED `10` CHATTER `20` NOADC |
+
+**Per-pass record:** setup ID and trial number, ball/release mark, actual beam/HPF/ADC state,
+threshold duty/raw level and TP8 voltage if measured, full `detect log` row, full `detect wave`
+header/data if available, raw external/triggered capture file name, and notes on bounce,
+false triggers, hand movement, lamp/load changes or a missed pass. Keep failed trials too.
+Do not treat `peak` (above-baseline codes) as an absolute voltage; preserve `baseline` as well.
+At the printed wave rate of 31250 Hz, for example, samples are **32 us** apart.
 
 ### ⚠ Chatter is expected. U15 has no hysteresis.
 
@@ -1713,6 +2111,10 @@ If chatter is bad enough to matter: `detect coalesce <us>` (software merge), a P
 measure the notch widths, or the board fix in `NEXT_BOARD_REV.md` CR-13.
 
 ### Step 5 — repeat under three conditions, for Phase 4
+
+Once the pilot is accepted, collect **20 nominal passes** using the prepare/arm/release/
+disarm/TRACK cycle above. **Do not clear the log or reset the condition between passes.**
+Archive raw files as you go; only four waveforms are retained on board.
 
 ```
 detect cond 1           # ball 1.5x further away
@@ -1748,21 +2150,29 @@ can drive 5.2 V into a comparator that stops being valid at 3.5 V.
 
 ### Step 7 — persist
 
+Only after reviewing the measurements and agreeing which settings to keep, not after the
+initial fixture/baseline work. Rail still up, Pi absent, detector disarmed, ADC idle:
+
 ```
 detect disarm
+hpf track
+adcmode idle
+beam off
 cfg save
+cfg
 ```
 
 `cfg save` refuses unless the machine is quiet — a 4 KB flash erase blinds the supply monitor
-for tens of ms.
+for tens of ms. **Expect/pass:** `saved`, then a new slot/sequence and the intended settings
+on readback. A refusal or mismatched readback is not a completed save.
 
 ### Exit criteria
 
 - TP9 shows a clean smooth positive bump per pass
-- Computed speed matches the ramp prediction within a few percent
+- Valid recorded timing/waveforms; any speed-accuracy claim uses an independent reference and uncertainty, not ramp height alone
 - `detect stats` has ≥ 2 conditions with data and prints the bias-vs-1/peak slope
 - A gain decision is recorded (fit R98, or leave it out)
-- `cfg save` succeeded and `cfg` reads back the carrier, phase, model, path and gain
+- `cfg save` succeeded and `cfg` reads back the carrier, phase, model and justified settings; leave path unset until its physical definition is established
 
 ---
 
@@ -1820,7 +2230,7 @@ between shots.
 
 ### The experiment that proves it
 
-At a **fixed ramp height** (so v is known and repeatable), record 20 passes under each of
+At a **fixed ramp height and unchanged release/track** (a repeatability control, not a measured speed), record 20 usable passes under each of
 three conditions:
 
 | Condition | Purpose |

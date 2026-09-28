@@ -21,6 +21,12 @@ with inspection of the actual running kernel. It covers active cooling, power,
 PCIe Gen 2 NVMe storage, a source-pinned Mira220 driver, reversible manual boot
 configuration, direct V4L2 raw capture, and evidence-based verification.
 
+For manual focusing, the [live browser preview](camera-comparison/FOCUS.md)
+uses the same raw capture path, keeps only the latest frames in RAM, and offers
+side-by-side full-resolution views without the Pi ISP. Smooth mode uses
+display-only JPEG compression at up to 10 fps; lossless raw viewing remains
+available for inspecting fine detail and native pixel values.
+
 **A 60-second simultaneous disk recording has passed on the inspected Pi 5**
 with kernel 6.18.50, Mira220 RAW8 at approximately 89.080 fps and IMX296 packed
 RAW10 at approximately 60.375 fps. This required 32 capture buffers per camera,

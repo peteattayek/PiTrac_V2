@@ -37,7 +37,7 @@ lock_cameras() {
     [[ -d $runtime && $(stat -c %u "$runtime") == "$(id -u)" ]] ||
         die "A user-owned XDG_RUNTIME_DIR is required for the camera lock."
     exec 9>"$runtime/pitrac-camera-comparison.lock"
-    flock -n 9 || die "Another comparison helper is configuring or recording."
+    flock -n 9 || die "Another comparison helper is using the cameras (configuration, preview or recording)."
 }
 idle_graph() {
     local node rc message seen=0
