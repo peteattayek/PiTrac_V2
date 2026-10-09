@@ -12,11 +12,12 @@ This is the entry point to the repository. It covers:
 
 It is a map: it summarises, then links to the detailed records rather than repeating them.
 
-> **State as of 2026-10-09** — commit `a72636f` plus **uncommitted** work: the changes listed in
+> **State as of 2026-10-09** — commit `a8e08b3` ("Phase 6 strobe: dry tests, live-current mode,
+> host tests, handoff docs"), which holds the changes listed in
 > [Appendix D](#appendix-d-changes-made-alongside-this-guide), the 2026-10-05 audit fixes, the
 > PROGRESS split into live + [`PROGRESS_ARCHIVE.md`](Hardware/firmware/PROGRESS_ARCHIVE.md)
-> (PROGRESS §6 2026-10-05), the strobe 6a–6d firmware and its host tests (none of the strobe
-> sources is in git yet), and the 2026-10-09 handoff audit (PROGRESS §6 2026-10-09).
+> (PROGRESS §6 2026-10-05), the strobe 6a–6d firmware and its host tests, and the 2026-10-09
+> handoff audit (PROGRESS §6 2026-10-09).
 >
 > **Live status** is always [`Hardware/firmware/PROGRESS.md`](Hardware/firmware/PROGRESS.md)
 > §0 and the top block of §10. When this guide disagrees with that file, with `board.h` or with
