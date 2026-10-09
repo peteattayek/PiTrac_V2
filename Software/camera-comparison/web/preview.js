@@ -4,6 +4,7 @@
 import { decodeRawToRgba, rawPixelAt } from "./decoder.js";
 import { createExposureControls } from "./exposure.js";
 import { createCaptureControls } from "./capture.js";
+import { createPupilControls } from "./pupil.js";
 
 const STATUS_INTERVAL_MS = 1000;
 const STATUS_TIMEOUT_MS = 3000;
@@ -85,10 +86,13 @@ const cameras = [...document.querySelectorAll("[data-camera]")].map((panel) => {
 
 const captureSection = document.querySelector("#capture-controls");
 const captureControls = captureSection ? createCaptureControls(captureSection) : null;
+const pupilSection = document.querySelector("#pupil-controls");
+const pupilControls = pupilSection ? createPupilControls(pupilSection) : null;
 const exposureForm = document.querySelector("#exposure-controls");
 const exposureControls = exposureForm ? createExposureControls(exposureForm, {
     onApply() {
         captureControls?.invalidate();
+        pupilControls?.invalidate();
         for (const camera of cameras) {
             camera.generation += 1;
             if (camera.controller) camera.controller.abort();
@@ -146,10 +150,10 @@ function updatePixel(camera) {
         return;
     }
     const value = rawPixelAt(camera.rawConfig, camera.raw, x, y);
-    const tenBit = camera.rawConfig.fourcc === "Y10P";
-    const displayed = tenBit ? value >> 2 : value;
+    const depth = { GREY: 8, Y10P: 10, Y12P: 12 }[camera.rawConfig.fourcc];
+    const displayed = value >> (depth - 8);
     setText(camera.fields.pixel,
-        `x ${x}, y ${y} | native ${value}/${tenBit ? 1023 : 255} | display ${displayed}/255`);
+        `x ${x}, y ${y} | native ${value}/${(1 << depth) - 1} | display ${displayed}/255`);
 }
 
 for (const camera of cameras) {
@@ -218,6 +222,8 @@ function refreshHealth() {
     const now = performance.now();
     const statusExpired = lastStatusAt !== null && now - lastStatusAt > STATUS_STALE_MS;
     captureControls?.setConnected(!disposed && !document.hidden &&
+        lastStatusAt !== null && !statusError && !statusExpired);
+    pupilControls?.setConnected(!disposed && !document.hidden &&
         lastStatusAt !== null && !statusError && !statusExpired);
     if (document.hidden) {
         setText(connection, "Tab hidden: browser requests paused; capture continues.");
@@ -401,6 +407,7 @@ async function pollStatus() {
         statusError = null;
         exposureControls?.update(status);
         captureControls?.update(status);
+        pupilControls?.update(status);
         setText(refreshBudget, `Browser request cap: ${previewFps} fps per camera (latest only)`);
         for (const camera of cameras) {
             updateCameraStatus(camera, status.cameras.find((item) => item.name === camera.name) || null, sessionChanged);
@@ -576,6 +583,7 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("pagehide", () => {
     exposureControls?.dispose();
     captureControls?.dispose();
+    pupilControls?.dispose();
     disposed = true;
     clearTimeout(statusTimer);
     clearInterval(healthTimer);
@@ -594,6 +602,14 @@ window.addEventListener("pageshow", (event) => {
     if (event.persisted) {
         exposureControls?.resume();
         captureControls?.resume();
+        pupilControls?.resume();
+        window.addEventListener("beforeunload", event => {
+            if (pupilControls?.hasUnsavedSet()) {
+                event.preventDefault();
+                event.returnValue = "";
+            }
+        });
+
         startPolling();
     }
 });

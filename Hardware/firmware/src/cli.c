@@ -12,6 +12,8 @@
 #include "cal.h"
 #include "config_store.h"
 #include "service.h"
+#include "strobe.h"
+#include "strobe_plan.h"
 
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
@@ -25,6 +27,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <math.h>
 
 #define CLI_MAX_LINE 96
@@ -36,6 +39,9 @@ static cal_phase_model_t s_phase_model;
 
 static char   s_line[CLI_MAX_LINE];
 static size_t s_len;
+// A character did not fit in s_line. The line is refused at Enter rather than
+// dispatched with its tail missing -- a truncated argument is still a valid one.
+static bool   s_overflow;
 
 // ---------------------------------------------------------------------------
 
@@ -55,6 +61,70 @@ static size_t s_len;
 // so mark everything below 3.5 s as settling rather than letting an operator
 // read "9 %" and reach for the target.
 #define LEVEL_SETTLE_MS  3500u
+
+// Lets `help` quote the strobe limits from board.h instead of restating them.
+#define CLI_STR(x)  #x
+#define CLI_XSTR(x) CLI_STR(x)
+
+// ---------------------------------------------------------------------------
+// Strict argument parsing. EVERY numeric argument in this file goes through
+// these. The whole argument must be a number: strtoul("2O") returns 2 and
+// strtof("x") returns 0, so `gpio xyz` used to read GPIO0 and `cal gain 2O0`
+// used to solve for a peak of 2 codes. Until 2026-10-05 only `strobe` used them.
+// ---------------------------------------------------------------------------
+
+// Decimal, or hex with a 0x prefix (capture masks are written that way). No
+// octal: "010" is ten. errno catches overflow -- on this target unsigned long is
+// 32 bits, so strtoul saturates to 0xFFFFFFFF and a range test alone cannot.
+static bool parse_u32(const char *s, uint32_t *out) {
+    if (!s || *s < '0' || *s > '9') return false;
+    int base = (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) ? 16 : 10;
+    char *end = NULL;
+    errno = 0;
+    unsigned long v = strtoul(s, &end, base);
+    if (*end != '\0' || errno == ERANGE || v > 0xFFFFFFFFul) return false;
+    *out = (uint32_t)v;
+    return true;
+}
+
+static bool parse_u32_in(const char *s, uint32_t lo, uint32_t hi, uint32_t *out) {
+    uint32_t v;
+    if (!parse_u32(s, &v) || v < lo || v > hi) return false;
+    *out = v;
+    return true;
+}
+
+static bool parse_i32(const char *s, int32_t *out) {
+    if (!s) return false;
+    const char *d = (*s == '-' || *s == '+') ? s + 1 : s;
+    if (*d < '0' || *d > '9') return false;
+    char *end = NULL;
+    errno = 0;
+    long v = strtol(s, &end, 10);
+    if (*end != '\0' || errno == ERANGE || v < INT32_MIN || v > INT32_MAX) return false;
+    *out = (int32_t)v;
+    return true;
+}
+
+static bool parse_float(const char *s, float *out) {
+    if (!s || !*s) return false;
+    char *end = NULL;
+    float v = strtof(s, &end);
+    if (end == s || *end != '\0' || !isfinite(v)) return false;
+    *out = v;
+    return true;
+}
+
+static bool parse_float_in(const char *s, float lo, float hi, float *out) {
+    float v;
+    if (!parse_float(s, &v) || v < lo || v > hi) return false;
+    *out = v;
+    return true;
+}
+
+static void bad_arg(const char *what, const char *got, const char *want) {
+    printf("ERR: %s '%s' -- want %s. Nothing was changed.\n", what, got, want);
+}
 
 static const char *k_help =
     "\n"
@@ -85,7 +155,9 @@ static const char *k_help =
     "  gpio <n>                   read a pin\n"
     "  gpio <n> <0|1>             drive a pin (outputs only; guarded)\n"
     "  led r|y <0|1>              on-board status LEDs (+3V3, work in standby)\n"
-    "  panel pwr|rdy <0-100|auto> panel LEDs on J7 (need the +5V rail latched)\n"
+    "  panel pwr <0-100|auto>     power LED on J7 (needs the +5V rail latched)\n"
+    "  panel rdy <0-100|auto>     ready LED on J7: on/off only, >= 50 lights it\n"
+    "                             (GPIO12 gave PWM slice 6 to the strobe gate, A7)\n"
     "  panel test                 ramp both LEDs 0->100->0 for a current check\n"
     "  panel pattern <p|auto>     force a ring pattern; p = off powering booting\n"
     "                             running shutdown fault\n"
@@ -136,13 +208,40 @@ static const char *k_help =
     "                             NOT frequency selection: carrier stays 104166.67 Hz.\n"
     "                             needs a fitted phase model; run in FINAL geometry.\n"
     "\n"
+    "  -- Phase 6: strobe. DRY by default (6a/6b): no LED-bank current possible --\n"
+    "  -- LIVE (6c/6d) only after 'strobe live on confirm': REAL LED-BANK CURRENT --\n"
+    "  strobe                     gate DAC, pulse engine, interlocks, live state, limits\n"
+    "  strobe gate <pct>          current-setpoint DAC 0-100 %; TP3 ~ 3 x DAC volts.\n"
+    "                             dry: raised only while no pulse can start.\n"
+    "                             live: at most ~3 % above the highest level already\n"
+    "                             fired and measured, and under the ~70 % ceiling\n"
+    "  strobe pulse <us>          ONE pulse, " CLI_XSTR(STROBE_MIN_WIDTH_US) "-"
+                                  CLI_XSTR(STROBE_SW_MAX_US) " us. dry: needs the gate at 0.\n"
+    "  strobe burst <w> <gap> <n> uniform PIO/DMA burst: gap "
+                                  CLI_XSTR(STROBE_MIN_GAP_US) "-" CLI_XSTR(STROBE_MAX_GAP_US)
+                                  " us, n <= " CLI_XSTR(STROBE_BURST_MAX_PULSES) ",\n"
+    "                             burst charge limit at the design current\n"
+    "  strobe clamptest <us>      ONE pulse over " CLI_XSTR(STROBE_SW_MAX_US) ", up to "
+                                  CLI_XSTR(STROBE_CLAMPTEST_MAX_US) " us: U5 clamp (6a.1).\n"
+    "                             live (6d): only at a level that measured 0.5-2.5 A\n"
+    "  strobe sched <m/s> [fire]  section-15 schedule; 'fire' runs it (dry or live)\n"
+    "  strobe off                 gate to 0, engine stopped, GPIO25 low, live mode off\n"
+    "  strobe live                live state: staircase, budget, why it last ended\n"
+    "  strobe live on [confirm]   'on' prints the checklist; 'on confirm' ARMS live\n"
+    "                             mode (from gate 0; arms the watchdog; limits the CLI)\n"
+    "  strobe live off            leave live mode: gate 0, engine stopped\n"
+    "                             live: every firing is read back on ADC0. Overcurrent\n"
+    "                             or current outside the pulse latches a fault\n"
+    "  strobe cal [A]             live: solve the gate level for A amps (default 9.0)\n"
+    "  strobe wave                last live ADC0 record as CSV, 2 us per sample\n"
+    "\n"
     "  fault                      show / 'fault clear' (also acks FAULT -> STANDBY)\n"
     "  reset [force]              soft reset. REFUSED while a Pi is powered:\n"
     "                             a reset drops the latch = hard power cut\n"
     "  bootsel [force]            reboot to USB mass storage (same guard).\n"
     "                             both disarm the watchdog first.\n"
     "  wdog [on|off]              hardware watchdog. OFF by default -- a reset\n"
-    "                             DROPS THE LATCH. Arm it for Phase 6.\n";
+    "                             DROPS THE LATCH. Live strobe mode arms it itself.\n";
 
 // ---------------------------------------------------------------------------
 
@@ -152,8 +251,9 @@ static void cmd_id(void) {
     // Phases the image actually implements. Was hardcoded "phase0/1/1b" and
     // stayed that way through phases 2, 3 and 4 -- a version string nobody
     // updates is worse than none, because it reads as authoritative.
-    printf("fw       : pitrac phases 0-4 + mic capture (block/triggered)\n");
-    printf("pending  : mic onset/veto, strobe, camera handshake, Pi integration\n");
+    printf("fw       : pitrac phases 0-4 + mic capture (block/triggered)\n"
+           "           + strobe 6a/6b dry tests + 6c/6d live current (guarded, ADC0 per firing)\n");
+    printf("pending  : mic onset/veto, camera handshake, Pi integration\n");
     printf("built    : " __DATE__ " " __TIME__ "\n");
     printf("board    : pitrac_ltb_v1 (RP2354B, 48 GPIO, 2MB internal flash)\n");
     printf("uid      : ");
@@ -273,11 +373,27 @@ static void cmd_capture_trig(int argc, char **argv) {
                "  start-on-command capture can never hold.\n");
         return;
     }
-    uint     ch   = (uint)strtoul(argv[2], NULL, 0);
-    uint16_t thr  = (argc > 3) ? (uint16_t)strtoul(argv[3], NULL, 0) : 80u;
-    uint32_t rate = (argc > 4) ? (uint32_t)strtoul(argv[4], NULL, 0) : 500000u;
-    float    pref = (argc > 5) ? (float)strtoul(argv[5], NULL, 0) / 100.0f : 0.25f;
-    uint32_t tmo  = (argc > 6) ? (uint32_t)strtoul(argv[6], NULL, 0) * 1000u : 30000u;
+    uint32_t ch_u, thr_u = 80u, rate = 500000u, pre = 25u, tmo_s = 30u;
+    if (!parse_u32(argv[2], &ch_u)) { bad_arg("channel", argv[2], "0, 1, 2, 5 or 7"); return; }
+    if (argc > 3 && !parse_u32_in(argv[3], 0u, 4095u, &thr_u)) {
+        bad_arg("threshold", argv[3], "0-4095 codes"); return;
+    }
+    if (argc > 4 && !parse_u32_in(argv[4], 1u, 0xFFFFFFFFu, &rate)) {
+        bad_arg("rate", argv[4], "a sample rate in Hz"); return;
+    }
+    // adc_capture_triggered() clamps pre-trigger to 90 %; refuse more here so
+    // the "armed:" line never reports a split the capture is not using.
+    if (argc > 5 && !parse_u32_in(argv[5], 0u, 90u, &pre)) {
+        bad_arg("pre-trigger", argv[5], "0-90 %"); return;
+    }
+    // Bounded so the x1000 to milliseconds cannot wrap into a short timeout.
+    if (argc > 6 && !parse_u32_in(argv[6], 1u, 3600u, &tmo_s)) {
+        bad_arg("timeout", argv[6], "1-3600 s"); return;
+    }
+    uint     ch   = (uint)ch_u;
+    uint16_t thr  = (uint16_t)thr_u;
+    float    pref = (float)pre / 100.0f;
+    uint32_t tmo  = tmo_s * 1000u;
 
     if (ch > 7 || !((ADC_VALID_MASK >> ch) & 1u)) {
         printf("ERR: ch%u is not an analog input (valid: 0,1,2,5,7)\n", ch);
@@ -288,8 +404,11 @@ static void cmd_capture_trig(int argc, char **argv) {
     size_t   trig = 0;
     printf("armed: ch%u, threshold %u codes, %lu Hz, %.0f%% pre-trigger.\n",
            ch, thr, (unsigned long)rate, (double)(pref * 100.0f));
-    printf("  window %.1f ms. Make the sound. Any key aborts.\n",
-           (double)ADC_CAPTURE_MAX_SAMPLES * 1000.0 / (double)rate);
+    // "  window" must stay the line prefix: tools/scope.py keys on it.
+    printf("  window %.1f ms. Trigger the event now (%s). Any key aborts.\n",
+           (double)ADC_CAPTURE_MAX_SAMPLES * 1000.0 / (double)rate,
+           ch == (uint)ADC_CH_DETECT ? "roll the ball"
+               : (ch == (uint)ADC_CH_MIC ? "make the sound" : "the stimulus"));
 
     adc_trig_result_t r = adc_capture_triggered(ch, ADC_CAPTURE_MAX_SAMPLES, rate,
                                                 thr, pref, tmo,
@@ -314,7 +433,9 @@ static void cmd_capture_trig(int argc, char **argv) {
     const size_t start = adc_capture_start();
     for (size_t i = 0; i < got; i++) {
         printf("%u\n", b[(start + i) % ADC_CAPTURE_MAX_SAMPLES]);
-        if ((i % 256) == 0) tight_loop_contents();
+        // A full dump is 16384 lines over CDC. Keep the FSM, the supply monitor
+        // and an armed watchdog fed while it drains.
+        if ((i % 256) == 0) pitrac_service();
     }
     printf("# end\n");
     if (adc_capture_overran())
@@ -328,9 +449,16 @@ static void cmd_capture(int argc, char **argv) {
         printf("       capture trig <ch> [threshold] [rate_hz] [pre%%] [timeout_s]\n");
         return;
     }
-    uint     mask = (uint)strtoul(argv[1], NULL, 0);
-    size_t   n    = (size_t)strtoul(argv[2], NULL, 0);
-    uint32_t rate = (uint32_t)strtoul(argv[3], NULL, 0);
+    uint32_t mask_u, n_u, rate;
+    if (!parse_u32_in(argv[1], 1u, 0xFFu, &mask_u)) {
+        bad_arg("mask", argv[1], "a channel bitmask, e.g. 0x20 for ch5"); return;
+    }
+    if (!parse_u32(argv[2], &n_u)) { bad_arg("sample count", argv[2], "a whole number"); return; }
+    if (!parse_u32_in(argv[3], 1u, 0xFFFFFFFFu, &rate)) {
+        bad_arg("rate", argv[3], "a sample rate in Hz"); return;
+    }
+    uint   mask = (uint)mask_u;
+    size_t n    = (size_t)n_u;
 
     if ((mask & ~ADC_VALID_MASK) != 0) {
         printf("ERR: mask 0x%02x includes a non-analog channel.\n", mask);
@@ -363,9 +491,10 @@ static void cmd_capture(int argc, char **argv) {
         for (uint k = 0; k < nch; k++)
             printf(k ? ",%u" : "%u", b[(start + i + k) % ADC_CAPTURE_MAX_SAMPLES]);
         printf("\n");
-        // The CDC pipe is slower than we can print. Yield occasionally so USB
-        // keeps servicing and we don't drop the tail of a long dump.
-        if ((i % 256) == 0) tight_loop_contents();
+        // The CDC pipe is slower than we can print. Service the FSM, the supply
+        // monitor and an armed watchdog while it drains (2026-10-05 audit: this
+        // used to be tight_loop_contents(), which services nothing).
+        if ((i % 256) == 0) pitrac_service();
     }
     printf("# end\n");
 
@@ -392,8 +521,9 @@ static bool gpio_writable(uint p) {
 
 static void cmd_gpio(int argc, char **argv) {
     if (argc < 2) { printf("usage: gpio <n> [0|1]\n"); return; }
-    uint p = (uint)strtoul(argv[1], NULL, 0);
-    if (p > 47) { printf("ERR: pin out of range\n"); return; }
+    uint32_t p_u;
+    if (!parse_u32_in(argv[1], 0u, 47u, &p_u)) { bad_arg("pin", argv[1], "0-47"); return; }
+    uint p = (uint)p_u;
 
     if (argc == 2) { printf("gpio%u = %d\n", p, gpio_get(p)); return; }
 
@@ -407,7 +537,9 @@ static void cmd_gpio(int argc, char **argv) {
                    "     guard is applied.\n");
         return;
     }
-    gpio_put(p, strtoul(argv[2], NULL, 0) ? 1 : 0);
+    // Exactly 0 or 1. Anything else used to count as 1 -- `gpio 2 o` drove it high.
+    if (strcmp(argv[2], "0") && strcmp(argv[2], "1")) { bad_arg("level", argv[2], "0 or 1"); return; }
+    gpio_put(p, argv[2][0] == '1');
     printf("gpio%u <- %d\n", p, gpio_get_out_level(p));
 }
 
@@ -471,8 +603,13 @@ static void cmd_gpio_cmd(int argc, char **argv) {
 static void cmd_adc(int argc, char **argv) {
 
         if (argc < 2) { printf("usage: adc <ch> [n]\n"); return; }
-        uint ch = (uint)strtoul(argv[1], NULL, 0);
-        uint n  = (argc > 2) ? (uint)strtoul(argv[2], NULL, 0) : 64;
+        uint32_t ch_u, n_u = 64u;
+        if (!parse_u32(argv[1], &ch_u)) { bad_arg("channel", argv[1], "0, 1, 2, 5 or 7"); return; }
+        if (argc > 2 && !parse_u32_in(argv[2], 1u, 4096u, &n_u)) {
+            bad_arg("sample count", argv[2], "1-4096"); return;
+        }
+        uint ch = (uint)ch_u;
+        uint n  = (uint)n_u;
         // The ch > 7 test is not redundant. Shifting a uint32_t by >= 32 is
         // undefined behaviour, and on ARM the shift count is taken mod 32 -- so
         // `adc 32` would evaluate (ADC_VALID_MASK >> 0) & 1, see bit 0 set, and
@@ -503,13 +640,15 @@ static void cmd_adc5v(int argc, char **argv) {
 static void cmd_adc5vcal(int argc, char **argv) {
 
         if (argc < 2) { printf("usage: adc5vcal <volts measured with a DMM at +5V_IN>\n"); return; }
-        float meas = strtof(argv[1], NULL);
+        float meas;
+        if (!parse_float(argv[1], &meas)) { bad_arg("voltage", argv[1], "volts, e.g. 5.203"); return; }
         float raw  = adc_read_volts(ADC_CH_5VIN, 256) * V5IN_DIVIDER;
         if (raw > 0.1f && meas > 0.1f) {
             adc_set_5vin_scale(meas / raw);
             printf("scale <- %.4f  (raw %.3f V, measured %.3f V)\n",
                    (double)adc_get_5vin_scale(), (double)raw, (double)meas);
-            printf("NOTE: RAM only -- not persisted to flash yet.\n");
+            printf("NOTE: RAM only until 'cfg save', which persists it with the rest of\n"
+                   "      the calibration (restored at every boot).\n");
         } else printf("ERR: implausible values\n");
     
 }
@@ -568,7 +707,7 @@ static void cmd_pisim(int argc, char **argv) {
 static void cmd_panel(int argc, char **argv) {
 
         if (argc < 2) {
-            printf("usage: panel pwr|rdy <0-100|auto>\n"
+            printf("usage: panel pwr <0-100|auto> | panel rdy <0-100|auto>  (rdy: on/off)\n"
                    "       panel pattern <off|powering|booting|running|shutdown|fault|auto>\n"
                    "       panel test | panel demo\n");
             return;
@@ -581,7 +720,8 @@ static void cmd_panel(int argc, char **argv) {
 
         // --- ramp, for a current / thermal check ---------------------------
         if (!strcmp(argv[1], "test")) {
-            printf("ramping both panel LEDs 0->100->0 ...\n");
+            printf("ramping both panel LEDs 0->100->0 ... (RDY is on/off: it lights\n"
+                   "at >= 50 %%, since it gave up PWM for the strobe gate DAC -- A7)\n");
             for (int p = 0; p <= 100; p += 5) { panel_override(p, p); pitrac_yield_ms(80); }
             for (int p = 100; p >= 0; p -= 5) { panel_override(p, p); pitrac_yield_ms(80); }
             panel_override(-1, -1);
@@ -637,9 +777,20 @@ static void cmd_panel(int argc, char **argv) {
         }
 
         // --- fixed brightness on one LED -------------------------------------
-        if (argc < 3) { printf("usage: panel pwr|rdy <0-100|auto>\n"); return; }
-        bool is_pwr = (argv[1][0] == 'p');
-        int  pct    = !strcmp(argv[2], "auto") ? -1 : (int)strtol(argv[2], NULL, 0);
+        if (strcmp(argv[1], "pwr") && strcmp(argv[1], "rdy")) {
+            printf("ERR: '%s' is not a panel subcommand -- nothing was changed.\n"
+                   "usage: panel pwr <0-100|auto> | panel rdy <0-100|auto>\n"
+                   "       panel pattern <p|auto> | panel test | panel demo\n", argv[1]);
+            return;
+        }
+        if (argc < 3) { printf("usage: panel %s <0-100|auto>\n", argv[1]); return; }
+        bool is_pwr = !strcmp(argv[1], "pwr");
+        int  pct    = -1;
+        if (strcmp(argv[2], "auto")) {
+            uint32_t v;
+            if (!parse_u32_in(argv[2], 0u, 100u, &v)) { bad_arg("brightness", argv[2], "0-100 or auto"); return; }
+            pct = (int)v;
+        }
         panel_override(is_pwr ? pct : -2, is_pwr ? -2 : pct);
         printf("%s <- %s\n", is_pwr ? "PWR_LED(J7.2)" : "RDY_LED(J7.6)",
                pct < 0 ? "auto" : argv[2]);
@@ -667,9 +818,15 @@ static void cmd_threshold(int argc, char **argv) {
             return;
         }
         if (argc >= 3 && !strcmp(argv[1], "duty")) {
-            detect_threshold_set_duty(strtof(argv[2], NULL) / 100.0f);
+            float pct;
+            if (!parse_float_in(argv[2], 0.0f, 100.0f, &pct)) { bad_arg("duty", argv[2], "0-100 %"); return; }
+            detect_threshold_set_duty(pct / 100.0f);
         } else if (argc >= 3 && !strcmp(argv[1], "volts")) {
-            detect_threshold_set_volts(strtof(argv[2], NULL));
+            float v;
+            if (!parse_float_in(argv[2], 0.0f, detect_threshold_vref(), &v)) {
+                bad_arg("threshold", argv[2], "0 V to the DAC vref"); return;
+            }
+            detect_threshold_set_volts(v);
         } else if (argc >= 3 && !strcmp(argv[1], "vref")) {
             // The DAC's effective reference, from the two-point sweep in
             // BENCH_P3_DETECT 3.5: solve ADC5 = vref*duty + Vos across a low and
@@ -682,13 +839,26 @@ static void cmd_threshold(int argc, char **argv) {
             // config_store.h for why that record cannot simply grow. If absolute
             // threshold accuracy ever matters, this is the number to persist,
             // alongside adc5v_scale.
-            detect_threshold_set_vref(strtof(argv[2], NULL));
+            float vref;
+            // detect_threshold_set_vref() silently ignores anything outside
+            // (0.5, 6.0) -- endpoints excluded -- so refuse exactly that set here.
+            if (!parse_float(argv[2], &vref) || !(vref > 0.5f && vref < 6.0f)) {
+                bad_arg("vref", argv[2], "volts strictly between 0.5 and 6.0"); return;
+            }
+            detect_threshold_set_vref(vref);
             printf("threshold vref <- %.4f V (RAM only, lost on reset)\n",
                    (double)detect_threshold_vref());
         } else if (argc >= 2 && !strcmp(argv[1], "sweep")) {
-            float lo   = (argc > 2) ? strtof(argv[2], NULL) / 100.0f : 0.0f;
-            float hi   = (argc > 3) ? strtof(argv[3], NULL) / 100.0f : 1.0f;
-            uint16_t n = (argc > 4) ? (uint16_t)strtoul(argv[4], NULL, 0) : 64u;
+            float lo_pct = 0.0f, hi_pct = 100.0f;
+            uint32_t n_u = 64u;
+            if (argc > 2 && !parse_float_in(argv[2], 0.0f, 100.0f, &lo_pct)) { bad_arg("lo", argv[2], "0-100 %"); return; }
+            if (argc > 3 && !parse_float_in(argv[3], 0.0f, 100.0f, &hi_pct)) { bad_arg("hi", argv[3], "0-100 %"); return; }
+            // The sweep counts with a uint16_t `i <= steps`, so 65535 never ends,
+            // and 0 returns before filling the result. 1000 steps is ~20 s.
+            if (argc > 4 && !parse_u32_in(argv[4], 1u, 1000u, &n_u)) { bad_arg("steps", argv[4], "1-1000"); return; }
+            float lo   = lo_pct / 100.0f;
+            float hi   = hi_pct / 100.0f;
+            uint16_t n = (uint16_t)n_u;
             printf("sweeping threshold %.1f%% -> %.1f%% in %u steps "
                    "(%u ms settle each, ~%lu ms total) ...\n",
                    (double)(lo * 100.0f), (double)(hi * 100.0f), n,
@@ -949,9 +1119,14 @@ static void cmd_cal(int argc, char **argv) {
             return;
         }
         if (argc >= 2 && !strcmp(argv[1], "model")) {
-            uint32_t f0 = (argc > 2) ? (uint32_t)strtoul(argv[2], NULL, 0) : 80000u;
-            uint32_t f1 = (argc > 3) ? (uint32_t)strtoul(argv[3], NULL, 0) : 200000u;
-            uint32_t n  = (argc > 4) ? (uint32_t)strtoul(argv[4], NULL, 0) : 5u;
+            uint32_t f0 = 80000u, f1 = 200000u, n = 5u;
+            if ((argc > 2 && !parse_u32_in(argv[2], 1u, SYSCLK_HZ / 2u, &f0)) ||
+                (argc > 3 && !parse_u32_in(argv[3], 1u, SYSCLK_HZ / 2u, &f1))) {
+                printf("ERR: frequencies must be whole Hz, 1-%lu. Nothing was run.\n",
+                       (unsigned long)(SYSCLK_HZ / 2u));
+                return;
+            }
+            if (argc > 4 && !parse_u32(argv[4], &n)) { bad_arg("points", argv[4], "a whole number"); return; }
             printf("fitting the phase model over %lu..%lu Hz at %lu points (~%lu s)\n",
                    (unsigned long)f0, (unsigned long)f1, (unsigned long)n,
                    (unsigned long)(n * 20u));
@@ -1015,8 +1190,15 @@ static void cmd_cal(int argc, char **argv) {
             return;
         }
         if (argc >= 3 && !strcmp(argv[1], "gain")) {
-            float peak = strtof(argv[2], NULL);
-            float frac = (argc > 3) ? strtof(argv[3], NULL) : 0.67f;
+            float peak, frac = 0.67f;
+            if (!parse_float_in(argv[2], 1.0f, 4095.0f, &peak)) {
+                bad_arg("peak", argv[2], "1-4095 ADC codes"); return;
+            }
+            // A fraction, not a percent: `cal gain 3100 67` would solve for 67x
+            // full scale and write that gain into the config.
+            if (argc > 3 && !parse_float_in(argv[3], 0.05f, 1.0f, &frac)) {
+                bad_arg("fraction", argv[3], "0.05-1.0 of full scale (not %)"); return;
+            }
             cal_gain_t g;
             cal_gain_recommend(peak, frac, &g);
             // Record the gain the board will actually be running at once the
@@ -1058,10 +1240,16 @@ static void cmd_scan(int argc, char **argv) {
         if (argc < 2 || strcmp(argv[1], "carrier")) {
             printf("usage: scan carrier [f0] [f1] [n] [force]\n"); return;
         }
-        uint32_t f0 = (argc > 2) ? (uint32_t)strtoul(argv[2], NULL, 0) : 80000u;
-        uint32_t f1 = (argc > 3) ? (uint32_t)strtoul(argv[3], NULL, 0) : 200000u;
-        uint32_t n  = (argc > 4) ? (uint32_t)strtoul(argv[4], NULL, 0) : 16u;
-        bool force  = (argc > 5) && !strcmp(argv[5], "force");
+        uint32_t f0 = 80000u, f1 = 200000u, n = 16u;
+        if ((argc > 2 && !parse_u32_in(argv[2], 1u, SYSCLK_HZ / 2u, &f0)) ||
+            (argc > 3 && !parse_u32_in(argv[3], 1u, SYSCLK_HZ / 2u, &f1))) {
+            printf("ERR: frequencies must be whole Hz, 1-%lu. Nothing was run.\n",
+                   (unsigned long)(SYSCLK_HZ / 2u));
+            return;
+        }
+        if (argc > 4 && !parse_u32(argv[4], &n)) { bad_arg("points", argv[4], "a whole number"); return; }
+        if (argc > 5 && strcmp(argv[5], "force")) { bad_arg("option", argv[5], "'force' or nothing"); return; }
+        bool force  = (argc > 5);
         if (!beam_enabled()) { printf("REFUSED: beam is off.\n"); return; }
         if (!s_phase_model.valid)
             printf("WARNING: no phase model. Every candidate will be measured at phase 0,\n"
@@ -1071,7 +1259,10 @@ static void cmd_scan(int argc, char **argv) {
         cal_scan_point_t best;
         bool ok = cal_scan_carrier(f0, f1, n, &s_phase_model, force, &best);
         adc_engine_set_mode(ADC_MODE_IDLE);
-        if (ok) printf("\nPut the winner in board.h and record it in PROGRESS.md section 6.\n");
+        // The carrier is fixed for every board (see the FLATNESS verdict cal.c
+        // prints): this scan verifies robustness, it does not pick a frequency.
+        if (ok) printf("\nRecord the FLATNESS verdict in PROGRESS.md section 6. Do NOT change\n"
+                       "the carrier in board.h -- it stays 104166.67 Hz on every board.\n");
     
 }
 
@@ -1088,15 +1279,21 @@ static void cmd_detect(int argc, char **argv) {
             return;
         }
         if (argc >= 3 && !strcmp(argv[1], "coalesce")) {
-            detect_set_coalesce_us((uint32_t)strtoul(argv[2], NULL, 0));
+            uint32_t us;
+            if (!parse_u32(argv[2], &us)) { bad_arg("coalesce", argv[2], "microseconds"); return; }
+            detect_set_coalesce_us(us);
         }
         if (argc >= 3 && !strcmp(argv[1], "path")) {
-            detect_set_path_mm(strtof(argv[2], NULL));
+            float mm;
+            if (!parse_float_in(argv[2], 0.0f, 1000.0f, &mm)) { bad_arg("path", argv[2], "0-1000 mm"); return; }
+            detect_set_path_mm(mm);
             printf("beam path <- %.2f mm\n", (double)detect_path_mm());
             return;
         }
         if (argc >= 3 && !strcmp(argv[1], "cond")) {
-            detect_set_condition((uint8_t)strtoul(argv[2], NULL, 0));
+            uint32_t c;
+            if (!parse_u32_in(argv[2], 0u, 2u, &c)) { bad_arg("condition", argv[2], "0, 1 or 2"); return; }
+            detect_set_condition((uint8_t)c);
             printf("condition <- %u  (0 nominal, 1 far, 2 low-reflectance)\n",
                    detect_condition());
             return;
@@ -1119,8 +1316,10 @@ static void cmd_detect(int argc, char **argv) {
             return;
         }
         if (argc >= 2 && !strcmp(argv[1], "wave")) {
+            uint32_t seq = 0;
+            if (argc > 2 && !parse_u32(argv[2], &seq)) { bad_arg("pass", argv[2], "a pass number"); return; }
             const detect_wave_t *w = (argc > 2)
-                ? detect_wave_for((uint32_t)strtoul(argv[2], NULL, 0))
+                ? detect_wave_for(seq)
                 : detect_wave_recent(0);
             if (!w) { printf("no waveform retained (only the last %u passes)\n",
                              (unsigned)DETECT_WAVE_N); return; }
@@ -1179,6 +1378,14 @@ static void cmd_detect(int argc, char **argv) {
                detect_comparator() ? "ABOVE threshold" : "below threshold");
         printf("passes   : %lu     raw FIFO words: %lu\n",
                (unsigned long)detect_events(), (unsigned long)detect_fragments());
+        {
+            // Printed only when it happened, so the normal status is unchanged.
+            uint32_t ov = detect_dropped();
+            if (ov)
+                printf("           *** RX FIFO overflowed on %lu poll(s): >= %lu edge word(s)\n"
+                       "           DISCARDED. Fragment counts since arm are a LOWER BOUND. ***\n",
+                       (unsigned long)ov, (unsigned long)ov);
+        }
         printf("coalesce : %lu us  (fragments closer than this are one ball)\n",
                (unsigned long)detect_coalesce_us());
         {
@@ -1202,7 +1409,9 @@ static void cmd_detect(int argc, char **argv) {
 static void cmd_hpf(int argc, char **argv) {
 
         if (argc >= 2 && !strcmp(argv[1], "test")) {
-            uint32_t w = (argc > 2) ? (uint32_t)strtoul(argv[2], NULL, 0) : 3000u;
+            uint32_t w = 3000u;
+            // Each window runs four times plus settling, so cap it: 60 s is ~4 min.
+            if (argc > 2 && !parse_u32_in(argv[2], 1u, 60000u, &w)) { bad_arg("window", argv[2], "1-60000 ms"); return; }
             if (!power_rails_ready()) {
                 printf("REFUSED: +5V rail is open (state %s). U14 runs from +5VA.\n"
                        "         Use 'on' first.\n", power_state_name(power_fsm_state()));
@@ -1336,29 +1545,546 @@ static void cmd_hpf(int argc, char **argv) {
     
 }
 
+// ---------------------------------------------------------------------------
+// Phase 6: strobe -- dry tests (6a/6b) and live current (6c/6d). See strobe.h
+// and BENCH_P6_STROBE.md.
+// ---------------------------------------------------------------------------
+
+static float gate_dac_volts(uint16_t level) {
+    return ADC_VREF_V * (float)level / (float)(DAC_TOP + 1u);
+}
+
+static double gate_pct(uint16_t level) {
+    return 100.0 * (double)level / (double)(DAC_TOP + 1u);
+}
+
+static double gate_tp3_volts(uint16_t level) {
+    return (double)(gate_dac_volts(level) * STROBE_GATE_AMP_GAIN);
+}
+
+static void print_strobe_result(const strobe_result_t *r) {
+    if (!r->valid) { printf("last     : none since boot\n"); return; }
+    const strobe_burst_t *b = &r->burst;
+    printf("last     : %s%lu x %lu us", r->live ? "LIVE " : "", (unsigned long)b->count,
+           (unsigned long)b->width_us);
+    if (b->count > 1u)
+        printf(", gap %lu us (period %lu us)", (unsigned long)b->gap_us,
+               (unsigned long)(b->width_us + b->gap_us));
+    printf(" -- %s\n", strobe_run_text(r->outcome));
+    if (r->live && r->outcome != STROBE_RUN_INVALID)
+        printf("           at gate level %u (%.2f %%, TP3 nominal %.2f V); %.2f mC booked\n",
+               r->gate_level, gate_pct(r->gate_level), gate_tp3_volts(r->gate_level),
+               (double)r->booked_mc);
+
+    if (r->outcome == STROBE_RUN_INVALID) {
+        printf("           %s: width %d-%lu us, gap %d-%d us, 1-%d pulses,\n"
+               "           <= %.1f mC per burst at %.1f A (clamp-limited width)\n",
+               strobe_burst_err_text(r->burst_err), STROBE_MIN_WIDTH_US,
+               (unsigned long)r->max_width_us, STROBE_MIN_GAP_US, STROBE_MAX_GAP_US,
+               STROBE_BURST_MAX_PULSES, (double)BURST_CHARGE_MAX_MC,
+               (double)STROBE_TARGET_CURRENT_A);
+        if (r->burst_err == STROBE_BURST_SPAN)
+            printf("           live: enable to IRQ0 must be <= %lu us; this is %lu us\n",
+                   (unsigned long)STROBE_LIVE_SPAN_MAX_US, (unsigned long)r->expected_us);
+        return;
+    }
+    if (r->outcome == STROBE_RUN_REFUSED) {
+        printf("           %s\n", strobe_refusal_text(r->refusal));
+        return;
+    }
+    printf("           %lu PIO words; IRQ0 %s; enable->IRQ0 polled at %lu us,\n"
+           "           nominal %lu us (coarse -- the logic analyser is the timing truth)\n",
+           (unsigned long)r->words, r->irq_seen ? "seen" : "NOT seen",
+           (unsigned long)r->observed_us, (unsigned long)r->expected_us);
+    printf("           GPIO25 after: %s\n", r->pin_low_after ? "low, SIO" : "*** HIGH ***");
+}
+
+// The measurement of one live firing, as the bench reads it against TP4.
+static void print_live_meas(const strobe_live_shot_t *s) {
+    const strobe_live_meas_t *m = &s->meas;
+    printf("ADC0     : %u samples at 500 ksps, %u before the edge; baseline %.1f codes\n"
+           "           (%.3f A); threshold %u codes. Verdict: %s%s\n",
+           (unsigned)m->n_samples, (unsigned)m->pre_samples, (double)m->baseline_code,
+           (double)strobe_code_to_amps(m->baseline_code), m->threshold_code,
+           strobe_verdict_text(m->verdict), s->readback_err ? " (ADC FIFO ERROR FLAG SET)" : "");
+    if (!m->detected) {
+        printf("           no current above the ~%.0f mA detection floor\n",
+               1000.0 * (double)strobe_code_to_amps((float)STROBE_LIVE_DETECT_MIN_CODES));
+        return;
+    }
+    uint32_t shown = m->n_pulses < STROBE_BURST_MAX_PULSES ? m->n_pulses
+                                                          : STROBE_BURST_MAX_PULSES;
+    for (uint32_t k = 0; k < shown; k++) {
+        const strobe_pulse_meas_t *p = &m->pulse[k];
+        printf("  pulse %2lu: %7.3f A plateau   peak %7.3f A   on %4lu us (%lu samples)%s"
+               "   +%lu us\n",
+               (unsigned long)(k + 1u), (double)p->amps, (double)p->peak_a,
+               (unsigned long)p->width_us, (unsigned long)p->samples,
+               p->short_run ? ", short" : "", (unsigned long)p->start_us);
+    }
+    if (m->n_pulses > shown)
+        printf("  ... %lu runs in all, %lu kept\n", (unsigned long)m->n_pulses,
+               (unsigned long)shown);
+    if (shown > 1u) {
+        float first = m->pulse[0].amps, last = m->pulse[shown - 1u].amps;
+        printf("  burst   : min %.3f A, max %.3f A, first -> last %+.1f %%\n",
+               (double)m->min_amps, (double)m->max_amps,
+               first > 0.0f ? 100.0 * (double)((last - first) / first) : 0.0);
+    }
+    printf("  measured charge %.3f mC. TP4 should read %.0f mV for %.3f A (135 mV/A):\n"
+           "  compare it on the scope -- the two must agree.\n",
+           (double)m->charge_mc, 1000.0 * (double)(m->max_amps * STROBE_SENSE_V_PER_A),
+           (double)m->max_amps);
+}
+
+static void live_status(const strobe_info_t *i) {
+    const strobe_live_t *l = &i->live_in;
+    if (!i->live) {
+        printf("live     : OFF -- last ended: %s", strobe_live_exit_text(i->live_exit));
+        if (i->live_exit == STROBE_LIVE_EXIT_CONDITION)
+            printf(" (%s)", strobe_refusal_text(i->live_exit_refusal));
+        printf("\n");
+        strobe_refusal_t a = strobe_live_may_arm(&i->snap, l);
+        printf("may arm  : %s\n", a == STROBE_OK ? "yes -- 'strobe live on' prints the checklist"
+                                                 : strobe_refusal_text(a));
+    } else {
+        printf("live     : *** ARMED *** for %lu s; idle exit in %lu s\n",
+               (unsigned long)(i->live_for_ms / 1000u), (unsigned long)(i->idle_left_ms / 1000u));
+        printf("watchdog : %s\n", !l->watchdog_armed ? "*** OFF ***"
+               : i->live_owns_wdog ? "ARMED by live mode; disarmed when live mode ends"
+                                   : "ARMED by 'wdog on'; stays armed when live mode ends");
+        uint16_t lim = strobe_live_gate_limit(l->gate_proven);
+        printf("staircase: proven to level %u (%.2f %%); may raise to %u (%.2f %%, TP3 %.2f V)\n"
+               "           ceiling %u (%.2f %%, TP3 %.2f V)\n",
+               l->gate_proven, gate_pct(l->gate_proven), lim, gate_pct(lim),
+               gate_tp3_volts(lim), (unsigned)STROBE_LIVE_GATE_CEILING,
+               gate_pct(STROBE_LIVE_GATE_CEILING), gate_tp3_volts(STROBE_LIVE_GATE_CEILING));
+        strobe_refusal_t f = strobe_live_may_fire(&i->snap, l);
+        printf("may fire : %s\n", f == STROBE_OK ? "yes" : strobe_refusal_text(f));
+    }
+    printf("budget   : %.2f of %.1f mC used in the last %lu s; >= %lu ms between firings\n",
+           (double)i->budget_used_mc, (double)STROBE_LIVE_BUDGET_MC,
+           (unsigned long)(STROBE_LIVE_BUDGET_WINDOW_MS / 1000u),
+           (unsigned long)STROBE_LIVE_MIN_INTERVAL_MS);
+
+    const strobe_cal_t *c = strobe_cal_last();
+    if (c->valid) {
+        if (c->res == STROBE_CAL_RES_SOLVED)
+            printf("cal      : %.2f A -> level %u (%.2f %%), confirmation mean %.3f A, %s.\n"
+                   "           RAM only; a reset or a new cal replaces it.\n",
+                   (double)c->target_a, c->solved_level, gate_pct(c->solved_level),
+                   (double)c->confirm_mean_a, c->confirm_ok ? "within 5 %" : "*** NOT within 5 % ***");
+        else
+            printf("cal      : last run for %.2f A: %s\n", (double)c->target_a,
+                   strobe_cal_res_text(c->res));
+    }
+
+    const strobe_live_shot_t *s = strobe_live_last();
+    if (s->valid) {
+        printf("shot     : last live firing, %lu x %lu us at level %u (%.2f %%):\n",
+               (unsigned long)s->burst.count, (unsigned long)s->burst.width_us,
+               s->gate_level, gate_pct(s->gate_level));
+        print_live_meas(s);
+    }
+}
+
+// Live mode can end inside a command -- a verdict, a fault, the rail. Say so
+// where the operator is looking, not only in `strobe`.
+static void print_live_ended(void) {
+    strobe_info_t i;
+    strobe_info(&i);
+    printf("*** LIVE MODE ENDED: %s", strobe_live_exit_text(i.live_exit));
+    if (i.live_exit == STROBE_LIVE_EXIT_CONDITION)
+        printf(" (%s)", strobe_refusal_text(i.live_exit_refusal));
+    printf(". Gate 0, engine stopped. ***\n");
+    if (fault_current() != FAULT_NONE)
+        printf("    fault %s is latched: keep the record above, then 'fault clear'.\n",
+               fault_name(fault_current()));
+}
+
+static void strobe_status(void) {
+    strobe_info_t i;
+    strobe_info(&i);
+
+    if (i.live)
+        printf("strobe   : *** LIVE *** -- pulses fire WITH the gate setpoint: real LED-bank\n"
+               "           current, read back on ADC0. 'strobe live off' to leave.\n");
+    else
+        printf("strobe   : DRY. Pulses need the gate at 0 and the gate rises only while no\n"
+               "           pulse can start, so no LED-bank current can be commanded.\n"
+               "           Live current (6c/6d) is 'strobe live on confirm'.\n");
+    printf("rail     : %s (state %s)   fault %s   pi %s\n",
+           i.snap.rails_ready ? "up" : "DOWN", power_state_name(power_fsm_state()),
+           fault_name(fault_current()), i.snap.pi_present ? "PRESENT" : "absent");
+
+    bool limit_ok = i.limit_out_sio && !i.limit_out_level && !i.limit_pad;
+    printf("GPIO27   : %s, driven %d, pad %d  -> %s\n",
+           i.limit_out_sio ? "SIO output" : "*** NOT an SIO output ***",
+           i.limit_out_level, i.limit_pad,
+           limit_ok ? "U5 pulse limiter armed" : "*** LIMITER MAY BE DEFEATED -- STOP ***");
+    printf("A7       : GPIO12 ready LED %s\n",
+           i.ready_led_sio ? "on SIO (on/off); slice 6 belongs to the gate DAC"
+                           : "*** NOT SIO -- the gate DAC is refused ***");
+
+    float v = gate_dac_volts(i.gate_level);
+    printf("gate DAC : level %u of %lu (%.2f %%)   hw compare %u   GPIO28 %s\n",
+           i.gate_level, (unsigned long)(DAC_TOP + 1u), gate_pct(i.gate_level),
+           i.gate_hw_level, i.gate_pin_pwm ? "PWM" : "*** NOT PWM ***");
+    printf("           nominal %.3f V filtered -> TP3 %.3f V (x%.0f). TP3 is the truth.\n",
+           (double)v, (double)(v * STROBE_GATE_AMP_GAIN), (double)STROBE_GATE_AMP_GAIN);
+    if (i.gate_settling)
+        printf("           zeroed < %u ms ago: Q9's gate is still decaying, dry pulses refused\n",
+               (unsigned)DAC_SETTLE_MS);
+    printf("engine   : %s   PIO0 SM%u @ 1 MHz, offset %u, DMA ch %d   GPIO25 %s, pad %d\n",
+           i.busy ? "BUSY" : "idle", (unsigned)PIO_SM_STROBE, i.pio_offset, i.dma_channel,
+           i.pulse_pin_pio ? "PIO" : "SIO", i.pulse_pin_pad);
+    printf("limits   : width %d-%d us; U5 clamp <= %d us (board 1 measured 135); gap %d-%d us;\n"
+           "           <= %d pulses; <= %.1f mC per burst at the %.1f A design current;\n"
+           "           PIO overhead %u/%u us (confirmed on the LA, 6a.2)\n",
+           STROBE_MIN_WIDTH_US, STROBE_SW_MAX_US, STROBE_HW_LIMIT_US,
+           STROBE_MIN_GAP_US, STROBE_MAX_GAP_US, STROBE_BURST_MAX_PULSES,
+           (double)BURST_CHARGE_MAX_MC, (double)STROBE_TARGET_CURRENT_A,
+           STROBE_PIO_WIDTH_OVERHEAD_US, STROBE_PIO_GAP_OVERHEAD_US);
+    print_strobe_result(&i.last);
+
+    if (!i.live) {
+        strobe_refusal_t f = strobe_may_fire(&i.snap);
+        strobe_refusal_t g = strobe_may_set_gate(&i.snap, 1u);
+        printf("may fire : %s\n", f == STROBE_OK ? "yes" : strobe_refusal_text(f));
+        printf("may gate : %s (raising it; lowering to 0 is always allowed)\n",
+               g == STROBE_OK ? "yes" : strobe_refusal_text(g));
+    }
+    live_status(&i);
+}
+
+static void strobe_fire(const strobe_burst_t *b, uint32_t max_width_us) {
+    bool was_live = strobe_live_armed();
+    strobe_result_t r = strobe_run(b, max_width_us);
+    print_strobe_result(&r);
+    if (r.live && r.outcome != STROBE_RUN_INVALID && r.outcome != STROBE_RUN_REFUSED)
+        print_live_meas(strobe_live_last());
+    if (was_live && !strobe_live_armed()) print_live_ended();
+}
+
+static void strobe_print_schedule(const strobe_schedule_t *s) {
+    printf("schedule at %.2f m/s: %u um blur, %u um spacing, %u pulses, %.1f A target\n",
+           (double)s->speed_mps, (unsigned)STROBE_BLUR_BUDGET_UM,
+           (unsigned)STROBE_FREEZE_SPACING_UM, (unsigned)BURST_PULSES_NOMINAL,
+           (double)STROBE_TARGET_CURRENT_A);
+    printf("  width %lu us   period %lu us   gap %lu us   pulses %lu of %lu\n",
+           (unsigned long)s->width_us, (unsigned long)s->period_us,
+           (unsigned long)s->gap_us, (unsigned long)s->count,
+           (unsigned long)s->count_requested);
+    printf("  span %lu us (first rising edge to last falling edge)\n",
+           (unsigned long)s->span_us);
+    printf("  charge %.2f mC at %.1f A (limit %.1f mC)\n", (double)s->charge_mc,
+           (double)STROBE_TARGET_CURRENT_A, (double)BURST_CHARGE_MAX_MC);
+    if (s->width_clamped)
+        printf("  width CLAMPED to %d us: the blur budget wanted more\n", STROBE_SW_MAX_US);
+    if (s->gap_raised)
+        printf("  gap RAISED to the %d us minimum\n", STROBE_MIN_GAP_US);
+    if (s->shed)
+        printf("  SHED %lu -> %lu pulses to stay under the charge limit; spacing kept,\n"
+               "  so the burst covers fewer freeze positions\n",
+               (unsigned long)s->count_requested, (unsigned long)s->count);
+}
+
+static void live_checklist(void) {
+    printf("LIVE MODE IS NOT ARMED. It lets a pulse fire WITH the gate setpoint: real\n"
+           "LED-bank current, up to ~9 A from the 36 V VIR rail through Q9 in linear mode.\n"
+           "Before 'strobe live on confirm' (BENCH_P6_STROBE.md 6c board state):\n"
+           "  - J3 LED bank connected on purpose; PSU 5.20 V, current limit ~3 A\n"
+           "  - scope on TP4 (135 mV/A) and TP3, ground on TP1; FLIR on Q9 and HS1\n"
+           "  - nothing conductive near D12 (36 V); no probe tips in fine-pitch areas\n"
+           "  - no Pi on J8; beam off; detector disarmed; ADC idle; gate at 0\n"
+           "Live mode then:\n"
+           "  - arms the 1 s watchdog (and disarms it again on exit if it armed it)\n"
+           "  - limits the CLI to: help id stat pins adc5v fault off forceoff wdog strobe\n"
+           "  - gate <= level %u (%.1f %%, TP3 ~%.2f V); each raise at most %u levels\n"
+           "    (%.1f %%) above the highest level already fired and measured\n"
+           "  - reads every firing back on ADC0: a plateau over %.1f A (or a sample over\n"
+           "    %.1f A) latches STROBE_OVERCURRENT; current before the pulse, after it,\n"
+           "    or on longer than %u us latches STROBE_CLAMP. Either ends live mode\n"
+           "    with the gate at 0.\n"
+           "  - >= %lu ms between firings; <= %.1f mC per %lu s, booked at %.1f A\n"
+           "  - ends itself after %lu s with no strobe command\n",
+           (unsigned)STROBE_LIVE_GATE_CEILING, gate_pct(STROBE_LIVE_GATE_CEILING),
+           gate_tp3_volts(STROBE_LIVE_GATE_CEILING), (unsigned)STROBE_LIVE_GATE_STEP_MAX,
+           gate_pct(STROBE_LIVE_GATE_STEP_MAX), (double)STROBE_LIVE_I_STOP_A,
+           (double)STROBE_LIVE_I_PEAK_STOP_A, (unsigned)STROBE_LIVE_MAX_ON_US,
+           (unsigned long)STROBE_LIVE_MIN_INTERVAL_MS, (double)STROBE_LIVE_BUDGET_MC,
+           (unsigned long)(STROBE_LIVE_BUDGET_WINDOW_MS / 1000u),
+           (double)STROBE_TARGET_CURRENT_A,
+           (unsigned long)(STROBE_LIVE_IDLE_TIMEOUT_MS / 1000u));
+}
+
+static void cmd_strobe_live(int argc, char **argv) {
+    if (argc == 2) {
+        strobe_info_t i;
+        strobe_info(&i);
+        live_status(&i);
+        return;
+    }
+    if (argc == 3 && !strcmp(argv[2], "off")) {
+        bool was = strobe_live_armed();
+        strobe_live_disarm();
+        printf(was ? "live OFF: gate 0, engine stopped, GPIO25 low. Watchdog now %s.\n"
+                   : "live mode was not armed. Gate 0, engine stopped anyway. Watchdog %s.\n",
+               pitrac_watchdog_enabled() ? "ARMED" : "off");
+        return;
+    }
+    if (!strcmp(argv[2], "on") && argc == 3) {
+        if (strobe_live_armed()) { printf("live mode is already armed -- 'strobe live' for its state.\n"); return; }
+        live_checklist();
+        return;
+    }
+    if (!strcmp(argv[2], "on") && argc == 4 && !strcmp(argv[3], "confirm")) {
+        if (strobe_live_armed()) { printf("live mode is already armed.\n"); return; }
+        strobe_refusal_t r = strobe_live_arm();
+        if (r != STROBE_OK) {
+            printf("REFUSED: %s. Live mode NOT armed; nothing changed.\n",
+                   strobe_refusal_text(r));
+            return;
+        }
+        printf("LIVE: ARMED. Gate 0; the staircase starts from level 0. Watchdog ARMED (1 s).\n"
+               "  First step (6c): 'strobe pulse 20' at gate 0 -- expect no current --\n"
+               "  then 'strobe gate 3', 'strobe pulse 20', and compare every result\n"
+               "  with TP4. Raise in 3 %% steps; each firing judged OK moves the limit up.\n");
+        return;
+    }
+    printf("usage: strobe live | strobe live on [confirm] | strobe live off\n");
+}
+
+static void cal_report(const strobe_cal_point_t *p, bool confirm) {
+    printf("  %s  %4u  %6.2f %%  %5.2f V  ", confirm ? "confirm" : "step   ", p->level,
+           gate_pct(p->level), gate_tp3_volts(p->level));
+    if (p->detected) printf("%7.3f A\n", (double)p->amps);
+    else             printf("      -- (nothing above ~72 mA)\n");
+}
+
+static void cmd_strobe_cal(int argc, char **argv) {
+    float a = STROBE_TARGET_CURRENT_A;
+    if (argc > 3 || (argc == 3 && !parse_float_in(argv[2], STROBE_CAL_MIN_A,
+                                                   STROBE_TARGET_CURRENT_A, &a))) {
+        printf("usage: strobe cal [amps]   %.1f-%.1f A, default %.1f. NOTHING FIRED.\n",
+               (double)STROBE_CAL_MIN_A, (double)STROBE_TARGET_CURRENT_A,
+               (double)STROBE_TARGET_CURRENT_A);
+        return;
+    }
+    if (!strobe_live_armed()) {
+        printf("REFUSED: %s\n", strobe_refusal_text(STROBE_REFUSE_NOT_LIVE));
+        return;
+    }
+    printf("CAL: solving the gate level for %.2f A -- one %u us pulse per step from gate 0,\n"
+           "  coarse %u levels until current shows, then %u. Stops above %.2f A.\n"
+           "  Watch TP4. Any key aborts (gate -> 0).\n"
+           "           level   gate     TP3   current\n",
+           (double)a, (unsigned)STROBE_CAL_WIDTH_US, (unsigned)STROBE_CAL_COARSE_STEP,
+           (unsigned)STROBE_CAL_FINE_STEP, (double)(a * STROBE_CAL_ABORT_RATIO));
+    bool was_live = strobe_live_armed();
+    strobe_cal_t c = strobe_cal(a, cal_report);
+    if (c.res == STROBE_CAL_RES_SOLVED) {
+        float err = 100.0f * (c.confirm_mean_a - a) / a;
+        printf("SOLVED: level %u (%.2f %%, TP3 nominal %.2f V) for %.2f A.\n"
+               "  confirmation mean %.3f A (%+.1f %%) over %lu pulses: %s\n"
+               "  Gate left at level %u. RAM only -- nothing is saved.\n",
+               c.solved_level, gate_pct(c.solved_level), gate_tp3_volts(c.solved_level),
+               (double)a, (double)c.confirm_mean_a, (double)err, (unsigned long)c.n_confirm,
+               c.confirm_ok ? "every pulse within 5 % -- PASS"
+                            : "*** a pulse is outside 5 % -- do not trust this level ***",
+               c.solved_level);
+    } else {
+        printf("CAL FAILED: %s", strobe_cal_res_text(c.res));
+        if (c.res == STROBE_CAL_RES_REFUSED) printf(" -- %s", strobe_refusal_text(c.refusal));
+        printf(". Gate %s.\n", strobe_live_armed() ? "back to 0, still live" : "0");
+    }
+    if (was_live && !strobe_live_armed()) print_live_ended();
+}
+
+static void cmd_strobe_wave(void) {
+    const uint16_t *w = NULL;
+    size_t n = strobe_live_wave(&w);
+    const strobe_live_shot_t *s = strobe_live_last();
+    if (n == 0 || !s->valid) {
+        printf("no live ADC0 record yet -- fire something in live mode first.\n");
+        return;
+    }
+    // The `capture` block format, so tools/scope.py and the analysis scripts
+    // read it unchanged. The extra key=value pairs are ignored by them.
+    printf("# capture mask=0x01 n=%u rate=500000 overran=%d strobe=live gate=%u "
+           "width=%lu gap=%lu count=%lu pre=%u\n",
+           (unsigned)n, s->readback_err ? 1 : 0, s->gate_level,
+           (unsigned long)s->burst.width_us, (unsigned long)s->burst.gap_us,
+           (unsigned long)s->burst.count, (unsigned)s->meas.pre_samples);
+    printf("# columns: ch0\n");
+    for (size_t k = 0; k < n; k++) {
+        printf("%u\n", w[k]);
+        // Live mode has armed the watchdog: keep it fed while CDC drains.
+        if ((k % 32u) == 0) pitrac_service();
+    }
+    printf("# end\n");
+}
+
+static void cmd_strobe(int argc, char **argv) {
+    if (argc < 2) { strobe_status(); return; }
+    const char *sub = argv[1];
+
+    if (!strcmp(sub, "off")) {
+        bool was_live = strobe_live_armed();
+        strobe_safe_off();
+        printf("strobe off: GPIO25 SIO low, engine stopped, gate DAC 0%s.\n"
+               "  Dry pulses stay refused for %u ms while Q9's gate decays.\n",
+               was_live ? ", live mode OFF" : "", (unsigned)DAC_SETTLE_MS);
+        return;
+    }
+
+    if (!strcmp(sub, "live")) { cmd_strobe_live(argc, argv); return; }
+    if (!strcmp(sub, "cal"))  { cmd_strobe_cal(argc, argv);  return; }
+    if (!strcmp(sub, "wave") && argc == 2) { cmd_strobe_wave(); return; }
+
+    if (!strcmp(sub, "gate")) {
+        float pct;
+        if (argc != 3 || !parse_float(argv[2], &pct) || pct < 0.0f || pct > 100.0f) {
+            printf("usage: strobe gate <0-100>   (percent of the DAC; NOTHING WAS SET)\n");
+            return;
+        }
+        uint16_t level = (uint16_t)lroundf(pct * (float)(DAC_TOP + 1u) / 100.0f);
+        bool was_live = strobe_live_armed();
+        strobe_refusal_t r = strobe_gate_set(level);
+        if (r != STROBE_OK) {
+            printf("REFUSED: %s. Gate unchanged at level %u (%.2f %%).\n",
+                   strobe_refusal_text(r), strobe_gate_level(), gate_pct(strobe_gate_level()));
+            if (r == STROBE_REFUSE_STEP || r == STROBE_REFUSE_CEILING) {
+                strobe_info_t i;
+                strobe_info(&i);
+                uint16_t lim = strobe_live_gate_limit(i.live_in.gate_proven);
+                printf("  Asked for level %u. Highest allowed now: level %u (%.2f %%) -- proven\n"
+                       "  to %u. Each live firing judged within limits moves the limit up.\n",
+                       level, lim, gate_pct(lim), i.live_in.gate_proven);
+            }
+            return;
+        }
+        float v = gate_dac_volts(strobe_gate_level());
+        printf("gate <- level %u of %lu (%.2f %%), settled %u ms\n",
+               strobe_gate_level(), (unsigned long)(DAC_TOP + 1u),
+               gate_pct(strobe_gate_level()), (unsigned)DAC_SETTLE_MS);
+        printf("  nominal %.3f V filtered -> TP3 %.3f V. Measure TP3 and TP2 (+12 V).\n",
+               (double)v, (double)(v * STROBE_GATE_AMP_GAIN));
+        if (strobe_live_armed())
+            printf("  LIVE: the next pulse fires at this setpoint.\n");
+        else if (strobe_gate_level() != 0u)
+            printf("  Dry pulses are now REFUSED until 'strobe gate 0'.\n");
+        if (was_live && !strobe_live_armed()) print_live_ended();
+        return;
+    }
+
+    if (!strcmp(sub, "pulse") || !strcmp(sub, "clamptest")) {
+        bool clamp = (sub[0] == 'c');
+        uint32_t w;
+        if (argc != 3 || !parse_u32(argv[2], &w)) {
+            printf("usage: strobe %s <us>   (NOTHING FIRED)\n", sub);
+            return;
+        }
+        if (clamp && w <= (uint32_t)STROBE_SW_MAX_US) {
+            printf("ERR: clamptest is for widths over %d us. Use 'strobe pulse %lu'.\n",
+                   STROBE_SW_MAX_US, (unsigned long)w);
+            return;
+        }
+        if (clamp && strobe_live_armed())
+            printf("6d CLAMP TEST WITH CURRENT: commanding %lu us at gate level %u (%.2f %%).\n"
+                   "  TP4 must show a pulse of about the U5 clamp (135 us on board 1), NOT\n"
+                   "  %lu us. An on-time over %u us latches STROBE_CLAMP and ends live mode.\n",
+                   (unsigned long)w, strobe_gate_level(), gate_pct(strobe_gate_level()),
+                   (unsigned long)w, (unsigned)STROBE_LIVE_MAX_ON_US);
+        else if (clamp)
+            printf("CLAMP TEST: commanding %lu us. U5 should end Q10's gate pulse at its\n"
+                   "  clamp -- board 1 measured 135 us (U9, the same circuit, 122.68 us), so\n"
+                   "  expect ~110-%d us. Record GPIO25's width AND Q10's gate width.\n",
+                   (unsigned long)w, STROBE_HW_LIMIT_US);
+        strobe_burst_t b = { .width_us = w, .gap_us = 0u, .count = 1u };
+        strobe_fire(&b, clamp ? (uint32_t)STROBE_CLAMPTEST_MAX_US : (uint32_t)STROBE_SW_MAX_US);
+        return;
+    }
+
+    if (!strcmp(sub, "burst")) {
+        strobe_burst_t b;
+        if (argc != 5 || !parse_u32(argv[2], &b.width_us) || !parse_u32(argv[3], &b.gap_us)
+                      || !parse_u32(argv[4], &b.count)) {
+            printf("usage: strobe burst <width_us> <gap_us> <count>   (NOTHING FIRED)\n");
+            return;
+        }
+        strobe_fire(&b, (uint32_t)STROBE_SW_MAX_US);
+        return;
+    }
+
+    if (!strcmp(sub, "sched")) {
+        float v;
+        bool fire = (argc == 4 && !strcmp(argv[3], "fire"));
+        if ((argc != 3 && !fire) || !parse_float(argv[2], &v)) {
+            printf("usage: strobe sched <m/s> [fire]\n");
+            return;
+        }
+        strobe_schedule_t s;
+        strobe_plan_err_t e = strobe_compute_schedule(v, &s);
+        if (e == STROBE_PLAN_BAD_SPEED) {
+            printf("ERR: speed must be %.1f-%.1f m/s\n",
+                   (double)STROBE_V_MIN_MPS, (double)STROBE_V_MAX_MPS);
+            return;
+        }
+        strobe_print_schedule(&s);
+        if (e == STROBE_PLAN_OVER_CHARGE) {
+            printf("  *** STILL OVER the charge limit at %u pulses -- will not fire ***\n",
+                   (unsigned)BURST_PULSES_MIN);
+            return;
+        }
+        if (fire) {
+            strobe_burst_t b = { .width_us = s.width_us, .gap_us = s.gap_us, .count = s.count };
+            strobe_fire(&b, (uint32_t)STROBE_SW_MAX_US);
+        }
+        return;
+    }
+
+    printf("ERR: '%s' is not a strobe subcommand -- NOTHING WAS DONE.\n"
+           "     strobe | gate <pct> | pulse <us> | burst <w> <gap> <n> |\n"
+           "     clamptest <us> | sched <m/s> [fire] | off |\n"
+           "     live [on [confirm] | off] | cal [A] | wave\n", sub);
+}
+
 // The watchdog can reset the board, and a reset drops the latch -- so it needs
 // an off switch that does not require a rebuild. It also interacts with
 // `bootsel` and `reset`, both of which now disarm it first.
 static void cmd_wdog(int argc, char **argv) {
     if (argc >= 2) {
-        if (!strcmp(argv[1], "on"))  pitrac_watchdog_enable(true);
-        else if (!strcmp(argv[1], "off")) pitrac_watchdog_enable(false);
-        else { printf("usage: wdog [on|off]\n"); return; }
+        if (!strcmp(argv[1], "on")) {
+            pitrac_watchdog_enable(true);
+            // Typed on purpose: it is the operator's now, not live mode's.
+            if (strobe_live_armed()) strobe_live_keep_watchdog();
+        } else if (!strcmp(argv[1], "off")) {
+            if (strobe_live_armed()) {
+                printf("REFUSED: live strobe mode is armed and requires the watchdog.\n"
+                       "  'strobe live off' first. Watchdog still ARMED.\n");
+                return;
+            }
+            pitrac_watchdog_enable(false);
+        } else { printf("usage: wdog [on|off]\n"); return; }
     }
     printf("watchdog : %s\n", pitrac_watchdog_enabled() ? "ARMED (1 s)" : "off");
     printf("  OFF by default. On this board a watchdog reset is a HARD POWER CUT,\n"
            "  not a recovery -- GPIO15 goes high-Z, R12 pulls the latch open, and\n"
            "  whatever was being measured dies with it. See service.h.\n");
-    printf("  Arm it for PHASE 6, where a hang with 9 A through a linear-mode FET\n"
-           "  is a genuinely different risk from a hang on the bench.\n");
+    printf("  Live strobe mode (6c/6d) arms it itself, where a hang with current through\n"
+           "  a linear-mode FET is a genuinely different risk, and disarms it again on\n"
+           "  exit -- unless it was already armed, or you type 'wdog on' while live.\n");
     printf("  'bootsel' and 'reset' disarm it themselves; you do not need to.\n");
 }
 
 static void cmd_led(int argc, char **argv) {
 
         if (argc < 3) { printf("usage: led r|y <0|1>\n"); return; }
+        if (strcmp(argv[1], "r") && strcmp(argv[1], "y")) { bad_arg("led", argv[1], "r or y"); return; }
+        if (strcmp(argv[2], "0") && strcmp(argv[2], "1")) { bad_arg("level", argv[2], "0 or 1"); return; }
         uint p = (argv[1][0] == 'r') ? PIN_LED_RED : PIN_LED_YELLOW;
-        gpio_put(p, strtoul(argv[2], NULL, 0) ? 1 : 0);
+        gpio_put(p, argv[2][0] == '1');
         printf("ok\n");
     
 }
@@ -1475,7 +2201,12 @@ static void cmd_beam(int argc, char **argv) {
 
         if (!strcmp(argv[1], "freq")) {
             if (argc < 3) { printf("usage: beam freq <hz>\n"); return; }
-            uint32_t f = (uint32_t)strtoul(argv[2], NULL, 0);
+            uint32_t f;
+            if (!parse_u32_in(argv[2], 1u, SYSCLK_HZ / 2u, &f)) {
+                printf("ERR: freq '%s' -- want whole Hz, 1-%lu. Nothing was changed.\n",
+                       argv[2], (unsigned long)(SYSCLK_HZ / 2u));
+                return;
+            }
             beam_configure(f, beam_duty(), beam_phase_ticks());
             printf("freq <- %lu Hz requested, %lu Hz actual (TOP=%lu, period %lu counts)\n",
                    (unsigned long)f, (unsigned long)beam_actual_freq_hz(),
@@ -1491,7 +2222,9 @@ static void cmd_beam(int argc, char **argv) {
 
         if (!strcmp(argv[1], "duty")) {
             if (argc < 3) { printf("usage: beam duty <pct>\n"); return; }
-            float d = strtof(argv[2], NULL) / 100.0f;
+            float pct;
+            if (!parse_float_in(argv[2], 0.0f, 100.0f, &pct)) { bad_arg("duty", argv[2], "0-100 %"); return; }
+            float d = pct / 100.0f;
             float eff;
             if (beam_would_exceed_ceiling(beam_actual_freq_hz(), d, &eff)) {
                 printf("REFUSED: %.1f%% commanded -> %.1f%% EFFECTIVE at the LED,\n"
@@ -1515,8 +2248,11 @@ static void cmd_beam(int argc, char **argv) {
 
         if (!strcmp(argv[1], "ramp")) {
             if (argc < 3) { printf("usage: beam ramp <pct> [step_ms]\n"); return; }
-            float d = strtof(argv[2], NULL) / 100.0f;
-            uint32_t ms = (argc > 3) ? (uint32_t)strtoul(argv[3], NULL, 0) : 250;
+            float pct;
+            uint32_t ms = 250u;
+            if (!parse_float_in(argv[2], 0.0f, 100.0f, &pct)) { bad_arg("duty", argv[2], "0-100 %"); return; }
+            if (argc > 3 && !parse_u32_in(argv[3], 1u, 10000u, &ms)) { bad_arg("step", argv[3], "1-10000 ms"); return; }
+            float d = pct / 100.0f;
             float eff;
             if (beam_would_exceed_ceiling(beam_actual_freq_hz(), d, &eff)) {
                 printf("REFUSED: %.1f%% -> %.1f%% effective, over the %.0f%% ceiling.\n",
@@ -1534,7 +2270,8 @@ static void cmd_beam(int argc, char **argv) {
 
         if (!strcmp(argv[1], "phase")) {
             if (argc < 3) { printf("usage: beam phase <0..%lu>\n", (unsigned long)beam_top()); return; }
-            int32_t p = (int32_t)strtol(argv[2], NULL, 0);
+            int32_t p;
+            if (!parse_i32(argv[2], &p)) { bad_arg("phase", argv[2], "whole ticks (wraps modulo TOP+1)"); return; }
             beam_set_phase(p);     // preserves TOP; no round-trip through freq
             printf("phase <- %ld ticks (%.2f deg of one carrier period)\n",
                    (long)beam_phase_ticks(),
@@ -1559,12 +2296,14 @@ static void cmd_beam(int argc, char **argv) {
                        (double)(beam_duty() * 100.0f), hi_us,
                        (unsigned long)beam_top(), (unsigned long)beam_clkdiv());
                 printf("Scope TP5 and measure the LOW width -- that IS the U9 clamp.\n");
-                printf("  .md claims 113 us;  0.7*R68*C57 = 0.7*56k*2.2n = ~86 us.\n");
-                printf("  Record it -- it sets STROBE_SW_MAX_US for Phase 6.\n");
+                printf("  Measured 2026-08-13: 122.68 us (BEAM_ONESHOT_CLAMP_US = %u). The\n"
+                       "  0.7*R68*C57 = ~86 us estimate was 30 %% short. This is U9 only:\n"
+                       "  the strobe's U5 clamp is measured separately in 6a.1.\n",
+                       (unsigned)BEAM_ONESHOT_CLAMP_US);
                 printf("WARNING: if the LOW width equals the %lu us commanded above, the\n"
                        "         one-shot is NOT clamping and that is not t_w.\n", hi_us);
-                printf("LED duty is clamp/period, NOT the %% commanded -- ~%lu %% if t_w=86us.\n",
-                       (unsigned long)(86ul * beam_actual_freq_hz() / 10000ul));
+                printf("LED duty is clamp/period, NOT the %% commanded -- %.1f %% here.\n",
+                       (double)(beam_effective_duty() * 100.0f));
             }
             if (!beam_enable(true)) printf("ERR: rails down -- use 'on' first.\n");
             return;
@@ -1579,11 +2318,15 @@ static void cmd_beam(int argc, char **argv) {
                        "e.g.   beam sweep 5000 250000 25 2000\n");
                 return;
             }
-            uint32_t f0 = (uint32_t)strtoul(argv[2], NULL, 0);
-            uint32_t f1 = (uint32_t)strtoul(argv[3], NULL, 0);
-            uint32_t n  = (uint32_t)strtoul(argv[4], NULL, 0);
-            uint32_t dw = (uint32_t)strtoul(argv[5], NULL, 0);
-            if (n < 2) { printf("ERR: need >= 2 steps\n"); return; }
+            uint32_t f0, f1, n, dw;
+            if (!parse_u32_in(argv[2], 1u, SYSCLK_HZ / 2u, &f0) ||
+                !parse_u32_in(argv[3], 1u, SYSCLK_HZ / 2u, &f1)) {
+                printf("ERR: frequencies must be whole Hz, 1-%lu. Nothing was run.\n",
+                       (unsigned long)(SYSCLK_HZ / 2u));
+                return;
+            }
+            if (!parse_u32_in(argv[4], 2u, 1000u, &n)) { bad_arg("steps", argv[4], "2-1000"); return; }
+            if (!parse_u32_in(argv[5], 0u, 60000u, &dw)) { bad_arg("dwell", argv[5], "0-60000 ms"); return; }
             if (!power_rails_ready()) { printf("ERR: rails down\n"); return; }
 
             printf("Sweeping %lu -> %lu Hz in %lu steps, %lu ms each, at %.1f%% duty.\n",
@@ -1705,6 +2448,7 @@ static const cli_cmd_t k_cmds[] = {
     { "led", NULL, cmd_led, "on-board D5/D6 override" },
     { "wdog", NULL, cmd_wdog, "show / set the hardware watchdog" },
     { "beam", NULL, cmd_beam, "carrier and demod clock (Phase 2)" },
+    { "strobe", NULL, cmd_strobe, "strobe: gate DAC, pulses, schedule; dry 6a/6b, live current 6c/6d" },
     { "fault", NULL, cmd_fault, "show / clear the latched fault" },
     { "reset", NULL, cmd_reset, "soft reset (guarded)" },
     { "bootsel", NULL, cmd_bootsel, "reboot to USB storage (guarded)" },
@@ -1728,6 +2472,22 @@ static void help_check_undocumented(void) {
                "  so it cannot go stale the way the text above can.\n");
 }
 
+// While live strobe mode is armed, only these run. Everything else either takes
+// the ADC the live readback needs (adc, adcmode, capture, cal, level, scan),
+// drives a pin or peripheral live mode depends on (beam, detect, gpio, hpf, led,
+// panel, threshold, pisim), writes flash (cfg), or resets the board (reset,
+// bootsel). `off` and `forceoff` stay: taking the rail down is always allowed,
+// and it ends live mode on the way.
+static bool allowed_while_live(const char *name) {
+    static const char *const k_ok[] = {
+        "help", "?", "id", "stat", "pins", "adc5v", "fault", "off", "forceoff",
+        "wdog", "strobe",
+    };
+    for (size_t i = 0; i < count_of(k_ok); i++)
+        if (!strcmp(name, k_ok[i])) return true;
+    return false;
+}
+
 static void dispatch(int argc, char **argv) {
     // Clear the abort latch for EVERY command, not just the long ones. A key
     // pressed to stop the previous command must not carry over and kill this
@@ -1737,6 +2497,13 @@ static void dispatch(int argc, char **argv) {
 
     if (argc == 0) return;
     const char *c = argv[0];
+
+    if (strobe_live_armed() && !allowed_while_live(c)) {
+        printf("REFUSED: '%s' is not allowed while live strobe mode is armed.\n"
+               "  Allowed: help id stat pins adc5v fault off forceoff wdog strobe.\n"
+               "  'strobe live off' first.\n", c);
+        return;
+    }
 
     for (size_t i = 0; i < count_of(k_cmds); i++) {
         if (!strcmp(c, k_cmds[i].name) ||
@@ -1760,6 +2527,12 @@ static void handle_line(void) {
         argv[argc++] = p;
         while (*p && *p != ' ' && *p != '\t') p++;
         if (*p) *p++ = '\0';
+    }
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p) {
+        printf("ERR: more than %d words -- NOTHING was run.\n", CLI_MAX_ARGS);
+        printf("> ");
+        return;
     }
     dispatch(argc, argv);
     printf("> ");
@@ -1812,6 +2585,7 @@ static void restore_phase_model(void) {
 
 void cli_init(void) {
     s_len = 0;
+    s_overflow = false;
     restore_phase_model();
     printf("\n%s\n> ", k_help);
 }
@@ -1823,11 +2597,21 @@ void cli_service(void) {
             putchar('\n');
             s_line[s_len] = '\0';
             s_len = 0;
+            if (s_overflow) {
+                s_overflow = false;
+                printf("ERR: line longer than %d characters -- NOTHING was run.\n> ",
+                       CLI_MAX_LINE - 1);
+                continue;
+            }
             handle_line();
         } else if (ch == 8 || ch == 127) {          // backspace / delete
+            // Dropped characters were never echoed, so once the operator edits,
+            // the screen and the buffer agree again.
+            s_overflow = false;
             if (s_len) { s_len--; printf("\b \b"); }
         } else if (ch >= 32 && ch < 127) {
             if (s_len < CLI_MAX_LINE - 1) { s_line[s_len++] = (char)ch; putchar(ch); }
+            else s_overflow = true;
         }
     }
 }

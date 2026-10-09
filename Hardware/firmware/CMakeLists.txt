@@ -58,6 +58,9 @@ add_executable(pitrac
     src/detect.c
     src/cal.c
     src/config_store.c
+    src/strobe_plan.c
+    src/strobe_live.c
+    src/strobe.c
     src/cli.c
 )
 
@@ -67,10 +70,8 @@ target_include_directories(pitrac PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
 # path for this target -> #include "detect.pio.h"
 pico_generate_pio_header(pitrac ${CMAKE_CURRENT_LIST_DIR}/src/detect.pio)
 
-# Phase 6's burst engine. ASSEMBLED but not yet included by any .c, so it costs
-# nothing at link time and emits no code -- pico_generate_pio_header only
-# produces a header. The point is that pioasm checks it on every build, so a
-# program written months before its phase cannot rot unnoticed.
+# Phase 6's burst engine. Loaded by strobe.c since 2026-10-02 (6a/6b dry tests;
+# live current 6c/6d since 2026-10-07); before that pioasm only checked it.
 pico_generate_pio_header(pitrac ${CMAKE_CURRENT_LIST_DIR}/src/strobe_burst.pio)
 
 target_link_libraries(pitrac

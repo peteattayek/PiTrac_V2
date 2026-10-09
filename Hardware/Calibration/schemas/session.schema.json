@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pitrac:camera-distortion:session:v1",
+  "title": "PiTrac camera distortion capture session v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "session_id", "created_utc", "preview_session_id", "camera", "acquisition", "target", "captures"],
+  "properties": {
+    "schema": {"const": "pitrac-camera-distortion-session-v1"},
+    "status": {"enum": ["draft", "ready", "capturing", "complete"]},
+    "session_id": {"type": "string", "pattern": "^CAM[01]_\\S+$"},
+    "created_utc": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/utc"}]},
+    "preview_session_id": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/nonblank"}]},
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "module_id", "lens_id", "holder_id", "filter_stack_id", "aperture_description", "identity_confirmed", "focus_locked", "focus_reference_mm", "coordinate_orientation", "image_size"],
+      "properties": {
+        "role": {"enum": ["CAM0", "CAM1"]},
+        "module_id": {"type": ["string", "null"]},
+        "lens_id": {"type": ["string", "null"]},
+        "holder_id": {"type": ["string", "null"]},
+        "filter_stack_id": {"type": ["string", "null"]},
+        "aperture_description": {"$ref": "#/$defs/nonblank"},
+        "identity_confirmed": {"type": "boolean"},
+        "focus_locked": {"type": "boolean"},
+        "focus_reference_mm": {"type": "number", "exclusiveMinimum": 0},
+        "coordinate_orientation": {"const": "native"},
+        "image_size": {
+          "type": "array",
+          "prefixItems": [{"const": 1600}, {"const": 1400}],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"role": {"const": "CAM0"}}, "required": ["role"]},
+          "then": {"properties": {"focus_reference_mm": {"const": 390}}}
+        },
+        {
+          "if": {"properties": {"role": {"const": "CAM1"}}, "required": ["role"]},
+          "then": {"properties": {"focus_reference_mm": {"const": 388.245268774}}}
+        }
+      ]
+    },
+    "acquisition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fourcc", "native_bit_depth", "png_bit_depth", "gain", "exposure_us", "illumination_nm", "illumination_id", "preview_url", "capture_alias"],
+      "properties": {
+        "fourcc": {"const": "Y12P"},
+        "native_bit_depth": {"const": 12},
+        "png_bit_depth": {"const": 16},
+        "gain": {"const": 1},
+        "exposure_us": {"type": ["integer", "null"], "minimum": 30, "maximum": 500000},
+        "illumination_nm": {"const": 850},
+        "illumination_id": {"type": ["string", "null"]},
+        "preview_url": {"const": "http://127.0.0.1:8765"},
+        "capture_alias": {"const": "mira220"}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["board_id", "definition_file", "measured_square_x_mm", "measured_square_y_mm", "print_scale_x_100_mm", "print_scale_y_100_mm", "flatness_verified", "ir_contrast_verified"],
+      "properties": {
+        "board_id": {"const": "pitrac-charuco-11x8-20mm-v1"},
+        "definition_file": {"const": "targets/board.json"},
+        "measured_square_x_mm": {"$ref": "#/$defs/nullablePositive"},
+        "measured_square_y_mm": {"$ref": "#/$defs/nullablePositive"},
+        "print_scale_x_100_mm": {"$ref": "#/$defs/nullablePositive"},
+        "print_scale_y_100_mm": {"$ref": "#/$defs/nullablePositive"},
+        "flatness_verified": {"type": "boolean"},
+        "ir_contrast_verified": {"type": "boolean"}
+      }
+    },
+    "captures": {"type": "array", "items": {"$ref": "#/$defs/capture"}, "uniqueItems": true}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"camera": {"properties": {"role": {"const": "CAM0"}}, "required": ["role"]}}, "required": ["camera"]},
+      "then": {"properties": {"session_id": {"pattern": "^CAM0_\\S+$"}}}
+    },
+    {
+      "if": {"properties": {"camera": {"properties": {"role": {"const": "CAM1"}}, "required": ["role"]}}, "required": ["camera"]},
+      "then": {"properties": {"session_id": {"pattern": "^CAM1_\\S+$"}}}
+    },
+    {
+      "if": {"properties": {"status": {"enum": ["ready", "capturing", "complete"]}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "session_id": {"pattern": "^CAM[01]_(?!REPLACE_WITH_RUN_ID$)\\S+$"},
+          "created_utc": {"$ref": "#/$defs/utc"},
+          "camera": {
+            "properties": {
+              "module_id": {"$ref": "#/$defs/nonblank"},
+              "lens_id": {"$ref": "#/$defs/nonblank"},
+              "holder_id": {"$ref": "#/$defs/nonblank"},
+              "filter_stack_id": {"$ref": "#/$defs/nonblank"},
+              "identity_confirmed": {"const": true},
+              "focus_locked": {"const": true}
+            }
+          },
+          "acquisition": {
+            "properties": {
+              "exposure_us": {"type": "integer", "minimum": 30, "maximum": 500000},
+              "illumination_id": {"$ref": "#/$defs/nonblank"}
+            }
+          },
+          "target": {
+            "properties": {
+              "measured_square_x_mm": {"$ref": "#/$defs/positive"},
+              "measured_square_y_mm": {"$ref": "#/$defs/positive"},
+              "print_scale_x_100_mm": {"$ref": "#/$defs/positive"},
+              "print_scale_y_100_mm": {"$ref": "#/$defs/positive"},
+              "flatness_verified": {"const": true},
+              "ir_contrast_verified": {"const": true}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonblank": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "positive": {"type": "number", "exclusiveMinimum": 0},
+    "nullablePositive": {"type": ["number", "null"], "exclusiveMinimum": 0},
+    "utc": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|\\+00:00)$"
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\:\\s]+(?:/[^/\\\\:\\s]+)*$",
+      "description": "Relative POSIX path from the session manifest directory; no drive, backslash, whitespace, or dot segments."
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pose_id", "repeat", "split", "archive", "archive_sha256", "frame_id", "capture_id", "selected_utc"],
+      "properties": {
+        "pose_id": {"type": "string", "pattern": "^[TV][0-9]+$"},
+        "repeat": {"type": "integer", "minimum": 1, "maximum": 3},
+        "split": {"enum": ["fit", "validation"]},
+        "archive": {"$ref": "#/$defs/relativePath"},
+        "archive_sha256": {"$ref": "#/$defs/sha256"},
+        "frame_id": {"type": "integer", "minimum": 0},
+        "capture_id": {"$ref": "#/$defs/nonblank"},
+        "selected_utc": {"$ref": "#/$defs/utc"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"split": {"const": "fit"}}, "required": ["split"]},
+          "then": {"properties": {"pose_id": {"pattern": "^T[0-9]+$"}}}
+        },
+        {
+          "if": {"properties": {"split": {"const": "validation"}}, "required": ["split"]},
+          "then": {"properties": {"pose_id": {"pattern": "^V[0-9]+$"}}}
+        }
+      ]
+    }
+  }
+}

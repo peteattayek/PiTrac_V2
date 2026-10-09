@@ -132,9 +132,12 @@ void shot_step(void) {
         // have completed, which is what makes the A9 ordering structural rather
         // than a comment somebody has to remember.
         //
-        // No strobe firmware exists yet, so nothing fires and the mode is left
-        // alone -- selecting BURST here today would destroy ch5/ch7 for no
-        // benefit.
+        // Strobe firmware exists (strobe.c: dry tests 6a/6b, live current
+        // 6c/6d under bench guards) but is deliberately NOT wired in here: the
+        // camera handshake does not exist, and the live path's own ADC BURST
+        // readback assumes the detector is disarmed. So nothing fires and the
+        // mode is left alone -- selecting BURST here today would destroy ch5/ch7
+        // for no benefit.
         s_last.pulses_fired = 0;
         enter(SHOT_LOGGING);
         break;

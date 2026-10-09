@@ -6,6 +6,7 @@
 
 #include "hardware/adc.h"
 #include "hardware/dma.h"
+#include "hardware/sync.h"      // save_and_disable_interrupts(), for the freeze instant
 #include "pico/stdlib.h"
 
 #include <string.h>
@@ -70,6 +71,7 @@ static int        s_ring_dma = -1;
 static bool       s_ring_on;
 static uint       s_ring_mask;          // round-robin set currently in the ring
 static uint       s_ring_nch;
+static uint64_t   s_ring_t0_us;         // when the current mode's conversions began
 
 // Last good +5V_IN reading and when we took it.
 static float      s_5vin_last = 0.0f;
@@ -332,11 +334,66 @@ void adc_engine_set_mode(adc_mode_t m) {
     // channel phase in the buffer matches the round-robin start.
     ring_start(mask);
     adc_run(true);
+    s_ring_t0_us = time_us_64();
 
     s_mode = m;
 }
 
 adc_mode_t adc_engine_mode(void) { return s_mode; }
+
+// See the header. Nothing races the copy because nothing is converting.
+size_t adc_ring_freeze_copy(uint chan, uint64_t since_us, uint16_t *dst, size_t cap,
+                            bool *overran, uint64_t *stop_us) {
+    if (overran) *overran = false;
+    if (stop_us) *stop_us = 0;
+    if (!s_ring_on || !dst || chan > 7 || cap == 0) return 0;
+
+    // The stop instant is what anchors every copied sample in time, so nothing
+    // may run between reading the clock and stopping the conversions -- a USB
+    // interrupt landing there would shift the caller's baseline/pulse split.
+    uint32_t irq = save_and_disable_interrupts();
+    uint64_t now = time_us_64();
+    adc_run(false);
+    restore_interrupts(irq);
+    if (stop_us) *stop_us = now;
+
+    // The conversion in flight completes (2 us at 500 ksps) and the DMA moves it
+    // out of the FIFO. Bounded: a stuck FIFO costs at most ~54 us here.
+    busy_wait_us(4);
+    for (int k = 0; k < 50 && adc_fifo_get_level() != 0; k++) busy_wait_us(1);
+
+    size_t got = 0;
+    size_t newest;
+    if (ring_newest_of(chan, &newest)) {
+        // Only what THIS mode wrote. The SAR runs at ADC_MAX_RATE_HZ aggregate,
+        // so the ring has advanced (now - t0) x rate raw slots since the mode
+        // began. Two slots of margin, and never the whole ring.
+        uint64_t raw = ((now - s_ring_t0_us) * (uint64_t)ADC_MAX_RATE_HZ) / 1000000u;
+        raw = raw > 2u ? raw - 2u : 0u;
+        if (raw > ADC_RING_SAMPLES - 1u) raw = ADC_RING_SAMPLES - 1u;
+        size_t avail = (size_t)raw / s_ring_nch;
+        // And only back to since_us.
+        uint64_t per_ch_hz = (uint64_t)ADC_MAX_RATE_HZ / s_ring_nch;
+        size_t want = since_us < now ? (size_t)(((now - since_us) * per_ch_hz) / 1000000u) : 0u;
+        got = want < avail ? want : avail;
+        if (got > cap) got = cap;
+
+        bool err = false;
+        size_t i = newest;
+        for (size_t k = 0; k < got; k++) {
+            uint16_t v = s_ring[i];
+            if (v & 0x8000u) err = true;
+            dst[got - 1u - k] = v & 0x0FFFu;          // oldest first
+            i = (i + ADC_RING_SAMPLES - s_ring_nch) & (ADC_RING_SAMPLES - 1);
+        }
+        if (overran) *overran = err;
+    }
+
+    ring_stop();
+    adc_quiesce();
+    s_mode = ADC_MODE_OFF;
+    return got;
+}
 
 // ---------------------------------------------------------------------------
 

@@ -3,10 +3,11 @@
 #include "service.h"
 #include "board.h"
 #include "power_fsm.h"
-#include "safe_state.h"   // fault_t / fault_current()
+#include "safe_state.h"   // fault_generation()
 #include "detect.h"
 #include "shot.h"
 #include "panel.h"
+#include "strobe.h"
 
 #include "pico/stdlib.h"
 #include "hardware/watchdog.h"
@@ -22,9 +23,13 @@ static volatile bool s_abort;
 // Faults are LATCHED until acknowledged, so "a fault exists" is the wrong test
 // -- it would make every command refuse instantly while the board sat in
 // PS_FAULT, including the ones you would run to diagnose it. What a command
-// cares about is a fault that appeared WHILE IT WAS RUNNING, so snapshot the
-// state on entry and compare against that.
-static fault_t s_fault_at_entry = FAULT_NONE;
+// cares about is a fault that LATCHED WHILE IT WAS RUNNING, so snapshot on entry.
+//
+// The snapshot is the fault GENERATION, not the code (audit SVC-02). Comparing
+// codes misses a fault that was latched at entry, cleared mid-command (the
+// button acknowledges PS_FAULT from inside any yield), and latched again with
+// the same code. The generation counts every latch, so it cannot.
+static uint32_t s_fault_gen_at_entry;
 
 // Watchdog period. Must comfortably exceed the longest gap between two
 // pitrac_service() calls. The worst case is a single yield slice (5 ms) plus
@@ -60,14 +65,14 @@ yield_t pitrac_service(void) {
     power_fsm_step();
     detect_service();        // drain the PIO transit FIFO and coalesce chatter
     shot_step();             // firing sequencer; does nothing until armed
+    strobe_live_service();   // live strobe mode: hold conditions, idle timeout
     panel_onboard_update();  // D5/D6, always-on +3V3
     panel_update();          // J7 indicators, switched +5V
 
     // 🔴 NO getchar() HERE. See the note above pitrac_yield_ms().
     if (s_abort) return YIELD_ABORT_KEY;
 
-    fault_t f = fault_current();
-    if (f != FAULT_NONE && f != s_fault_at_entry) return YIELD_ABORT_FAULT;
+    if (fault_generation() != s_fault_gen_at_entry) return YIELD_ABORT_FAULT;
     return YIELD_OK;
 }
 
@@ -121,5 +126,5 @@ bool pitrac_abort_pending(void) { return s_abort; }
 
 void pitrac_abort_clear(void) {
     s_abort = false;
-    s_fault_at_entry = fault_current();
+    s_fault_gen_at_entry = fault_generation();
 }

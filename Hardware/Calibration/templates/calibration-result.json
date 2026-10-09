@@ -1,0 +1,110 @@
+{
+  "schema": "pitrac-camera-distortion-result-v1",
+  "status": "unmeasured",
+  "calibration_id": "CAM0_REPLACE_WITH_RUN_ID",
+  "session_id": "CAM0_REPLACE_WITH_RUN_ID",
+  "created_utc": null,
+  "camera": {
+    "role": "CAM0",
+    "module_id": null,
+    "lens_id": null,
+    "holder_id": null,
+    "filter_stack_id": null,
+    "coordinate_orientation": "native",
+    "image_size": [1600, 1400]
+  },
+  "target": {
+    "board_id": "pitrac-charuco-11x8-20mm-v1",
+    "definition_file": "targets/board.json",
+    "definition_sha256": null,
+    "dictionary": "DICT_5X5_250",
+    "squares": [11, 8],
+    "square_length_mm": 20,
+    "marker_length_mm": 15,
+    "legacy_pattern": false,
+    "marker_border_bits": 1,
+    "board_size_mm": [220, 160],
+    "measured_square_x_mm": null,
+    "measured_square_y_mm": null,
+    "print_scale_x_100_mm": null,
+    "print_scale_y_100_mm": null,
+    "flatness_verified": false,
+    "ir_contrast_verified": false
+  },
+  "coordinates": {
+    "origin": "top-left-pixel-center",
+    "x_direction": "right",
+    "y_direction": "down",
+    "point_space": "native-distorted-pixels",
+    "pixel_units": "native-px",
+    "object_units": "mm",
+    "distortion_units": "dimensionless"
+  },
+  "model": {
+    "name": "opencv-brown-conrady-5",
+    "coefficient_order": ["k1", "k2", "p1", "p2", "k3"],
+    "camera_matrix": [[null, 0, null], [0, null, null], [0, 0, 1]],
+    "distortion_coefficients": [null, null, null, null, null]
+  },
+  "fit": {
+    "pose_ids": [],
+    "source_image_count": null,
+    "accepted_image_count": null,
+    "detected_corner_count": null,
+    "rms_native_px": null,
+    "max_native_px": null,
+    "per_pose_residuals": []
+  },
+  "validation": {
+    "pose_ids": [],
+    "source_image_count": null,
+    "accepted_image_count": null,
+    "detected_corner_count": null,
+    "holdout_is_fresh": false,
+    "provisional_rms_limit_native_px": 0.5,
+    "heldout_rms_native_px": null,
+    "heldout_max_native_px": null,
+    "center_rms_native_px": null,
+    "edge_rms_native_px": null,
+    "coverage_grid": [4, 4],
+    "occupied_cells": null,
+    "coverage_fraction": null,
+    "zones": [],
+    "per_pose_residuals": [],
+    "straight_line_checks": [],
+    "subset_stability": {
+      "checked": false,
+      "max_focal_relative_change": null,
+      "max_principal_point_shift_native_px": null,
+      "max_corrected_point_shift_native_px": null
+    }
+  },
+  "method": {
+    "opencv_version": null,
+    "opencv_build_sha256": null,
+    "solver": null,
+    "fit_flags": [],
+    "initial_camera_matrix": [[null, 0, null], [0, null, null], [0, 0, 1]],
+    "detector_derivative": "uint8 = uint16 >> 4",
+    "refinement_intensity_space": "not-run",
+    "detector_settings_description": null,
+    "object_geometry_description": null,
+    "residual_definition": "sqrt(mean(dx*dx + dy*dy))",
+    "validation_strategy": "pose-disjoint-holdout",
+    "acceptance_criteria": null,
+    "thresholds_locked_before_validation": false
+  },
+  "provenance": {
+    "session_manifest_file": null,
+    "session_manifest_sha256": null,
+    "source_images": []
+  },
+  "evidence": {
+    "fit_report_file": null,
+    "heldout_report_file": null,
+    "spatial_residual_map_file": null,
+    "coverage_report_file": null,
+    "straight_line_report_file": null,
+    "subset_stability_report_file": null
+  }
+}

@@ -12,8 +12,11 @@ This is the entry point to the repository. It covers:
 
 It is a map: it summarises, then links to the detailed records rather than repeating them.
 
-> **State as of 2026-09-28** — commit `0a15a35` plus the changes listed in
-> [Appendix D](#appendix-d-changes-made-alongside-this-guide).
+> **State as of 2026-10-09** — commit `a72636f` plus **uncommitted** work: the changes listed in
+> [Appendix D](#appendix-d-changes-made-alongside-this-guide), the 2026-10-05 audit fixes, the
+> PROGRESS split into live + [`PROGRESS_ARCHIVE.md`](Hardware/firmware/PROGRESS_ARCHIVE.md)
+> (PROGRESS §6 2026-10-05), the strobe 6a–6d firmware and its host tests (none of the strobe
+> sources is in git yet), and the 2026-10-09 handoff audit (PROGRESS §6 2026-10-09).
 >
 > **Live status** is always [`Hardware/firmware/PROGRESS.md`](Hardware/firmware/PROGRESS.md)
 > §0 and the top block of §10. When this guide disagrees with that file, with `board.h` or with
@@ -98,21 +101,28 @@ procedures are in the `BENCH_*.md` files and the results in `PROGRESS.md`.
 | 3 | Photodiode chain and calibration | 🟡 §3.1–3.6 done on board 3, and the first real ball waveform was captured (3.102 V peak, ~22.7 ms wide). Still open: comparator edge timing, the 20-pass repeatability set, and the R98 gain decision |
 | 4 | Trigger-source experiment (comparator vs. ADC refinement) | 🟡 firmware written; the bench run is blocked by the acquisition window ([§12.1](#121-firmware-features)) |
 | 5 | Microphone | 🟡 analog front end validated. No onset/veto firmware, and no real ball impact captured yet (CR-18) |
-| 6 | High-current strobe | ❌ **no firmware** (the PIO program is assembled but never loaded) |
+| 6 | High-current strobe | 🟡 **6a/6b dry tests PASS on board 1 (2026-10-06)** — U5 clamp 135 µs, PIO timing, schedule, A7, interlock, gate DAC. **6c/6d live-current firmware written 2026-10-07** (`strobe live on confirm`: staircase, 70 % ceiling, ADC0 readback per firing, overcurrent / stuck-on faults, pacing, watchdog, `strobe cal`); host-tested (78/78). **No live pulse fired yet** |
 | 7 | Cameras | ❌ **no firmware**; J4 needs a 1.8 V level translator first (CR-09) |
 | 8 | Real Pi integration | 🟡 the power/shutdown handshake is proven against a simulated Pi. The UART protocol and halt telemetry are not written, and no real Pi has been seated |
 
 **Boards.**
-- **Board 3** is the active bench board. It has a reworked TIA (Rf 116 kΩ, Cf 0.99 pF), is
+- **Board 3** is the optics board. It has a reworked TIA (Rf 116 kΩ, Cf 0.99 pF), is
   calibrated, and has its calibration saved in flash.
-- **Board 2** is healthy, with the stock TIA.
-- **Board 1** is out of service. Foil laid across D12 destroyed U11B
-  ([PROGRESS §11](Hardware/firmware/PROGRESS.md)).
+- **Board 2** has the stock TIA. A probe on R61 sparked on 2026-10-05; damage check pending.
+- ⚠ **One of boards 2/3 reads 10 Ω from R61 to GND** even with R62 removed — parked, R62 off;
+  which board is to be confirmed ([PROGRESS §6](Hardware/firmware/PROGRESS.md)).
+- **Board 1** is out of service **for optics** (foil across D12 destroyed U11B,
+  [PROGRESS §11](Hardware/firmware/PROGRESS.md)) and is the **strobe board** since 2026-10-06.
 
-**Next, per PROGRESS §0:**
-1. Resolve the optical acquisition-window constraint ([§12.1](#121-firmware-features)).
-2. Run the §3.7 20-pass comparison.
-3. Then Phase 4.
+**Next, per PROGRESS §0 (priority changed by owner 2026-10-02):**
+1. ✅ [`BENCH_P6_STROBE.md`](Hardware/firmware/BENCH_P6_STROBE.md) **6a and 6b passed on
+   board 1 (2026-10-06)** with the 2026-10-05 build, on the logic analyser, DMM and scope (Q10's
+   gate: ≈ 12 V, clean edges).
+2. **6c/6d on board 1** with the 2026-10-07 build. The gate loop's stability check (TP3 at a
+   static setpoint) passed on 2026-10-08. Next is the 6c procedure — first live pulse at gate
+   0, 3 % staircase with ADC0 against TP4, 6d at ~2 A, `strobe cal 9`, bursts.
+3. Optical acquisition-window work ([§12.1](#121-firmware-features)), the §3.7 20-pass
+   comparison and Phase 4 remain open; they do not block strobe testing.
 
 The mic's real-ball-impact test (CR-18) can run in parallel.
 
@@ -167,7 +177,7 @@ nearly broke. **Keep these in mind when refactoring.**
 | 2 | **GPIO15 `LATCH_CONTROL` is the Pi's power switch.** It stays SIO and is never PWM (it shares slice 7B with the beam carrier). | Closing or opening it with a Pi seated is a power event for the Pi. On PWM it would chop the Pi's rail at 104 kHz. | `power_fsm.c` |
 | 3 | **Every RP2354 reset is a hard power cut to the Pi.** That covers SW2, `reset`, `bootsel`, the watchdog and a +5V_IN brownout. | On any reset GPIO15 goes high-Z, R12 pulls Q2's gate low, and the latch opens. This is deliberate: the rail must drop if the MCU dies on a 9 A board. The cost is that a Pi can never be shut down gracefully through a reset. | `reset` and `bootsel` refuse while a Pi is powered (`force` overrides). The watchdog is **off by default**. SW2 is operator discipline: tape it over when a Pi is seated. |
 | 4 | **The +5 V rail never runs from USB.** Three thresholds apply: `V5_MIN_FOR_LATCH` 5.05 V before latching; `V5_MIN_UNDER_LOAD` 4.60 V once, 250 ms after latching; `V5_MIN_SUSTAINED` 4.90 V continuously with a **500 ms debounce**. The +5V_IN reading uses a default scale of **1.063**. | USB VBUS feeds +5V_IN through **D8, an SS14 rated 1 A**, and a Pi 5 draws amps. The debounce is load-bearing, because strobe bursts are *expected* to sag the rail for milliseconds. The raw ADC reading is ~5.9 % low (PROGRESS Q9). | `power_fsm.c`, `board.h`. Per board, `adc5vcal` is a safety gate ([§8](#8-per-board-bring-up-only-what-repeats)) |
-| 5 | **`on` is accepted only from STANDBY with no stop pending.** Requests never queue across a power cycle. | On 2026-09-18 a stale `on` re-closed the latch after an `off`. | `power_request_on()`; 20 host tests ([§6.6](#66-host-tests)) |
+| 5 | **`on` is accepted only from STANDBY with no stop pending.** Requests never queue across a power cycle. | On 2026-09-18 a stale `on` re-closed the latch after an `off`. | `power_request_on()`; power FSM host tests ([§6.6](#66-host-tests)) |
 | 6 | **Beam duty: 25 % operating, with a 35 % ceiling on the *effective* duty** (after U9's clamp). It is enforced inside `beam_configure()` and applies to every caller. The beam powers up at 2 %. | At 30 % duty the LED junction reaches 123–133 °C against a 145 °C maximum (CR-12). | [`beam.c`](Hardware/firmware/src/beam.c) |
 | 7 | **PWM "same-channel" pairs share one compare register:** 12/28 (6A), 15/31 (7B), 11/27 (5B), 36/44 (10A), 2/18 (1A), 3/19 (1B). Slices are always resolved at runtime with `pwm_gpio_to_slice_num()`; there are deliberately no `PWM_SLICE_*` constants. | Putting one pin of a pair on PWM silently drives the other pin, which may be a safety line or Pi-facing, with the same waveform. Three hand-written slice constants were once wrong. | `board.h` slice map; [HARDWARE_REFERENCE §11](HARDWARE_REFERENCE.md) |
 | 8 | **The PIO GPIOBASE partition.** GPIO46 is reachable only from a block with base 16, and GPIO4–10 only from base 0. `pio_alloc_init()` runs before any `pio_add_program()`. | The SDK refuses to change a block's base once it holds code, and rejects configs that reach outside the window. This fails at run time, not at compile time. | [`pio_alloc.c`](Hardware/firmware/src/pio_alloc.c) (with `_Static_assert`s) |
@@ -213,9 +223,9 @@ PiTrac_V2/
 │       ├── CMakeLists.txt           forces PICO_BOARD=pitrac_ltb_v1, PICO_PLATFORM=rp2350
 │       ├── pico_sdk_import.cmake
 │       ├── boards/pitrac_ltb_v1.h   SDK board header: RP2350B (48 GPIO), 2 MB flash, 12 MHz XOSC, UART1
-│       ├── src/                     13 C modules + 2 PIO programs (§7.4)
-│       ├── tests/                   native host tests for power_fsm.c (CMake + CTest, mocks/)
-│       ├── tools/                   netlist_report.py, scope.py, la_phase.py, openocd_pi5.cfg, flash_swd.sh
+│       ├── src/                     15 C modules + 2 PIO programs (§7.4)
+│       ├── tests/                   native host tests for power_fsm.c, strobe_plan.c, strobe_live.c and service.c (CMake + CTest, mocks/)
+│       ├── tools/                   netlist_report.py, scope.py, la_phase.py, pilot_analysis.py, check_doc_links.py, openocd_pi5.cfg, flash_swd.sh
 │       └── *.md                     bring-up record and procedures (§3.3)
 │
 └── Software/
@@ -362,7 +372,7 @@ What matters to firmware:
 - **LED-to-photodiode crosstalk** (CR-15) is optical. It is mitigated by baffling (linear to 25 %
   duty), and it depends on the mechanics.
 
-### 4.3 The strobe driver (Phase 6, not yet exercised)
+### 4.3 The strobe driver (Phase 6; dry-test firmware written 2026-10-02, no current yet)
 
 - **Current path.** VIR 36 V → external LED strings on J3 → **Q9 IRLR2905** (linear mode; current
   set by gate voltage) → **Q10 AO3400A** (fast series switch) → R65 ∥ R66 = 0.135 Ω sense → GND.
@@ -436,9 +446,9 @@ superseded:
 | Topic | Design document says | Current truth | Evidence |
 |---|---|---|---|
 | `+2V5` virtual ground | 2.50 V, "regulated" | **+5VA ÷ 2 = 2.59 V** on a 5.2 V rail, and it tracks the rail | PROGRESS §2, Q8; CR-02 |
-| TP6/TP7/TP9/TP10 quiescent | 2.50 V | 2.59 V | PROGRESS §6 |
+| TP6/TP7/TP9/TP10 quiescent | 2.50 V | 2.59 V | PROGRESS_ARCHIVE §6 |
 | One-shot clamp (U9, U5) | 113 µs | **U9 measured 122.68 µs** (K ≈ 1.0, not the 0.7 a datasheet K implies). U5 not yet measured | PROGRESS Q1 |
-| PWM slices | carrier 3B, demod 7B, gate DAC 2A | **7B, 11B, 6A** (RP2350B mapping). 6A collides with the ready LED | `board.h`; ARCHITECTURE A7 |
+| PWM slices | carrier 3B, demod 7B, gate DAC 2A | **7B, 11B, 6A** (RP2350B mapping). 6A collided with the ready LED; **fixed in firmware 2026-10-02** (ready LED SIO) | `board.h`; ARCHITECTURE A7 |
 | `HPF_Toggle` polarity | 1 = tracking | **0 = TRACK, 1 = HOLD** | `HPF_SEL_TRACK`; TMUX1219 truth table plus four bench confirmations |
 | LPF corner | 15.9 kHz | **15.39 kHz** (the annotation is stale) | HARDWARE_REFERENCE §5 |
 | USB-only supply / guard | ~4.6–4.7 V; one threshold `V5_MIN_FOR_PI` 4.90 V | 4.6–4.85 V; **three thresholds** (5.05 / 4.60 / 4.90 V + 500 ms) and a **1.063** ADC scale | `board.h`; PROGRESS Q9 |
@@ -449,9 +459,9 @@ superseded:
 | Threshold DAC settle | 10 ms, two 1 ms poles | **20 ms**: the cascaded RC's poles are 2.62 ms and 0.382 ms | `DAC_SETTLE_MS` |
 | `RPI5_SHUTDOWN` | Pulses high | **Active-low 200 ms** (the `gpio-shutdown` default), confirmed on hardware | `board.h`; PROGRESS Q7 |
 | Pi presence | One sample at 250 ms, fault at 2 s | **3 s detection window**, then `BENCH_RUNNING`, with a debounced late promotion | `power_fsm.c`; PROGRESS §8 |
-| Watchdog | Enabled at boot (500 ms), fed on a core-1 heartbeat | **Off by default**, because a watchdog reset cuts the Pi's power. `wdog on` arms 1 s per session; the plan is to arm it deliberately in Phase 6 | `main.c`, `service.h` |
+| Watchdog | Enabled at boot (500 ms), fed on a core-1 heartbeat | **Off by default**, because a watchdog reset cuts the Pi's power. `wdog on` arms 1 s per session; **live strobe mode (6c, 2026-10-07) arms it itself** and disarms it on exit, and `wdog off` is refused while live | `main.c`, `service.h`, `strobe.c` |
 | `PULSE_LIMIT_DIS` | A CLI "unlock-watchdog" command with a token | **No CLI path at all** | `safe_state.c` |
-| Boost frequency | 1.055 MHz | The only switcher tone on +5 V is **801 kHz**, dithered. Whether it comes from L1 or L2 is unresolved | PROGRESS §6 |
+| Boost frequency | 1.055 MHz | The only switcher tone on +5 V is **801 kHz**, dithered. Whether it comes from L1 or L2 is unresolved | PROGRESS_ARCHIVE §6 |
 | R98 | "Fit 2 kΩ for gain 28" | R98's *value* is a continuous gain knob, chosen after measuring the ball signal (`cal gain`) | HARDWARE_REFERENCE §6 |
 | Sheets | "8 sheets" | Root + 7 sub-sheets, plus 2 legacy files ([§3.2](#32-kicad-sheets)) | root schematic |
 
@@ -486,7 +496,7 @@ drift silently. The firmware names come from [`board.h`](Hardware/firmware/src/b
 | 9 | `PIN_CAM_STROBE_1` | in | pull-down | SIO; PIO0 SM1 (planned) | R24 220 Ω → J4.8 | Camera 1 exposure monitor |
 | 10 | `PIN_CAM_TRIGGER` | out | low | SIO; PIO0 SM1 (planned) | R18 220 Ω → J4.3 + J4.4 | Both cameras, one net |
 | 11 | `PIN_PWR_BTN_LED` | out | low | **PWM 5B** (~1 kHz) | Q4 → R48 47 Ω → J7.2 | Panel ring LED, switched rail. 5B is shared with GPIO27 |
-| 12 | `PIN_READY_LED` | out | low | **PWM 6A** | Q5 → R49 220 Ω → J7.6 | Panel ready LED. 🔴 **Same channel as GPIO28** (CR-01/A7) |
+| 12 | `PIN_READY_LED` | out | low | **SIO** on/off (since 2026-10-02) | Q5 → R49 220 Ω → J7.6 | Panel ready LED. Same PWM channel as GPIO28, so it must **never** go back on PWM (A7; CR-01 optional) |
 | 13 | — | — | — | — | unconnected | Slice 6B is free; CR-01 moves the ready LED here |
 | 14 | `PIN_PWR_TOGGLE` | in | **pull-up** | SIO | R42 1 kΩ + C40 100 nF → J7.3 | Panel button, active low. **No external pull-up** |
 | 15 | `PIN_LATCH_CONTROL` | out | low | SIO | Q2 gate, R12 10 kΩ to GND | 🔴 **+5 V latch = the Pi's power.** Never PWM (it shares 7B with GPIO31) |
@@ -495,10 +505,10 @@ drift silently. The firmware names come from [`board.h`](Hardware/firmware/src/b
 | 19 | `PIN_LED_YELLOW` | out | low | SIO | D5 yellow, R16 120 Ω | Slow blink = standby, healthy |
 | 20–23 | — | — | — | — | unconnected | |
 | 24 | `PIN_PI_3V3_SENSE` | in | no pull | SIO | R45 10 kΩ / R44 100 kΩ from **J8.1 / J8.17** | Pi presence: 3.3 V × 0.909 ≈ 3.0 V when the Pi is powered. E9-sensitive |
-| 25 | `PIN_STROBE_PULSE` | out | low | **PIO0 SM0** (planned) | R33 0 Ω → `Strobe_Pulse` → U5 one-shot (R57 1 kΩ pull-down) | Strobe pulse gate, hardware-clamped |
+| 25 | `PIN_STROBE_PULSE` | out | low | SIO low; **PIO0 SM0** only during an admitted burst | R33 0 Ω → `Strobe_Pulse` → U5 one-shot (R57 1 kΩ pull-down) | Strobe pulse gate, hardware-clamped |
 | 26 | — | — | — | — | unconnected | |
 | 27 | `PIN_PULSE_LIMIT_DIS` | out | **low, forever** | SIO | Q8 gate (R54 1 kΩ) | 🔴 **Defeats U5.** Written once, in `safe_state_init()` |
-| 28 | `PIN_GATE_PWM` | out | low | **PWM 6A** (planned) | R55 10 kΩ → 2-pole RC → U6 | Strobe current setpoint DAC. 🔴 Collides with GPIO12 |
+| 28 | `PIN_GATE_PWM` | out | low | **PWM 6A** (146.5 kHz, owned by `strobe.c`) | R55 10 kΩ → 2-pole RC → U6 | Strobe current setpoint DAC. Zero at boot and on every rail-down |
 | 29–30 | — | — | — | — | unconnected | |
 | 31 | `PIN_MOD_PWM` | out | low | **PWM 7B** | R38 0 Ω → `Modulation_PWM` → U9 one-shot (R69 1 kΩ pull-down) | Beam carrier, 104.1667 kHz |
 | 32 | `PIN_USB_ENABLE` | out | low | SIO | Q6 (R52 10 kΩ) → Q7 high-side | USB-A J9 accessory power |
@@ -626,7 +636,7 @@ compare register, so they emit the same waveform.
 | Slice/ch | Pins | Status |
 |---|---|---|
 | 5B | 11 (panel ring, PWM) + 27 (watchdog defeat) | Safe only while GPIO27 stays SIO |
-| **6A** | **12 (ready LED, PWM) + 28 (gate DAC, planned PWM)** | 🔴 **Live conflict in Phase 6b.** Fix: take the ready LED off PWM (A7), or respin (CR-01) |
+| **6A** | **12 (ready LED, now SIO) + 28 (gate DAC, PWM)** | ✅ **Resolved in firmware 2026-10-02** (A7): ready LED is SIO on/off. Never put GPIO12 back on PWM. Respin option CR-01 |
 | 7B | 15 (latch) + 31 (beam carrier, PWM) | Safe only while GPIO15 stays SIO |
 | 10A | 36 (UART TX) + 44 (threshold DAC, PWM) | Safe only while GPIO36 stays UART/SIO |
 | 1A / 1B | 2/18, 3/19 | Latent. Do not dim the status LEDs with hardware PWM, or you toggle Pi-facing lines |
@@ -637,7 +647,7 @@ compare register, so they emit the same waveform.
 
 | Block | GPIOBASE | SM0 | SM1 | SM2–3 |
 |---|---|---|---|---|
-| PIO0 | 0 | Strobe burst, GPIO25 (Phase 6, planned) | Camera handshake, GPIO8/9/10 (Phase 7, planned) | free |
+| PIO0 | 0 | Strobe burst, GPIO25 (6a/6b dry-test firmware, 2026-10-02) | Camera handshake, GPIO8/9/10 (Phase 7, planned) | free |
 | PIO1 | 0 | I2S mic, GPIO4/5/6 (Phase 5, optional) | free | free |
 | PIO2 | **16** | **Comparator transit timer, GPIO46** (running) | free | free |
 
@@ -692,8 +702,8 @@ arm-none-eabi-size build/pitrac.elf
 - **Pass `Release` explicitly.** `CMakeLists.txt` does not set a build type, and the VS Code
   extension can default to Debug. Check `CMAKE_BUILD_TYPE` in `build/CMakeCache.txt`.
 - **Outputs.** `pitrac.uf2` (to flash), `pitrac.elf` (gdb), plus `.bin/.hex/.dis/.elf.map`.
-  `pioasm` generates `detect.pio.h` and `strobe_burst.pio.h` into `build/`. The strobe program is
-  assembled on every build even though nothing loads it yet, so it cannot rot unnoticed.
+  `pioasm` generates `detect.pio.h` and `strobe_burst.pio.h` into `build/`. `strobe.c` loads the
+  strobe program (since 2026-10-02); before that it was assembled every build so it could not rot.
 - **Build settings.**
   - Flags are `-Wall -Wextra -Wno-unused-parameter`; the build produces **zero warnings**.
   - stdio goes to **USB CDC only**, because UART1 is reserved for the Pi link.
@@ -759,22 +769,50 @@ ctest --test-dir build-tests -C Release        # CMake >= 3.20; otherwise cd bui
 ```
 
 - **What it builds.** A **native** (not cross-compiled) C11 project with no test framework. It
-  compiles the real [`src/power_fsm.c`](Hardware/firmware/src/power_fsm.c) with the real `board.h`
-  against small mocks: `tests/mocks/hardware/gpio.h`, `tests/mocks/pico/stdlib.h`, and
-  test-local stubs for the ADC, beam, detect and fault interfaces.
+  compiles the real [`src/power_fsm.c`](Hardware/firmware/src/power_fsm.c),
+  [`src/strobe_plan.c`](Hardware/firmware/src/strobe_plan.c),
+  [`src/strobe_live.c`](Hardware/firmware/src/strobe_live.c) and
+  [`src/service.c`](Hardware/firmware/src/service.c) with the real `board.h` against small
+  mocks: `tests/mocks/hardware/gpio.h`, `tests/mocks/hardware/watchdog.h`,
+  `tests/mocks/hardware/structs/watchdog.h`, `tests/mocks/pico/stdlib.h`, and test-local stubs
+  for the ADC, beam, detect, strobe-safe-off, fault and FSM interfaces.
 - **Flags.** `-Wall -Wextra -Werror` (MSVC: `/W4 /WX`). It is not linked into the firmware.
-- **Coverage: 20 cases.**
-  - redundant `on`/`off`;
-  - requests during startup, shutdown and fault;
-  - cancelling a pending request;
-  - supply loss, rail collapse and the USB guard;
-  - button press cycle, 5 s long press, stale fault acknowledgement;
-  - Pi boot and shutdown timeouts.
-- **History.** The first 17 tests reproduced the 2026-09-18 stale-request bug before the fix
-  (13 failed); all 20 pass after it.
-- **Re-verified 2026-09-28:** 20/20 pass with MSVC 19.38, Release.
-- **Only the power FSM is covered.** Other pure logic that could be covered the same way is
-  listed in [§12.5](#125-tooling-tests-and-ci).
+  Relations between `board.h` constants are `_Static_assert`s in the test files (MSVC rejects a
+  runtime check on a constant expression, C4127).
+- **Coverage: 78 cases.**
+  - Power FSM (21): redundant `on`/`off`; requests during startup, shutdown and fault;
+    cancelling a pending request; supply loss, rail collapse and the USB guard; button press
+    cycle, 5 s long press, stale fault acknowledgement; Pi boot and shutdown timeouts; and
+    `strobe_teardown` — every rail-down route stops the strobe **before** the latch drops.
+  - Strobe plan (16): the §15 schedule at 90/50/20/10/2/100 m/s, shedding, bad speeds,
+    burst limits, clamp-test bounds, PIO word encoding, burst duration, the dry admission
+    policy over **all 256 input combinations**, the 20 ms gate-decay window, and the **live
+    policy** (6c): staircase limit, the typed 3 % steps up to the ceiling, refusal order, the
+    readback-window span, and an exhaustive sweep of **all 65 536 combinations** of the 16
+    safety and live inputs at every gate/staircase boundary.
+  - Strobe live (33): the ADC0 record of a firing — plateau, edges, bursts, dip merging, noise
+    spikes, and each verdict (overcurrent by plateau and by peak, stuck-on by baseline, early
+    run, on-at-end and on-time over the clamp, more current pulses than fired, no data); the
+    baseline/pulse split for every freeze delay; the rolling charge budget (window, 32-bit
+    wrap, full table); interval and idle timeout; and the `strobe cal` steps, run end to end
+    against a model of Q9.
+  - Service (8): an abort key or a fault on the **final** yield slice is reported (SVC-03); a
+    fault is detected by its latch generation, so the same code re-latched mid-command still
+    aborts (SVC-02); delays are never cut short or overshot; the watchdog is kicked every pass;
+    the live-strobe hook runs every pass.
+- **History.** The first 17 power tests reproduced the 2026-09-18 stale-request bug before
+  the fix (13 failed); all pass after it. On 2026-10-02 a deliberate mutation (removing
+  `strobe_safe_off()` from `FORCE_OFF`) made `strobe_teardown` fail, as it should. On
+  2026-10-07 five more mutations were each caught: comparing fault codes instead of
+  generations (`same_code_relatched`), dropping the staircase from the live fire policy
+  (`live_policy_exhaustive`), removing the on-time clamp check (`clamp_width_limit`), and
+  undoing each fix from the independent review — judging extra conduction against 16 instead of
+  the pulses fired (`extra_conduction`), and dropping the stop-instant margin from the
+  baseline split (`baseline_split`).
+- **Re-verified 2026-10-07:** 78/78 pass with MSVC, Release.
+- **Covered so far: the power FSM, strobe planning and live math, and the service layer.**
+  Other pure logic that could be covered the same way is listed in
+  [§12.5](#125-tooling-tests-and-ci).
 
 ### 6.7 Host tools
 
@@ -783,6 +821,8 @@ ctest --test-dir build-tests -C Release        # CMake >= 3.20; otherwise cd bui
 | [`tools/netlist_report.py`](Hardware/firmware/tools/netlist_report.py) | Regenerates `HARDWARE_REFERENCE.md` from the netlist. `--check` exits 1 if the file is stale, which makes it a good CI step. Standard library only |
 | [`tools/scope.py`](Hardware/firmware/tools/scope.py) | Host side of `capture`: block, `--roll` live, and `--trig` single-shot. Needs `pyserial` and `matplotlib` |
 | [`tools/la_phase.py`](Hardware/firmware/tools/la_phase.py) | Analyses a logic-analyser CSV of carrier vs. demod clock (Phase 2a checks 1–7) with circular statistics; streams multi-GB CSVs |
+| [`tools/pilot_analysis.py`](Hardware/firmware/tools/pilot_analysis.py) | One triggered ADC5 ball pass (`capture trig 5 …`) from a serial log: windowed stats, peak, 0.2 ms-box FWHM, rail check; writes JSON + SVG next to the input. For the §3.7 20-pass set. Standard library only |
+| [`tools/check_doc_links.py`](Hardware/firmware/tools/check_doc_links.py) | Checks every relative link and `#anchor` in this guide, `HARDWARE_REFERENCE.md`, `Hardware/README.md` and `Hardware/firmware/*.md`; exit 1 on a break. Standard library only |
 | [`tools/openocd_pi5.cfg`](Hardware/firmware/tools/openocd_pi5.cfg), [`flash_swd.sh`](Hardware/firmware/tools/flash_swd.sh) | SWD flashing from a Pi 5 |
 
 **Repo hygiene traps** ([HANDOFF §7](Hardware/firmware/HANDOFF.md)):
@@ -847,7 +887,9 @@ would have.
 - **Blocking is allowed only in bench commands, and they must yield.**
   - No command calls `sleep_ms()`. Every wait goes through `pitrac_yield_ms()`, which sleeps in
     5 ms slices and runs `pitrac_service()` between them.
-  - A keypress or a *new* fault aborts the wait, and the command unwinds (beam off, chop ended,
+  - A keypress or a *new* fault (one that **latched** during the command — detected by the
+    fault generation counter, not the code, since 2026-10-07) is reported; the wait still runs
+    its full length, and the command unwinds at its next loop boundary (beam off, chop ended,
     ADC mode restored).
   - Before this rule (2026-08-28), a 600 s `scan carrier` ran with no supply monitor, no fault
     handling and no button, including no 5 s escape hatch.
@@ -871,19 +913,22 @@ long "why" comment that is worth reading.
 |---|---|---|---|
 | `main.c` | — | Boot order, superloop, wrong-chip `_Static_assert` | ✅ |
 | `board.h` | — | **Every pin and hardware constant**, with the reasoning ("HARDWARE FACTS", PWM slice map, supply thresholds, carrier, clamps, Pi timings). No logic | ✅ |
-| `safe_state.[ch]` | All pins at boot | Safe levels and pulls; `safe_state_now()` (safe + drop latch); `safe_state_reclaim_pins()`; the fault latch, where the **first fault wins** (`FAULT_USB_POWER_ONLY`, `RAIL_COLLAPSE`, `SUPPLY_LOST`, `NO_PI_DETECTED`, `PI_BOOT_TIMEOUT`, `PI_SHUTDOWN_TIMEOUT`, `ADC_OVERRUN`, `BEAM_BLOCKED`, `CAM_TIMEOUT`, `INTERNAL`) | ✅ |
+| `safe_state.[ch]` | All pins at boot | Safe levels and pulls; `safe_state_now()` (safe + drop latch); `safe_state_reclaim_pins()`; the fault latch, where the **first fault wins** (`FAULT_USB_POWER_ONLY`, `RAIL_COLLAPSE`, `SUPPLY_LOST`, `NO_PI_DETECTED`, `PI_BOOT_TIMEOUT`, `PI_SHUTDOWN_TIMEOUT`, `ADC_OVERRUN`, `BEAM_BLOCKED`, `CAM_TIMEOUT`, `STROBE_OVERCURRENT`, `STROBE_CLAMP`, `INTERNAL`), and `fault_generation()`, which counts every latch | ✅ |
 | `pio_alloc.[ch]` | PIO bases | Declares block → base → SM ownership; `_Static_assert`s that each pin is inside its block's window | ✅ |
-| `adc_engine.[ch]` | ADC, 2 DMA channels | Modes OFF/IDLE/ARMED/BURST; the continuous ring and zero-copy views; disruptive one-shot reads for the CLI; blocking block capture and **triggered capture** (ring runs, trigger decides where to stop); +5V_IN in volts with scale | ✅ |
-| `power_fsm.[ch]` | GPIO15, GPIO14, GPIO24, GPIO0, GPIO43, GPIO2 | Latch, supply guards, Pi detect/boot/shutdown handshake, button debounce (25 ms) and 5 s long press, request API | ✅ proven vs. a simulated Pi, plus 20 host tests |
-| `panel.[ch]` | GPIO11/12 (PWM 5B/6A), GPIO18/19 | Ring patterns keyed to power state (breathing, solid, double-blink fault), plus on-board D5/D6 | ✅ (A4 and A7 outstanding) |
+| `adc_engine.[ch]` | ADC, 2 DMA channels | Modes OFF/IDLE/ARMED/BURST; the continuous ring and zero-copy views; disruptive one-shot reads for the CLI; blocking block capture and **triggered capture** (ring runs, trigger decides where to stop); +5V_IN in volts with scale; `adc_ring_freeze_copy()` (stop, copy the newest ch0 samples written in this mode, leave OFF) for the live strobe readback | ✅ |
+| `power_fsm.[ch]` | GPIO15, GPIO14, GPIO24, GPIO0, GPIO43, GPIO2 | Latch, supply guards, Pi detect/boot/shutdown handshake, button debounce (25 ms) and 5 s long press, request API. Calls `strobe_safe_off()` on every route to rail-down | ✅ proven vs. a simulated Pi, plus 21 host tests |
+| `panel.[ch]` | GPIO11 (PWM 5B), GPIO12 (SIO), GPIO18/19 | Ring patterns keyed to power state (breathing, solid, double-blink fault), plus on-board D5/D6. The ready LED is SIO on/off since A7 | ✅ (A4 outstanding) |
 | `beam.[ch]` | GPIO31 (7B), GPIO39 (11B) | Carrier + phase-locked demod clock. `beam_configure()` rounds to the nearest period, engages clkdiv below ~2.3 kHz, and **enforces the effective-duty ceiling**. Chop (for calibration), ramp, and hardware readback | ✅ |
 | `detect.[ch]` + `detect.pio` | GPIO44 (10A), GPIO33, GPIO46 (PIO2 SM0) | Threshold DAC (1024 steps, 146.5 kHz, 20 ms settle); HPF TRACK/HOLD and `hpf test`; the PIO transit timer, coalescing (2 ms) and fragment counting; ADC 50 %-of-peak refinement with quality flags; a pass log of 256 entries and 4 decimated waveforms; stats; threshold sweep | ✅ written. Arm/disarm smoke-tested on board 3; **comparator edge timing not yet bench-verified** |
 | `cal.[ch]` | (uses beam, ADC) | `level` (live % FS), `cal demod` (64-point chopped-beam phase sweep, commits `demod_phase_ticks`), `cal model` (phase-vs-frequency fit over 80–200 kHz; the pure-delay verdict), `scan carrier` (verification only), `cal gain` (R98 recommendation) | ✅ |
 | `config_store.[ch]` | Last 8 KB of flash | Versioned, CRC'd, dual-slot record ([Appendix B](#appendix-b-persistent-config-record)); `cfg_apply_beam()` split out of `cfg_init()` on purpose | ✅ |
-| `service.[ch]` | Watchdog | `pitrac_service()`, `pitrac_yield_ms()`, the abort latch, conditional watchdog (1 s) | ✅ |
+| `service.[ch]` | Watchdog | `pitrac_service()` (now also runs `strobe_live_service()`), `pitrac_yield_ms()`, the abort latch, fault detection by latch generation, conditional watchdog (1 s) | ✅ 8 host tests |
 | `shot.[ch]` | ADC BURST transition (by contract) | Firing sequencer: IDLE → ARMED → TRIGGERED → ANALYSING → CAM_WAIT → FIRING → LOGGING, plus ABORT | 🟡 **skeleton.** Stepped every loop, but the middle states are pass-throughs and **nothing calls `shot_arm()` yet** (`detect arm` arms only the PIO timer) |
-| `cli.[ch]` | USB CDC | 28 table-driven commands ([Appendix A](#appendix-a-cli-command-reference)), guarded `reset`/`bootsel`. It was a 1,064-line if/else chain until 2026-08-28 | ✅ |
-| `strobe_burst.pio` | GPIO25 (PIO0 SM0) | Phase 6 burst engine. It consumes DMA-fed `width, gap, …, 0` words (µs at 1 MHz), raises IRQ0 at the end, and deliberately does **not** enforce a width limit, because U5 does that in hardware | ❌ assembled every build, **never loaded** |
+| `cli.[ch]` | USB CDC | 29 table-driven commands ([Appendix A](#appendix-a-cli-command-reference)), guarded `reset`/`bootsel`, and an allowlist while live strobe mode is armed. It was a 1,064-line if/else chain until 2026-08-28 | ✅ |
+| `strobe.[ch]` | GPIO25 (PIO0 SM0, DMA), GPIO28 (PWM 6A), ADC0 (live readback) | Dry (6a/6b): single pulses, uniform bursts, the U5 clamp test, the gate DAC, `strobe_safe_off()`, status with hardware readback. **Live (6c/6d)**: arm/disarm with watchdog ownership, ADC0 BURST readback around every firing, verdicts that latch `STROBE_OVERCURRENT` / `STROBE_CLAMP` and end live mode, hold checks and idle timeout from `pitrac_service()`, `strobe cal`. GPIO25 is SIO low except during an admitted burst | 🟡 dry: **6a/6b PASS on board 1 (2026-10-06)**; live: written 2026-10-07, **not yet fired** |
+| `strobe_plan.[ch]` | none (pure) | §15 schedule, charge interlock, PIO word encoding, and both admission policies: **dry** (pulses only at gate 0 and ≥ 20 ms after it was lowered; gate raised only while no pulse can start) and **live** (arm from gate 0; staircase ≤ 31 levels above the highest measured level; 70 % ceiling; watchdog, beam, detector, ADC, interval and budget). Compiled into the host tests | ✅ 16 host tests |
+| `strobe_live.[ch]` | none (pure) | 6c math: the ADC0 record of a firing (baseline, half-peak runs, edge-excluded plateaus, verdicts), the rolling charge budget, interval and idle timeout, the baseline/pulse split, `strobe cal` steps and interpolation | ✅ 33 host tests |
+| `strobe_burst.pio` | GPIO25 (PIO0 SM0) | Phase 6 burst engine. It consumes DMA-fed `width, gap, …, 0` words (µs at 1 MHz), raises IRQ0 at the end, and deliberately does **not** enforce a width limit, because U5 does that in hardware | ✅ loaded by `strobe.c` since 2026-10-02; overhead constants confirmed on the LA in 6a.2 (board 1, 2026-10-06) |
 
 ### 7.5 State machines
 
@@ -962,8 +1007,8 @@ Phases 5–7 fill them in.
 |---|---|---|
 | PWM 7B / 11B | Beam carrier / demod clock, phase-locked | ✅ validated: 0.15-tick scatter across 6 reconfigurations |
 | PWM 10A | Threshold DAC | ✅ |
-| PWM 5B / 6A | Panel ring / ready LED | ✅, but 🔴 **6A is needed by the gate DAC in Phase 6b** (A7) |
-| PWM 6A | Strobe gate DAC | ❌ planned; blocked on A7 |
+| PWM 5B | Panel ring | ✅. The ready LED left PWM 6A on 2026-10-02 (A7) |
+| PWM 6A | Strobe gate DAC | 🟡 written 2026-10-02; bench check 6b |
 | PIO2 SM0 (base 16) | Comparator transit timer | ✅ |
 | PIO0 SM0 / SM1 (base 0) | Strobe burst / camera handshake (A3) | ❌ planned |
 | PIO1 SM0 (base 0) | I2S mic | ❌ optional |
@@ -1006,13 +1051,13 @@ and where the evidence lives.
 | 9 | **No glitch filter in the PIO. Coalesce fragments within 2 ms in software and count them** | U15 has no hysteresis. A PIO filter would bake in a policy before any chatter had been measured, and hide exactly what Phase 4 characterises | `detect.h` |
 | 10 | **The comparator starts the timing; the ADC refines it from 50 % of the bump's own peak** | A fixed threshold biases transit with reflectance; the refinement is amplitude-independent. It runs inside the camera-handshake wait, so it is free | `detect.h`; PROGRESS §8 |
 | 11 | **One continuous ADC DMA ring in ENDLESS mode; channel sets of 1, 2 or 4; ARMED = {5, 7}** | Stopping the ADC per read punched holes in the pre-trigger history. An A↔B chained DMA stalls silently after one lap | ARCHITECTURE A1 |
-| 12 | **Three supply thresholds** (5.05 / 4.60 / 4.90 V, the last with a 500 ms debounce) **plus a 1.063 default scale and per-board `adc5vcal`** | USB reads 4.6–4.85 V. The 50 kΩ divider source makes the ADC read ~5.9 % low. The sustained monitor came from a bench find: pulling the PSU left the Pi fed through a 1 A diode | `board.h`; PROGRESS §0, Q9 |
+| 12 | **Three supply thresholds** (5.05 / 4.60 / 4.90 V, the last with a 500 ms debounce) **plus a 1.063 default scale and per-board `adc5vcal`** | USB reads 4.6–4.85 V. The 50 kΩ divider source makes the ADC read ~5.9 % low. The sustained monitor came from a bench find: pulling the PSU left the Pi fed through a 1 A diode | `board.h`; PROGRESS_ARCHIVE §0; PROGRESS Q9 |
 | 13 | **Pi presence is a 3 s window, plus a debounced late promotion** | A single sample classed a slow Pi as absent, and in BENCH_RUNNING a press is a hard power-off | PROGRESS §8 |
 | 14 | **BENCH_RUNNING is a first-class state in shipping firmware** | Phases 2–6 run with no Pi | `power_fsm.h` |
 | 15 | **RPI5_SHUTDOWN active-low, 200 ms; minimum holdoff 15 s, maximum wait 60 s** | Matches the `gpio-shutdown` overlay defaults. A glitch on a sense line must not cut power mid-sync | `board.h` |
 | 16 | **`fault clear` is a full acknowledgement** (FAULT → FORCE_OFF → STANDBY) | Clearing only the code left two indicators disagreeing | PROGRESS §8 |
 | 17 | **`reset` and `bootsel` refuse while a Pi is powered** | Both reset the pads, so the latch opens and the Pi loses power | `cli.c` |
-| 18 | **Watchdog off by default.** `wdog on` arms 1 s per session; arm it deliberately in Phase 6 | A watchdog reset drops the latch. Arming by default cost a reflash cycle and two sessions, and broke `bootsel` | `main.c`, `service.h` |
+| 18 | **Watchdog off by default.** `wdog on` arms 1 s per session; **live strobe mode arms it itself** (6c, 2026-10-07) and `wdog off` is refused while live | A watchdog reset drops the latch. Arming by default cost a reflash cycle and two sessions, and broke `bootsel` | `main.c`, `service.h`, `strobe.c` |
 | 19 | **`on` only from STANDBY; stop cancels a pending start; FORCE_OFF clears all requests** | A stale `on` restarted the rail after `off` (2026-09-18) | `power_fsm.c`, host tests |
 | 20 | **Every wait yields through `pitrac_yield_ms()`; there is one definition of background work** | Long commands (up to 600 s) starved the supply monitor and the escape hatch | `service.h` |
 | 21 | **Dual-slot, versioned, CRC'd config; saves only when quiet; fixed 256-byte record** | Power-fail atomicity. An erase blinds the supply monitor. Growing the record would invalidate saved calibration | `config_store.h` |
@@ -1032,7 +1077,9 @@ From PROGRESS §10 and the headers. Treat these as hypotheses.
   check against known pulse widths.
 - **The PIO transit timer has not yet timed a real comparator edge.** Arm/disarm and the FIFO path
   were smoke-tested on 2026-09-18 with no passes.
-- **`STROBE_HW_LIMIT_US_ASSUMED` (122 µs) is U9's number,** not U5's. U5 is measured in Phase 6a.1.
+- **`STROBE_HW_LIMIT_US` (137 µs) is a worst case from one board.** U5 measured 135 µs on board 1
+  (6a.1, 2026-10-06) and U9 122.68 µs on the same board, so the RC varies ~10 %; each new board's
+  U5 is re-measured in 6a.1, and one above 137 µs raises the constant.
 - **`BURST_CHARGE_MAX_MC` (6.0 mC)** is a thermal budget that has never been checked against the
   real LED bank.
 - **`PI_DETECT_WINDOW_MS` (3 s) is a placeholder** until Q11 is measured with a real Pi.
@@ -1164,7 +1211,7 @@ Reusing its shape would let one Pi-side driver serve both designs.
 | MCU and form factor | RP2354B on a custom board that also carries the power path, detection optics and a 9 A strobe driver, and **powers the Pi** | Raspberry Pi **Pico W (RP2040)** added to the existing **V3 connector board** |
 | SDK / build | Pico SDK 2.3.0, `rp2350-arm-s`, forced custom board | Pico SDK 2.2.0, `PICO_BOARD` defaults to `pico_w`, Release |
 | Primary trigger | **Optical:** modulated IR beam, lock-in, comparator, PIO transit timer | **Acoustic:** I2S SPH0645 at 48 kHz → decimated to 16 kHz → 2–6 kHz band → 1 ms RMS envelope threshold, with a 300 ms lockout (`impact_detect`) |
-| Strobe engine | PIO0 SM0: DMA-fed `width, gap, …, 0` words at 1 µs per tick, IRQ0 when done (**not loaded yet**). U5 hardware clamp; linear current sink with a gate DAC and current-sense ADC | `ir_strobe.pio`: **one 32-bit word per pulse** (16-bit high and 16-bit low counts at full sysclk, ~8 ns). `strobe_compile` builds the words from a pulse width and an interval list, rejecting bad counts and ON-time violations. It drives the V3 board's strobe through the DIAG net (GP13) |
+| Strobe engine | PIO0 SM0: DMA-fed `width, gap, …, 0` words at 1 µs per tick, IRQ0 when done (**loaded since 2026-10-02, dry-test only**). U5 hardware clamp; linear current sink with a gate DAC and current-sense ADC | `ir_strobe.pio`: **one 32-bit word per pulse** (16-bit high and 16-bit low counts at full sysclk, ~8 ns). `strobe_compile` builds the words from a pulse width and an interval list, rejecting bad counts and ON-time violations. It drives the V3 board's strobe through the DIAG net (GP13) |
 | Cameras | 2 × Mira220 on J4 (one trigger, two exposure monitors); needs 1.8 V translation | Innomaker IMX296 trigger (GP15) |
 | Pi link | USB-CDC bench CLI; UART1 binary protocol planned; GPIO handshake on Pi GPIO 22 / 26 / 27 | **USB-CDC text lines** (`/dev/ttyACM0`): `STATUS`, `HEARTBEAT`, `FIRE`, `FIRE_PEAK`, `CAM_PULSE <us>`, `SELFTEST`, `RESET`, `BOOTSEL`, `CFG KEY=value` (e.g. `MIC_THRESHOLD`, `ARMED`, `PULSE_WIDTH_US`, `PULSE_INTERVALS`, `ARM_TIMEOUT_MS`, `CAM_XTR_SETUP_US`, `MIN_INTER_SHOT_MS`, `PRE_TRIGGER_DELAY_MS`, `STREAM_RMS`, `STROBE_HOLD`). Handshake wires on Pi GPIO 26 / 27 / 22 to GP9 / 7 / 8 |
 | Cores | Core 1 unused | Core 1 runs USB (`core1_usb.c`) |
@@ -1255,22 +1302,16 @@ there is one.
 
 | # | Item | Why it matters | Specified in | Depends on |
 |---:|---|---|---|---|
-| 1 | **Acquisition window for the ADC refinement.** The first real ball pulse was ~22.7 ms wide at half height. Refinement needs about `age + 2.5·T + 1.024 ms` ≈ **59.8 ms** of ring history, against the **32.768 ms** available, so passes flag `WINCLIP`. | It blocks the §3.7 20-pass set and Phase 4. **This is the current next step** | BENCH_P3 §3.7 Step 2; PROGRESS §6 (2026-09-18) | An owner decision on the acquisition approach. Candidates include a deeper or decimated ARMED history and capture-based acquisition. RAM use is 88 KB of 520 KB, and the ring must stay a power of two |
+| 1 | **Acquisition window for the ADC refinement.** The first real ball pulse was ~22.7 ms wide at half height. Refinement needs about `age + 2.5·T + 1.024 ms` ≈ **59.8 ms** of ring history, against the **32.768 ms** available, so passes flag `WINCLIP`. | It blocks the §3.7 20-pass set and Phase 4. Next optical step once the owner returns to optics (strobe 6a/6b took priority 2026-10-02) | BENCH_P3 §3.7 Step 2; PROGRESS §6 (2026-09-18) | An owner decision on the acquisition approach. Candidates include a deeper or decimated ARMED history and capture-based acquisition. RAM use is 88 KB of 520 KB, and the ring must stay a power of two |
 | 2 | **Velocity reporting.** `detect path <mm>` stores a width, but nothing computes or reports speed; the CLI logs durations only | Speed is the product | `detect.h`; BENCH_P3 §3.7 Step 2 | A measured optical path width (§3.7). The lens-to-ball range is **not** the path width |
 | 3 | **Fill in the shot sequencer.** Nothing calls `shot_arm()` (`detect arm` starts only the PIO timer). ANALYSING, CAM_WAIT and FIRING are pass-throughs. `SYSTEM_READY` and `IRQ_OUT` are never asserted | It is where the A9 ordering is meant to live | [`shot.h`](Hardware/firmware/src/shot.h) | Items 5–7 |
 | 4 | **Phase 4 trigger-source experiment** (comparator vs. ADC-refined transit across reflectance conditions) | Quantifies the comparator's amplitude bias | BENCH_P3 Phase 4 | Firmware exists (`detect log/stats/cond`); needs item 1 |
 | 5 | **Phase 5 mic.** An onset detector on ch7 (timestamp the threshold *crossing*, not the peak), mic veto/confirmation of optical triggers, and an optional I2S PIO driver on J5 | Rejects false triggers; gives a strike timestamp | [BENCH_P5_P7 "Onset detection"](Hardware/firmware/BENCH_P5_P7_MIC_CAMERA.md) | A real ball-impact capture (CR-18) |
-| 6 | **Phase 6 strobe: none of it exists.** It needs all of the following: | The product's image capture | [`BENCH_P6_STROBE.md`](Hardware/firmware/BENCH_P6_STROBE.md); design doc §13.4, §13.9 | U5 clamp measurement (6a.1) |
-| | &nbsp;&nbsp;• load `strobe_burst.pio` into PIO0 SM0, with a DMA-fed schedule and the IRQ0 completion; | | | |
-| | &nbsp;&nbsp;• schedule computation: width from the blur budget, gap from spacing, first-pulse delay, `STROBE_SW_MAX_US`, `STROBE_MIN_GAP_US`; | | | |
-| | &nbsp;&nbsp;• the **charge interlock** (shed pulses above `BURST_CHARGE_MAX_MC`); | | | |
-| | &nbsp;&nbsp;• the **gate DAC on GPIO28, together with the A7 fix**: take the ready LED off PWM *first*; | | | |
-| | &nbsp;&nbsp;• strobe current calibration (LUT) and per-pulse ADC0 BURST readback; | | | |
-| | &nbsp;&nbsp;• a `strobe_permitted()` interlock; | | | |
-| | &nbsp;&nbsp;• **arm the watchdog in the strobe path**; | | | |
-| | &nbsp;&nbsp;• measure `STROBE_PIO_OVERHEAD_US`; | | | |
-| | &nbsp;&nbsp;• register readback for status (A8); | | | |
-| | &nbsp;&nbsp;• launch core 1, with `flash_safe_execute_core_init()`. | | | |
+| 6 | **Phase 6 strobe: dry (6a/6b) and live-current (6c/6d) bench firmware exist; the production firing path does not.** Done: PIO0 SM0 loaded with DMA and IRQ0; §15 schedule; charge interlock; gate DAC with the A7 fix; dry and live admission policies; status readback; **live mode (2026-10-07)** — pulses with a setpoint under the staircase, ceiling, pacing and charge guards, ADC0 BURST readback per firing with overcurrent/stuck-on faults, watchdog armed by the strobe, `strobe cal` (RAM LUT). Still needed: | The product's image capture | [`BENCH_P6_STROBE.md`](Hardware/firmware/BENCH_P6_STROBE.md); design doc §13.4, §13.8, §13.9 | 6c/6d on the bench (no live pulse fired yet) |
+| | &nbsp;&nbsp;• persisting the current calibration (`cfg` has no field for it; a `CFG_VERSION` bump needs the migration path first); | | | |
+| | &nbsp;&nbsp;• per-shot trim between shots (design §13.8), from the readback; | | | |
+| | &nbsp;&nbsp;• the first-pulse delay (needs t_cam and FOV geometry, Phase 7); | | | |
+| | &nbsp;&nbsp;• wire it into `SHOT_FIRING` and launch core 1, with `flash_safe_execute_core_init()`. | | | |
 | 7 | **Phase 7 cameras.** A PIO0 SM1 handshake (A3): assert the trigger, wait for both exposure monitors, push `t_cam`. Plus `CAM_TIMEOUT`, and optionally board-generated preview triggers | Closes the loop on trigger-to-exposure latency | BENCH_P5_P7 7a–7c; ARCHITECTURE A3 | **CR-09 hardware** (1.8 V translation) |
 | 8 | **Phase 8 Pi integration.** Covers: | Shipping integration | [`BENCH_P8_PI.md`](Hardware/firmware/BENCH_P8_PI.md); design doc §13.7, §14 | The protocol decision ([§9.3](#93-the-uart-protocol-a-proposal-not-implemented)); Q4 and Q11 |
 | | &nbsp;&nbsp;• the UART protocol with DMA in both directions (A5); | | | |
@@ -1321,10 +1362,10 @@ there is one.
   - the 20-cycle clean-shutdown acceptance;
   - optionally the Q10 pull-up ([BENCH_P8](Hardware/firmware/BENCH_P8_PI.md)).
 - **Phase 6 (strobe):**
-  - 6a: the U5 clamp, PIO overhead and schedule math, all dry;
-  - 6b: the gate DAC;
-  - 6c: the LED bank ramp;
-  - 6d: the clamp with current.
+  - 6a: the U5 clamp, PIO overhead and schedule math, all dry — ✅ board 1;
+  - 6b: the gate DAC — ✅ board 1 (TP3 loop stability ✅ 2026-10-08);
+  - 6c: the LED bank ramp — firmware ready 2026-10-06;
+  - 6d: the clamp with current — run inside 6c at ~2 A.
 - **Phase 7 (cameras):** 7a loopback, 7b delayed simulation, 7c real cameras.
 - **Housekeeping:**
   - Fix the scope ground: the §3.6b captures show a shared-ground artifact.
@@ -1339,7 +1380,7 @@ The full reasoning, options and verification steps are in
 
 | CR | Issue | Priority |
 |---|---|---|
-| CR-01 | Ready LED and strobe gate DAC share PWM 6A. Move the ready LED to GPIO13 | 🔴 |
+| CR-01 | Ready LED and strobe gate DAC share PWM 6A. Move the ready LED to GPIO13 | 🟢 optional — fixed in firmware 2026-10-02; buys back ready-LED dimming only |
 | CR-02 | Virtual ground tracks the +5 V rail (measured ×7.43). Regulate +2V5 | 🔴 |
 | CR-03 | R46/R47 100 kΩ → 10 kΩ. **Drop `ADC5V_SCALE_DEFAULT` to ~1.00 in the same commit**, or every reading goes ~6 % high | 🟡 |
 | CR-04 | 10 kΩ pull-up on J8.37 (reset presents a low level to the Pi) | 🟡 |
@@ -1356,6 +1397,9 @@ The full reasoning, options and verification steps are in
 | CR-16 | Analog chain runs 0–5.2 V into a 3.3 V ADC | 🔴 |
 | CR-17 | No test point on the comparator's input node | 🟡 |
 | CR-18 | The mic high-pass corner may be too high | 🟡 open |
+| CR-19 | TIA feedback: 120 kΩ resistor and 1.5 pF capacitor | requested 2026-09-30 |
+| CR-20 | Reduce the on-board green LED brightness | requested 2026-09-30 |
+| CR-21 | Test points on the strobe drive chain (U5 Q, Q10 gate) and a GND test point by TP3/TP4; a probe sparked at R61 on 2026-10-05, and the only GND TP is 72 mm away | 🟡 |
 
 **Layout rule for the next spin:** keep PWM functions off GPIOs **16 apart** below GPIO32, and
 **8 apart** at or above GPIO32.
@@ -1368,12 +1412,16 @@ The full reasoning, options and verification steps are in
   - run `python Hardware/firmware/tools/netlist_report.py --check` (now deterministic,
     [Appendix D](#appendix-d-changes-made-alongside-this-guide));
   - run the camera-comparison bash, Python and node tests.
-- **Host tests cover only `power_fsm.c`.** Pure logic that is cheap to cover the same way:
+- **Host tests cover `power_fsm.c` (21), `strobe_plan.c` (16), `strobe_live.c` (33) and
+  `service.c` (8) — 78 in all.** Pure logic that is cheap to cover the same way, ranked in the
+  code-audit backlog (PROGRESS §9):
+  - config record validation and slot selection, including sequence wrap — and a migration path
+    before the first `CFG_VERSION` bump, since the loader now rejects other versions;
   - the beam period/clkdiv plan and effective-duty math;
-  - config slot selection and CRC, against a mocked flash;
   - detect coalescing and the refinement-window arithmetic (the `WINCLIP` condition);
-  - the phase-model fit;
-  - and, when it exists, the strobe schedule compiler ([§10.2](#102-where-the-two-could-converge)).
+  - the phase-model fit.
+  Before `strobe.c`, `safe_state.c` or `panel.c` are host-tested, the mocks need to become a
+  small HAL state model (pin function/direction/level, PWM compare, µs clock).
 - **`CMakeLists.txt` duplicates a cache entry on every reconfigure.** `list(APPEND
   PICO_BOARD_HEADER_DIRS …)` adds one copy each time (20 were seen). It is harmless; guard it
   with `IN_LIST`.
@@ -1399,11 +1447,19 @@ The full reasoning, options and verification steps are in
 
 ## Appendix A: CLI command reference
 
-These are the 28 top-level commands in `k_cmds[]` ([`cli.c`](Hardware/firmware/src/cli.c)).
+These are the 29 top-level commands in `k_cmds[]` ([`cli.c`](Hardware/firmware/src/cli.c)).
 Type `help` on the board for the authoritative text.
 
-**Blocking commands** are bench tools. They yield to the service loop while they run, and a
-keypress aborts them:
+**Arguments are parsed strictly** (since 2026-10-05): every number must be a whole number
+(decimal, or hex with `0x`) or a finite decimal, inside the command's range. Anything else
+prints `ERR: <what> '<arg>' -- want <range>. Nothing was changed.` and does nothing. A line over
+95 characters or with more than 8 words is refused before anything runs.
+
+**Blocking commands** are bench tools. They yield to the service loop while they run (checked
+2026-10-06: the longest unserviced stretch is `cal`'s 10 ms chopped-average window), and a
+keypress aborts the ones that poll for it. **One exception:** a block `capture` waits on its DMA
+for n / rate seconds without servicing, so with `wdog on` a capture slower than ~1 s resets the
+board. Live strobe mode refuses `capture` (and everything else below except `strobe cal`):
 
 | Command | Typical duration |
 |---|---|
@@ -1416,6 +1472,7 @@ keypress aborts them:
 | `scan carrier` | minutes |
 | `level` | up to 300 s |
 | `threshold sweep` | ~1.3 s |
+| `strobe cal` | ~10–20 s (paced ≥ 100 ms per pulse) |
 
 | Group | Command | What it does |
 |---|---|---|
@@ -1427,7 +1484,7 @@ keypress aborts them:
 | | `led r\|y <0\|1>` | Override the on-board LEDs |
 | | `fault [clear]` | Show the latched fault. `clear` acknowledges it (FAULT → FORCE_OFF → STANDBY) |
 | | `reset [force]`, `bootsel [force]` | Soft reset, or reboot to USB mass storage. **Refused while a Pi is powered**; both disarm the watchdog |
-| | `wdog [on\|off]` | Hardware watchdog (1 s). Off by default |
+| | `wdog [on\|off]` | Hardware watchdog (1 s). Off by default. Live strobe mode arms it itself; `wdog off` is refused while live |
 | Power | `on` | Request power-on. Accepted only from STANDBY; subject to the USB guard; never queued |
 | | `off` | Orderly shutdown (with a Pi), or drop the rail (bench) |
 | | `forceoff` | Drop the latch immediately |
@@ -1436,8 +1493,8 @@ keypress aborts them:
 | | `adc5v` / `adc5vcal <V>` | +5V_IN in volts / trim the scale against a DMM (persist with `cfg save`) |
 | | `adcmode off\|idle\|armed\|burst` | Force an ADC mode |
 | | `capture <mask> <n> <rate>` | Block capture to CSV (e.g. `capture 0x20 2000 250000` is ADC5 at 250 ksps) |
-| | `capture trig <ch> [thr] [rate] [pre%] [tmo_s]` | Triggered single shot with pre-trigger history (default: 80 codes, 500 ksps, 25 %, 30 s) |
-| Panel | `panel pwr\|rdy <0-100\|auto>`, `panel test`, `panel pattern <p\|auto>`, `panel demo` | J7 LEDs. Needs the rail up |
+| | `capture trig <ch> [thr] [rate] [pre%] [tmo_s]` | Triggered single shot with pre-trigger history (default: 80 codes, 500 ksps, 25 %, 30 s; pre 0–90 %, timeout 1–3600 s) |
+| Panel | `panel pwr <0-100\|auto>`, `panel rdy <0-100\|auto>`, `panel test`, `panel pattern <p\|auto>`, `panel demo` | J7 LEDs. Needs the rail up. `rdy` is on/off (≥ 50 lights it) since A7 |
 | Beam | `beam` | State plus hardware register readback |
 | | `beam on\|off`, `beam freq <hz>`, `beam duty <pct>`, `beam ramp <pct> [step_ms]`, `beam phase <ticks>` | Carrier control. Use `beam freq 104166`. Ramp above ~5 %. Operating maximum 25 % |
 | | `beam clamp` | 1 kHz / 50 %, to measure the U9 clamp at TP5. **Follow it with `beam duty 2`** |
@@ -1451,6 +1508,17 @@ keypress aborts them:
 | | `cal gain <peak> [frac]` | Recommend R98 from a measured transit peak |
 | | `scan carrier [f0] [f1] [n] [force]` | **Verification only**; the carrier stays at 104166.67 Hz. Needs a fitted model, the final geometry, and a warm beam |
 | Config | `cfg`, `cfg save`, `cfg default` | Show the saved calibration; persist it (refused unless the machine is quiet); reset the RAM copy to defaults (flash untouched) |
+| Strobe — dry (6a/6b) by default | `strobe` | Dry or LIVE, rail, GPIO27, A7, gate DAC with readback, engine, limits, last run, whether a pulse / gate raise would be admitted, and the live state |
+| | `strobe pulse <us>`, `strobe burst <w> <gap> <n>` | 5–100 µs; gap 150–50000 µs; ≤ 16 pulses; burst charge ≤ 6.0 mC at 9 A. Dry: **refused unless the gate is at 0**. Live: fires at the setpoint and prints the ADC0 plateau of every pulse |
+| | `strobe clamptest <us>` | One pulse 101–2000 µs, to measure the U5 clamp (6a.1). Live (6d): only at a gate level whose last live firing measured 0.5–2.5 A |
+| | `strobe sched <m/s> [fire]` | §15 schedule (2–100 m/s); `fire` runs it (dry, or live if the span fits the 30 ms readback) |
+| | `strobe gate <pct>` | Gate DAC 0–100 %. Dry: raised only while no pulse can start. Live: ≤ 70 %, and ≤ 31 levels (3 %) above the highest level already fired and measured. 0 is always allowed |
+| | `strobe off` | GPIO25 SIO low, engine stopped, gate 0, live mode off; dry pulses refused for 20 ms while Q9's gate decays |
+| Strobe — live (6c/6d) | `strobe live` | Live state: armed time, idle timeout, watchdog owner, staircase, budget, last cal, last firing's measurement |
+| | `strobe live on [confirm]` | `on` prints the checklist; `on confirm` arms live mode — from gate 0 only — and the watchdog. The CLI is then limited to `help id stat pins adc5v fault off forceoff wdog strobe` |
+| | `strobe live off` | Leave live mode: gate 0, engine stopped, watchdog restored |
+| | `strobe cal [A]` | Live: solve the gate level for 2.0–9.0 A (default 9.0) with one 20 µs pulse per step, then 3 confirmation pulses. RAM only |
+| | `strobe wave` | The last live ADC0 record as `# capture` CSV (500 ksps) |
 
 ## Appendix B: Persistent config record
 

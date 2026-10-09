@@ -3,6 +3,8 @@
 
 The focus preview uses the same configured V4L2 sensor/CFE raw path as the
 recorder: Mira220 `GREY` at 1600 x 1400 and IMX296 `Y10P` at 1456 x 1088.
+An opt-in Mira220 `Y12P` pupil profile at 1600 x 1400 adds native 12-bit
+preview and lossless still capture. It is not a qualified video-recording profile.
 It does not invoke libcamera, PiSP image processing, auto-exposure/gain,
 debayering, sharpening, denoising or per-frame brightness normalization.
 
@@ -14,7 +16,8 @@ pair to the PC; ordinary preview does not automatically save anything.
 
 The default **Smooth (JPEG)** mode requests up to **10 fps per camera**. The Pi
 maps `GREY` directly to 8-bit grayscale and maps IMX296 MIPI RAW10 using
-`value >> 2`, then encodes a full-resolution grayscale JPEG in RAM (quality 90).
+`value >> 2`, and maps Mira220 RAW12 using `value >> 4`, then encodes a
+full-resolution grayscale JPEG in RAM (quality 90).
 This is lossy display compression, not Pi ISP processing. There is no resizing,
 brightness stretch, sharpening, denoising, or change to camera controls.
 Sensor-internal corrections remain those programmed by the recording driver.
@@ -81,6 +84,42 @@ The same first five warm-up frames are skipped as in recording, and they are
 excluded from preview rate/cadence statistics.
 
 ## Connect from this PC
+
+### Optional native 12-bit Mira220 pupil profile
+
+Stop preview before reconfiguring. Keep the current working 8-bit configuration
+so it can be restored. Create a new current-boot configuration on the Pi:
+
+```bash
+cd "$HOME/PiTrac_V2/Software/camera-comparison"
+CONFIG="$HOME/camera-pupil-12bit-$(date +%Y%m%d-%H%M%S)"
+bash scripts/configure-cameras.sh --output "$CONFIG" \
+  --camera mira220 --mira-bit-depth 12 --exposure-us 10000 --gain 1 --apply &&
+bash scripts/focus-preview.sh --config "$CONFIG"
+```
+
+The initial configuration uses the shared full-rate exposure range. Use the
+existing live exposure control to apply the selected pupil exposure after startup
+(17,500 us on the inspected setup), then keep it fixed across the scan.
+Changing bit depth starts a new preview session; do not mix 8-bit and 12-bit
+images within a triplet or a measurement series.
+
+Qualification on the inspected Pi confirmed `Y12_1X12` on the sensor/CFE pads,
+`Y12P` buffers with a 2400-byte stride and 3,360,000 bytes per frame, unchanged
+sensor timing controls, and native low-nibble variation. Preview displays the
+high eight bits; raw hover reports values 0..4095. Capture preserves all samples
+in a right-aligned 16-bit PNG without scaling or normalization.
+Live application qualification also compared all 2,240,000 PNG samples with
+an independently unpacked native RAW12 buffer. Browser raw decoding and the
+three-image pupil ZIP were checked; its PNGs remained byte-identical to the
+original capture PNGs. These are capture/export checks, not a pupil-coordinate
+accuracy qualification.
+
+The default remains `--mira-bit-depth 8`. `record-dual.sh` and recording
+verification reject the 12-bit pupil profile explicitly; reconfigure an 8-bit
+Mira220 profile before high-FPS video comparison or MP4 conversion.
+
+### SSH tunnel
 
 In a separate **local Windows PowerShell** terminal, keep an SSH tunnel running:
 
@@ -194,13 +233,13 @@ until the download is requested. Extract the ZIP to access:
 
 | File | Contents |
 |---|---|
-| `mira220.png` | Full 1600 x 1400, lossless 8-bit grayscale; native values 0..255 unchanged |
+| `mira220.png` | Full 1600 x 1400; native 8-bit values 0..255, or native 12-bit values 0..4095 in a 16-bit PNG, unchanged |
 | `imx296.png` | Full 1456 x 1088, lossless 16-bit grayscale container holding all native 10-bit values 0..1023 unchanged |
 | `mira220.raw`, `imx296.raw` | Byte-exact native `GREY` / packed `Y10P` buffers, including row padding |
 | `metadata.json` | Dimensions, strides, format, native/PNG bit depths, frame IDs, exposure settings, receive times, and file SHA-256 hashes |
 | `README.txt` | Pixel-value and timing interpretation |
 
-**The IMX296 PNG is not an 8-bit preview.** It preserves the two low bits
+**Native 10/12-bit PNGs are not 8-bit previews.** They preserve the low bits
 discarded by the JPEG/display mapping. Native samples are right-aligned in
 the 16-bit container, with no shift, stretching, gamma or normalization.
 It may therefore look dark in viewers that display the full 0..65535 range;
@@ -220,6 +259,75 @@ current status and retry. Only one capture download is processed at a time.
 Encoding and ZIP creation happen in RAM; nothing is saved to Pi storage.
 The API's `saves_frames: false` continues to mean no server-side frame files;
 `snapshot_capture` reports the explicit browser-download capability.
+
+## Guided entrance-pupil / no-parallax measurements
+
+Use **Entrance pupil / no-parallax measurement** on the same preview page.
+This locates the rotation-axis position where near and far targets show the least
+relative movement; it does not measure pupil diameter.
+
+The rail coordinate convention is:
+
+- **0 mm:** the rotation axis is at the camera PCB surface.
+- **Positive:** the rotation axis is toward the lens/front of the camera.
+- Negative positions place the axis behind the PCB.
+
+Choose the camera whose lens you are measuring, enter a lens identifier, and
+record focus, aperture, target distances and the rig's negative/positive rotation
+directions in **Setup notes**. Select horizontal/yaw or vertical/pitch rotation.
+Keep both near/far targets visible and stationary, and keep focus, aperture,
+exposure and gain unchanged across the sweep. The default **side-angle magnitude**
+is **5 degrees**, setting the negative/positive images to -5/+5 degrees.
+This is not the current capture angle: keep it at 5 and choose **0 degrees**
+in the separate **Capture angle** selector for the centered image.
+start with a pilot triplet to verify framing and measurable parallax.
+
+At each rail position:
+
+1. Enter the actual position in millimeters. **Capture angle** starts at
+   **0 degrees**. Center the rig, let it settle, and click **Capture 0 degrees**.
+2. Without changing the rail position, choose **-5 degrees** in **Capture angle**,
+   move the rig to -5 degrees, settle, and capture.
+3. Choose **+5 degrees**, move to +5 degrees, settle, and capture.
+4. Click **Download triplet** and check the browser download.
+5. Click **Next position (+1 mm)**, physically move the rail to that position,
+   and repeat. The page only changes the label; it does **not** control the rig.
+
+The three angles may be captured in **any order**; completed angles are marked
+and cannot be captured twice in the same set. After a successful image the
+selector suggests a remaining angle, but you may choose another remaining angle.
+Changing the side-angle magnitude changes the negative/positive choices accordingly.
+Triplet setup fields lock after capture starts; **Capture angle** stays selectable.
+**Discard current triplet** lets you
+correct a position or retake the set. A failed capture does not advance the angle.
+Exposure changes or a new preview session discard the set to avoid mixing settings.
+
+Each uniquely named `pitrac-pupil-*.zip` contains:
+
+- Exactly three selected-camera PNGs at the ZIP root, labelled by signed angle.
+- `measurement.json`: lens, camera, rail position/reference, rotation plane,
+  side-angle magnitude, setup notes, image-to-angle mapping, actual capture order
+  and preview session. Exported image entries retain the canonical -angle/+angle/0
+  order regardless of acquisition order.
+- `captures/`: the three unchanged original selected-camera capture ZIPs, each
+  containing that camera's native RAW/PNG data and the actual per-image exposure, gain,
+  frame IDs, receive times and SHA-256 hashes in its `metadata.json`.
+
+All PNG pixel values retain the existing lossless capture mapping. Only the
+selected camera must be live; the ordinary **Save both cameras** button still
+requires both. Only one triplet is retained
+in the browser's RAM; no measurement files are saved on the Pi. Reloading or
+leaving the page loses undownloaded images. Use a current browser with JavaScript
+modules and `crypto.randomUUID` support on the loopback preview URL.
+
+Collect one pilot ZIP first, then share the ZIP for analysis before committing
+to a long sweep. For the full sweep, group the per-position ZIPs by lens and
+include at least one repeated position to check measurement repeatability.
+
+The workflow was verified on the live Mira220-only preview: a three-image
+1600 x 1400 export preserved the original PNG bytes, archive checksums and the
+40 ms exposure metadata. That was a capture/export test with a stationary rig,
+not a physical entrance-pupil measurement.
 
 ## Linked and independent exposure controls
 
@@ -310,13 +418,13 @@ stale/error handling, strict profile parsing and loopback HTTP behavior. Exposur
 tests cover linked/unlinked updates, sensor timing and safe write ordering,
 readback failures and two-camera rollback, same-origin/revision checks,
 range validation, and startup-setting restoration. Capture tests verify every
-RAW10 value, full native dimensions, padded-row decoding, byte-exact ZIP contents,
+RAW10/RAW12 value, full native dimensions, padded-row decoding, byte-exact ZIP contents,
 settings consistency, unavailable-camera rejection, and download controls.
 JPEG and PNG capture tests require Pillow. Decoder tests can also run on a development PC with Node already
 available:
 
 ```text
-node --test web/decoder.test.mjs web/preview.test.mjs web/exposure.test.mjs web/capture.test.mjs
+node --test web/decoder.test.mjs web/preview.test.mjs web/exposure.test.mjs web/capture.test.mjs web/archive.test.mjs web/pupil.test.mjs
 ```
 
 The Pi preview needs no Node installation. Validation on the inspected Pi and

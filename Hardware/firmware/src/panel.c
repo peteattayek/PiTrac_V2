@@ -18,7 +18,13 @@
 #define PANEL_PWM_DIV    150.0f
 
 static uint s_slice_pwr, s_chan_pwr;
-static uint s_slice_rdy, s_chan_rdy;
+
+// The ready LED is plain SIO on/off, not PWM (ARCHITECTURE.md A7, 2026-10-02).
+// GPIO12 is slice 6 channel A, the SAME channel as GPIO28 Gate_PWM, so a PWM
+// ready LED would share its compare register with the strobe current setpoint.
+// strobe.c owns slice 6; strobe_init() panics if GPIO12 is ever found on PWM.
+// Percent requests map to on at >= READY_ON_PCT.
+#define READY_ON_PCT 50
 
 static int  s_ovr_pwr   = -1;   // -1 = automatic
 static int  s_ovr_rdy   = -1;
@@ -59,23 +65,23 @@ static void set_pct(uint slice, uint chan, int pct) {
 
 void panel_init(void) {
     gpio_set_function(PIN_PWR_BTN_LED, GPIO_FUNC_PWM);
-    gpio_set_function(PIN_READY_LED,   GPIO_FUNC_PWM);
+
+    // Ready LED: SIO, output, off. Level and direction before the function, so
+    // the pad never leaves low.
+    gpio_put(PIN_READY_LED, 0);
+    gpio_set_dir(PIN_READY_LED, GPIO_OUT);
+    gpio_set_function(PIN_READY_LED, GPIO_FUNC_SIO);
 
     s_slice_pwr = pwm_gpio_to_slice_num(PIN_PWR_BTN_LED);
     s_chan_pwr  = pwm_gpio_to_channel(PIN_PWR_BTN_LED);
-    s_slice_rdy = pwm_gpio_to_slice_num(PIN_READY_LED);
-    s_chan_rdy  = pwm_gpio_to_channel(PIN_READY_LED);
 
     pwm_config c = pwm_get_default_config();
     pwm_config_set_wrap(&c, PANEL_PWM_WRAP);
     pwm_config_set_clkdiv(&c, PANEL_PWM_DIV);
 
     set_pct(s_slice_pwr, s_chan_pwr, 0);
-    set_pct(s_slice_rdy, s_chan_rdy, 0);
     pwm_init(s_slice_pwr, &c, true);
-    pwm_init(s_slice_rdy, &c, true);
     set_pct(s_slice_pwr, s_chan_pwr, 0);
-    set_pct(s_slice_rdy, s_chan_rdy, 0);
 }
 
 // Triangle wave 0..100..0 over period_ms. Cheap, and reads as a breath without a
@@ -139,7 +145,7 @@ void panel_update(void) {
     int rdy = (s_ovr_rdy >= 0) ? s_ovr_rdy : (s_ready ? 100 : 0);
 
     set_pct(s_slice_pwr, s_chan_pwr, pwr);
-    set_pct(s_slice_rdy, s_chan_rdy, rdy);
+    gpio_put(PIN_READY_LED, rdy >= READY_ON_PCT);
 }
 
 // Sentinels: >=0 sets a fixed brightness, -1 hands the LED back to the state

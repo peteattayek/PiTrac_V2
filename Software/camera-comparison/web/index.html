@@ -33,7 +33,8 @@
             Native capture continues at the configured sensor rates; the browser
             skips intermediate frames and fetches only the latest.</p>
         <p>No Pi ISP, AE/AGC, gamma curve, denoising, sharpening, or per-frame normalization.
-            GREY maps directly to grayscale; Y10P maps native value &gt;&gt; 2.
+            GREY maps directly; Y10P displays native value &gt;&gt; 2;
+            Y12P displays native value &gt;&gt; 4.
             Smooth mode compresses this display with JPEG. Raw mode preserves native data.</p>
         <div class="transport-controls">
             <label for="transport-mode">Preview mode</label>
@@ -52,11 +53,67 @@
             <span data-capture-availability role="status">Waiting for both cameras.</span>
         </div>
         <p>One ZIP with full-resolution lossless PNGs, original raw buffers and metadata.
-            Mira220: 8-bit. IMX296: all 10 bits in a 16-bit PNG, without brightness scaling.
+            Mira220: native 8-bit, or all 12 bits in a 16-bit PNG when using a pupil profile.
+            IMX296: all 10 bits in a 16-bit PNG, without brightness scaling.
             Works in either preview mode; zoom does not affect the saved images.</p>
         <p>Uses the latest live frame from each camera, not hardware-synchronized exposures.
-            The IMX296 PNG may appear dark in ordinary viewers; its native values are unchanged.</p>
+            Native 10/12-bit PNGs may appear dark in ordinary viewers; their values are unchanged.</p>
         <p data-capture-message role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="pupil-controls" class="pupil-controls" aria-label="Guided entrance pupil measurement">
+        <h2>Entrance pupil / no-parallax measurement</h2>
+        <p>0 mm: rotation axis at the camera PCB surface. Positive positions: toward the lens/front.
+            Keep near/far targets, focus, aperture, exposure and gain unchanged throughout a sweep.</p>
+        <div class="pupil-inputs">
+            <label>Camera
+                <select data-pupil-camera>
+                    <option value="mira220">Mira220</option>
+                    <option value="imx296">IMX296</option>
+                </select>
+            </label>
+            <label>Lens identifier
+                <input data-pupil-lens type="text" maxlength="120" placeholder="Lens model / sample" required>
+            </label>
+            <label>Rail position (mm)
+                <input data-pupil-position type="number" step="any" value="0" required>
+            </label>
+            <label>Side-angle magnitude (+/- degrees)
+                <input data-pupil-angle type="number" min="0.1" max="89.9" step="any" value="5" required>
+            </label>
+            <label>Rotation plane
+                <select data-pupil-rotation>
+                    <option value="yaw">Horizontal (yaw)</option>
+                    <option value="pitch">Vertical (pitch)</option>
+                </select>
+            </label>
+            <label>Setup notes
+                <input data-pupil-notes type="text" placeholder="Focus, aperture, target distances, +/- direction">
+            </label>
+        </div>
+        <p>Leave the side-angle magnitude at 5 for -5/+5 images. For the centered image,
+            select <strong>0 degrees</strong> below; do not change the magnitude to 0.</p>
+        <div class="pupil-actions">
+            <label>Capture angle
+                <select data-pupil-capture-angle>
+                    <option value="zero" selected>0 degrees</option>
+                    <option value="negative">-5 degrees</option>
+                    <option value="positive">+5 degrees</option>
+                </select>
+            </label>
+            <button type="button" data-pupil-capture disabled>Capture 0 degrees</button>
+            <button type="button" data-pupil-download disabled>Download triplet</button>
+            <button type="button" data-pupil-next disabled>Next position (+1 mm)</button>
+            <button type="button" data-pupil-discard disabled>Discard current triplet</button>
+        </div>
+        <p data-pupil-progress role="status"></p>
+        <p data-pupil-message role="status" aria-live="polite"></p>
+        <p>Capture -angle, +angle and 0 at each distance, in any order. Captured angles are marked.
+            Move the rig manually, let it settle, then capture.
+            The ZIP contains three selected-camera PNGs, original native captures and measurement metadata.
+            Only the selected camera must be live. Frames stay in this tab's RAM until downloaded; reloading loses them.</p>
+        <p>With a 12-bit Mira220 profile, saved PNGs retain native values 0..4095 in a 16-bit container.
+            Preview remains an 8-bit display; it does not reduce the saved image's precision.</p>
     </section>
 
     <form id="exposure-controls" class="exposure-controls" aria-label="Camera exposure controls">

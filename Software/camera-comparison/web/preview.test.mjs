@@ -6,7 +6,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 const source = (await readFile(new URL("./preview.js", import.meta.url), "utf8"))
-    .replace(/^import .*from "\.\/(?:decoder|exposure|capture)\.js";$/gm, "");
+    .replace(/^import .*from "\.\/(?:decoder|exposure|capture|pupil)\.js";$/gm, "");
 const decoderSource = await readFile(new URL("./decoder.js", import.meta.url), "utf8");
 const decoder = await import(`data:text/javascript;base64,${Buffer.from(decoderSource).toString("base64")}`);
 

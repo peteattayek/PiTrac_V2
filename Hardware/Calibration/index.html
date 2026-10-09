@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PiTrac camera distortion calibration</title>
+    <style>
+        body { margin: 24px auto; padding: 0 20px; max-width: 1100px; font: 16px/1.5 system-ui, sans-serif; color: #202b35; }
+        h1 { margin-bottom: 8px; }
+        .notice { padding: 14px; background: #fff4d6; border-left: 4px solid #bd841d; }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 24px 0; }
+        .card { border: 1px solid #bdc7ce; padding: 18px; border-radius: 8px; }
+        a { color: #075da1; }
+        img { display: block; width: 100%; height: auto; border: 1px solid #ddd; margin: 12px 0; }
+        code { background: #eef2f5; padding: 2px 5px; }
+    </style>
+</head>
+<body>
+    <h1>Camera distortion calibration</h1>
+    <p>For each identified Mira220 / ND3630 stack at its final 850 nm filter, illumination and locked focus state.</p>
+    <p class="notice"><strong>Digital template validation is not physical calibration.</strong>
+        Print at actual size / 100%, disable fit or shrink, and verify both 100 mm bars.
+        Mount the target flat on rigid matte backing and check its actual infrared contrast.</p>
+    <div class="cards">
+        <section class="card">
+            <h2>A4 landscape</h2>
+            <p>297 x 210 mm page. Pattern: 220 x 160 mm.</p>
+            <p><a href="targets/charuco-a4.pdf">Open printable A4 PDF</a> |
+                <a href="targets/charuco-a4.svg">Open vector SVG</a></p>
+            <img src="targets/charuco-a4.svg" alt="A4 ChArUco target with horizontal and vertical 100 mm scale checks">
+        </section>
+        <section class="card">
+            <h2>US Letter landscape</h2>
+            <p>279.4 x 215.9 mm page. Same physical pattern, not a resized A4 pattern.</p>
+            <p><a href="targets/charuco-letter.pdf">Open printable Letter PDF</a> |
+                <a href="targets/charuco-letter.svg">Open vector SVG</a></p>
+            <img src="targets/charuco-letter.svg" alt="Letter ChArUco target with horizontal and vertical 100 mm scale checks">
+        </section>
+    </div>
+    <h2>Next steps</h2>
+    <ol>
+        <li>Read <a href="README.md">the entry guide</a> and <a href="DISTORTION_PROCEDURE.md">the calibration procedure</a>.</li>
+        <li>Verify print dimensions, flatness and infrared contrast before filling a session record.</li>
+        <li>Copy the appropriate <a href="templates/camera-session-CAM0.json">CAM0</a> or
+            <a href="templates/camera-session-CAM1.json">CAM1 session template</a> to a new run directory.</li>
+        <li>Use the <a href="templates/capture-poses.csv">30 fit / 10 validation pose checklist</a>.
+            Capture three distinct stationary frames per pose; keep repeat groups in the same split.</li>
+        <li>Preserve native 12-bit images and read <a href="POINT_COORDINATES.md">the point-coordinate conventions</a>.</li>
+    </ol>
+    <p><strong>Target identity:</strong> <code>pitrac-charuco-11x8-20mm-v1</code>,
+        11 x 8 squares, 20 mm square pitch, 15 mm markers, <code>DICT_5X5_250</code>,
+        current (non-legacy) OpenCV 4.13 layout.
+        <a href="targets/board.json">Machine-readable board definition</a>.</p>
+    <p>The images on this page are scaled for viewing. Measure the printed scale bars, not the screen.
+        No camera coefficients, pupil coordinate, enclosure pose, physical accuracy, or production readiness
+        are established by these files.</p>
+</body>
+</html>

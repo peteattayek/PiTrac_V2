@@ -3,10 +3,8 @@
 ;
 ; strobe_burst.pio -- Phase 6 burst engine for PIO0 SM0, driving GPIO25 (Strobe_Pulse).
 ;
-; ASSEMBLED BUT NOT LINKED. CMakeLists runs pioasm over this file on every build,
-; so it cannot rot -- but no .c includes the generated header yet, so it emits no
-; code. Phase 6 turns it on by including strobe_burst.pio.h and loading it into
-; PIO0 SM0 (see pio_alloc.h).
+; LOADED by strobe.c since 2026-10-02 (6a/6b dry tests; live current 6c/6d since
+; 2026-10-07). Before that it was assembled on every build but nothing loaded it.
 ;
 ; Written ahead of its phase because the program itself is measurement-independent
 ; -- only the *schedule* fed to it depends on the clamp width measured in 6a.
@@ -38,17 +36,19 @@
 ; create a second source of truth and tempt someone to "fix" the discrepancy by
 ; defeating the hardware one.
 ;
-; Firmware clamps schedules to STROBE_SW_MAX_US (0.85 x the MEASURED hardware
-; limit) so the hardware watchdog is a backstop that never normally fires, not a
-; routine part of pulse shaping.
+; Firmware limits normal pulses to STROBE_SW_MAX_US, under the hardware clamp,
+; so the hardware watchdog is a backstop that never normally fires, not a routine
+; part of pulse shaping. The one exception is the 6a.1 clamp measurement.
 ;
 ; ---------------------------------------------------------------------------
 ; Timing note
 ; ---------------------------------------------------------------------------
-; Each loop iteration is 1 cycle (1 us). The set/pull/mov instructions around the
-; loops add a fixed few cycles per phase. The host must subtract that overhead
-; when building the schedule -- see STROBE_PIO_OVERHEAD_US in strobe.c. Measure it
-; on the logic analyzer in 6a.2 rather than trusting this comment.
+; Each loop iteration is 1 cycle (1 us). Counted from the listing below, a width
+; word N gives N + 2 us high and a gap word M gives M + 8 us low; IRQ0 is raised
+; 8 us after the last falling edge. Those overheads are subtracted on the host --
+; STROBE_PIO_WIDTH_OVERHEAD_US / STROBE_PIO_GAP_OVERHEAD_US in strobe_plan.h.
+; Derived from the listing, then confirmed on board 1's logic analyser in 6a.2
+; (2026-10-06): every width and period matched, so no correction.
 ;
 
 .program strobe_burst
@@ -71,24 +71,30 @@ lo:
     jmp start
 
 done:
-    irq set 0               ; burst complete -> wakes the engine loop on core 1
+    irq set 0               ; burst complete; strobe.c polls this flag
     jmp start               ; block on pull, waiting for the next burst
 
 
 % c-sdk {
 #include "hardware/clocks.h"
 
-// Initialise SM `sm` on `pio` to drive `pin` at 1 MHz (1 us per loop iteration).
+// Configure SM `sm` on `pio` for `pin` at exactly 1 MHz (1 us per loop iteration).
+//
+// Does NOT take the pad. The pad stays wherever the caller left it -- strobe.c
+// keeps GPIO25 SIO driven low and hands it to PIO only for an admitted burst,
+// after setting this SM's output latch low and its direction to output. (This
+// helper used to call pio_gpio_init() and set the direction before the level,
+// leaving a window in which the pad was PIO-owned with an unset output value.)
 static inline void strobe_burst_program_init(PIO pio, uint sm, uint offset, uint pin) {
     pio_sm_config c = strobe_burst_program_get_default_config(offset);
-
-    pio_gpio_init(pio, pin);
-    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
     sm_config_set_set_pins(&c, pin, 1);
 
-    // 1 MHz: one `jmp x--` per microsecond, so schedule values are microseconds.
-    float div = (float)clock_get_hz(clk_sys) / 1000000.0f;
-    sm_config_set_clkdiv(&c, div);
+    // 150 MHz / 1 MHz = 150 exactly. An integer divider means no fractional
+    // jitter on the pulse edges; refuse to run on a clock where that fails.
+    uint32_t sysclk = clock_get_hz(clk_sys);
+    uint32_t div    = sysclk / 1000000u;
+    hard_assert(div * 1000000u == sysclk);
+    sm_config_set_clkdiv(&c, (float)div);
 
     // All 32 bits out, no autopull -- `pull block` is explicit so the sentinel
     // and the FIFO-empty stall are both well defined.
@@ -96,10 +102,6 @@ static inline void strobe_burst_program_init(PIO pio, uint sm, uint offset, uint
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);   // deeper TX FIFO, 8 words
 
     pio_sm_init(pio, sm, offset, &c);
-
-    // Leave the pin low and the SM stopped. Phase 6 enables it explicitly, and
-    // only once strobe_permitted() agrees.
-    pio_sm_set_pins_with_mask(pio, sm, 0, 1u << pin);
     pio_sm_set_enabled(pio, sm, false);
 }
 %}

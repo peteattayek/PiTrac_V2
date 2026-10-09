@@ -8,9 +8,9 @@ This document audits every function against that goal, records what is already
 compliant, and flags the places where the current code or the .md pseudocode falls
 short. **Three of the findings were real problems, not stylistic preferences** — A1, A2 and
 **A7**. ✅ **A1 and A2 were both fixed 2026-08-14** and A2 has since run on silicon (PIO2
-SM0, GPIOBASE 16). 🔴 **A7 is the only one still open:** a hardware collision found on
-2026-07-31 that will surface in Phase 6b; board-level fix proposed as CR-01 in
-`NEXT_BOARD_REV.md`.
+SM0, GPIOBASE 16). ✅ **A7 was fixed in firmware 2026-10-02** (ready LED to SIO on/off,
+gate DAC owns slice 6), pending its bench check in Phase 6b; the board-level fix, CR-01 in
+`NEXT_BOARD_REV.md`, is now optional.
 
 ---
 
@@ -19,13 +19,13 @@ SM0, GPIOBASE 16). 🔴 **A7 is the only one still open:** a hardware collision 
 RP2350 gives us far more than this design needs, which means there is no reason to
 economise by doing things in software:
 
-| Resource | Total | Committed | Free |
+| Resource | Total | Committed (2026-10-05) | Free |
 |---|---|---|---|
-| **PIO blocks** | **3** (PIO0/1/2), 4 SMs each = 12 SMs | 4 planned | **8 SMs** |
-| PWM slices | 12 | **5** (5, 6, 7, 10, 11 — and 6 is double-booked, see **A7**) | **7** |
-| DMA channels | 16 | 2 in use (capture + ring), ~6 planned | 10 |
+| **PIO blocks** | **3** (PIO0/1/2), 4 SMs each = 12 SMs | **2 in use** (strobe PIO0 SM0, detect PIO2 SM0) + 2 planned (camera PIO0 SM1, I²S PIO1 SM0) | **8 SMs** after the planned two |
+| PWM slices | 12 | **5** (5, 6, 7, 10, 11 — slice 6 belongs to the gate DAC since A7's fix) | **7** |
+| DMA channels | 16 | 3 in use (capture + ring + strobe burst), ~5 planned | 10 |
 | ADC | 1 SAR, 500 ksps, round-robin + DMA | **continuous 32 KB ring** (A1 ✅) | — |
-| Cores | 2 | core 0 slow path, core 1 hot path | — |
+| Cores | 2 | **core 0 runs everything today**; core 1 is unused, planned for the hot path | — |
 
 **Three PIO blocks is the headline number.** The .md's pseudocode assumes two
 (PIO0 for strobe, PIO1 for I²S) and therefore does several things on the CPU that
@@ -37,16 +37,20 @@ could simply have their own state machine. We are not short of state machines.
 
 ### ✅ Already fully offloaded
 
-| Function | Hardware | CPU cost |
-|---|---|---|
-| Beam carrier, GPIO31 | PWM slice **7B** | zero after setup |
-| Demod clock, GPIO39 | PWM slice **11B**, phase-locked | zero after setup |
-| Strobe current DAC, GPIO28 | PWM slice **6A** + 2-pole RC | zero |
-| Comparator threshold DAC, GPIO44 | PWM slice 10A + 2-pole RC | zero |
-| Panel LED brightness, GPIO11/12 | PWM slices 5B/**6A** | see A4, **and A7** |
-| ADC block capture | DMA, `DREQ_ADC` | zero during transfer |
-| Strobe burst train, GPIO25 | **PIO0 SM0** + DMA-fed schedule | zero during burst |
-| I²S mic, GPIO4/5/6 | **PIO1 SM0** + DMA | zero (Phase 5, optional) |
+Status column: **bench** = proven on hardware; **built** = implemented, not yet bench-tested;
+**planned** = no firmware yet.
+
+| Function | Hardware | CPU cost | status |
+|---|---|---|---|
+| Beam carrier, GPIO31 | PWM slice **7B** | zero after setup | bench |
+| Demod clock, GPIO39 | PWM slice **11B**, phase-locked | zero after setup | bench |
+| Strobe current DAC, GPIO28 | PWM slice **6A** + 2-pole RC | zero | built (6b) |
+| Comparator threshold DAC, GPIO44 | PWM slice 10A + 2-pole RC | zero | bench |
+| Comparator edge timing, GPIO46 | **PIO2 SM0** (`detect.pio`), A2 | zero | built — arm/disarm proven; edge timing not yet |
+| Panel LED brightness, GPIO11 | PWM slice 5B | see A4. GPIO12 (ready) is SIO on/off since **A7** | bench |
+| ADC block capture | DMA, `DREQ_ADC` | zero during transfer | bench |
+| Strobe burst train, GPIO25 | **PIO0 SM0** + DMA-fed schedule | zero during burst | built (6a) |
+| I²S mic, GPIO4/5/6 | **PIO1 SM0** + DMA | zero | **planned** — optional header path, no firmware |
 
 > **Slice numbers corrected 2026-07-31.** This table previously said 3B / 7B / 2A. RP2350B
 > has 12 slices and the mapping is not the RP2040 formula — for GPIO ≥ 32 it is
@@ -156,9 +160,9 @@ performance trade — an allocation that violates it fails to configure, and the
 
 | Block | GPIOBASE | SM0 | SM1 |
 |---|---|---|---|
-| PIO0 | 0 | strobe (GPIO25), Ph6 | camera handshake (GPIO8/9/10), Ph7 |
-| PIO1 | 0 | I²S mic (GPIO4/5/6), Ph5 | free |
-| PIO2 | **16** | **detect (GPIO46)** | free |
+| PIO0 | 0 | strobe (GPIO25), Ph6 — **built** | camera handshake (GPIO8/9/10), Ph7 — *planned* |
+| PIO1 | 0 | I²S mic (GPIO4/5/6), Ph5 — *planned, optional* | free |
+| PIO2 | **16** | **detect (GPIO46) — built** | free |
 
 Two constraints that are easy to violate silently:
 
@@ -249,6 +253,13 @@ quietly loses its ADC column.
 **When the firing path is written in Phase 6, `adc_engine_set_mode(ADC_MODE_BURST)` must
 be the last thing it does before the burst, not the first.**
 
+> **2026-10-07 — the bench live path (6c) is not the firing path.** `strobe.c`'s live mode
+> selects BURST around each bench firing (160 µs before the edge to 200 µs after), then
+> `adc_ring_freeze_copy()` stops the conversions, copies ch0 with nothing racing the copy —
+> only samples written since BURST started — and the engine returns to IDLE. Arming live mode
+> **requires the detector disarmed**, so there is no ch5/ch7 history to lose. The production
+> ordering rule above still governs `shot.c`'s `SHOT_FIRING` in Phase 7.
+
 ---
 
 ### 🟡 A3 — The camera handshake should not be a busy-wait
@@ -296,9 +307,9 @@ superloop, immune to loop jitter. Ten-line change; do it whenever convenient.
 
 ---
 
-### 🔴 A7 — The ready LED and the strobe current DAC are on the same PWM channel
+### ✅ A7 — The ready LED and the strobe current DAC are on the same PWM channel
 
-**Found 2026-07-31. This will surface in Phase 6b and it is not a documentation problem.**
+**Found 2026-07-31. Fixed in firmware 2026-10-02; bench check is `BENCH_P6_STROBE.md` 6b Step 1.**
 
 `GPIO12` (READY_LED) and `GPIO28` (GATE_PWM) both map to **slice 6, channel A** — the same
 *channel*, not merely the same slice. That distinction is the entire problem:
@@ -333,6 +344,12 @@ indicator is obviously it. Options, cheapest first:
 Do it in **6b**, before the gate DAC is first configured — not after, because the symptom
 (LED brightness moving the strobe setpoint) is exactly the kind of thing that reads as an
 analog fault.
+
+> ✅ **Done 2026-10-02, option 1.** `panel.c` drives GPIO12 as SIO on/off (any brightness
+> ≥ 50 % lights it); `strobe.c` configures slice 6 for the gate DAC; `strobe_init()` panics
+> if GPIO12 is ever found on PWM, and every gate raise re-checks it. Landed in the same
+> change that added the gate DAC, as this section required. Bench proof: TP3 must not move
+> when `panel rdy` changes (6b Step 1).
 
 **Two more pairs collide but are currently safe**, and both are on safety-critical pins:
 
@@ -396,6 +413,16 @@ for no benefit. They are explicitly *not* part of the run-time path.
 The rule to hold: **nothing in the armed or firing path may block.** Bench commands
 are allowed to; production paths are not.
 
+⚠ **That stops being free once the watchdog is armed (6c onward).** On this board a watchdog
+reset is a hard power cut, so every long bench command must keep calling
+`pitrac_service()` / `pitrac_yield_ms()`. **Checked 2026-10-07:** `level`, `hpf test`,
+`cal demod` and `cal model` yield throughout — the longest unserviced stretch is `cal.c`'s
+chopped-average window, 10 ms at the 20 Hz chop every caller uses — and the `capture` CSV dumps
+now call `pitrac_service()` every 256 lines. **One exception remains:** `adc_capture()` waits
+on its DMA for n / rate seconds without servicing (16384 samples at 1 kHz = 16 s), so with the
+watchdog armed by `wdog on` a slow block capture resets the board (§9 backlog). Live strobe mode,
+which arms the watchdog itself, cannot reach it: its CLI allowlist refuses `capture`.
+
 ---
 
 ## Target allocation
@@ -404,10 +431,10 @@ are allowed to; production paths are not.
 |---|---|---|
 | Beam carrier | PWM **7B** | ✅ done — **validated on hardware**, see above |
 | Demod clock | PWM **11B**, phase-locked | ✅ done — **0.15 ticks across 6 reconfigurations** |
-| Gate DAC | PWM **6A** | planned — ⚠ **collides with the ready LED, CR-01/A7** |
+| Gate DAC | PWM **6A** | ✅ written 2026-10-02 (`strobe gate`); bench check 6b |
 | Threshold DAC | PWM 10A | ✅ done |
-| Panel LEDs | PWR 5B + 50 Hz timer; **RDY off PWM entirely** | 🟢 A4, 🔴 **A7** |
-| Strobe burst | **PIO0 SM0** (base 0) + DMA | planned, `.pio` written |
+| Panel LEDs | PWR 5B + 50 Hz timer; **RDY off PWM entirely** | 🟢 A4; ✅ **A7** (RDY is SIO) |
+| Strobe burst | **PIO0 SM0** (base 0) + DMA | ✅ written 2026-10-02 (dry-test only); bench check 6a |
 | **Comparator transit timing** | **PIO2 SM0 (base 16)** | ✅ **A2 done** — *not* PIO0; see below |
 | **Camera trigger/strobe handshake** | **PIO0 SM1** (base 0) | 🟡 A3 |
 | I²S mic | **PIO1 SM0** (base 0) + DMA | planned |

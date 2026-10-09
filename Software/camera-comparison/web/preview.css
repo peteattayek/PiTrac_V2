@@ -134,7 +134,7 @@ h2 {
     color: #b6c5d0;
 }
 
-.exposure-controls, .capture-controls {
+.exposure-controls, .capture-controls, .pupil-controls {
     margin: 16px 0;
     padding: 14px;
     border: 1px solid #3a4854;
@@ -142,7 +142,7 @@ h2 {
     background: #19232b;
 }
 
-.exposure-heading, .exposure-inputs, .capture-heading {
+.exposure-heading, .exposure-inputs, .capture-heading, .pupil-inputs, .pupil-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -150,13 +150,13 @@ h2 {
     margin-bottom: 10px;
 }
 
-.exposure-inputs label {
+.exposure-inputs label, .pupil-inputs label {
     display: grid;
     gap: 5px;
     font-size: 0.85rem;
 }
 
-.exposure-inputs input {
+.exposure-inputs input, .pupil-inputs input {
     width: 180px;
     padding: 8px;
     color: #e1ebf1;
@@ -166,7 +166,7 @@ h2 {
     font: inherit;
 }
 
-.exposure-controls p, .capture-controls p {
+.exposure-controls p, .capture-controls p, .pupil-controls p {
     margin: 6px 0;
     font-size: 0.82rem;
 }
@@ -176,7 +176,7 @@ h2 {
     overflow-wrap: anywhere;
 }
 
-[data-capture-button]:disabled {
+[data-capture-button]:disabled, .pupil-controls button:disabled {
     opacity: 0.55;
     cursor: not-allowed;
 }

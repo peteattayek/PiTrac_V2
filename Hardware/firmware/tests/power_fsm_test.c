@@ -6,6 +6,7 @@
 #include "adc_engine.h"
 #include "beam.h"
 #include "detect.h"
+#include "strobe.h"
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
 
@@ -19,6 +20,7 @@ static float supply_v;
 static bool beam_on;
 static fault_t fault;
 static unsigned latch_rises;
+static unsigned strobe_offs;
 static const char *test_name;
 
 #define CHECK(condition) do { \
@@ -36,7 +38,8 @@ bool gpio_get(unsigned pin) { return pins[pin]; }
 
 void gpio_put(unsigned pin, bool value) {
     if (pin >= sizeof(pins) / sizeof(pins[0]) || pin == PIN_PULSE_LIMIT_DIS ||
-        (pin == PIN_LATCH_CONTROL && !value && beam_on)) {
+        (pin == PIN_LATCH_CONTROL && !value &&
+         (beam_on || pins[PIN_STROBE_PULSE] || pins[PIN_GATE_PWM]))) {
         fprintf(stderr, "Unsafe GPIO write in %s: pin %u, value %d\n",
                 test_name, pin, value);
         exit(2);
@@ -48,6 +51,13 @@ void gpio_put(unsigned pin, bool value) {
 float adc_read_5vin_volts(void) { return supply_v; }
 bool beam_enable(bool on) { beam_on = on; return true; }
 void detect_hpf_safe_off(void) { gpio_put(PIN_HPF_TOGGLE, HPF_SEL_TRACK); }
+// The real one drives GPIO25 SIO low and zeroes the gate DAC; the FSM must call
+// it before the latch drops, which gpio_put() below checks.
+void strobe_safe_off(void) {
+    strobe_offs++;
+    pins[PIN_STROBE_PULSE] = false;
+    pins[PIN_GATE_PWM] = false;
+}
 void fault_raise(fault_t value) { if (fault == FAULT_NONE) fault = value; }
 void fault_clear(void) { fault = FAULT_NONE; }
 fault_t fault_current(void) { return fault; }
@@ -61,6 +71,7 @@ static void reset_fixture(void) {
     beam_on = false;
     fault = FAULT_NONE;
     latch_rises = 0;
+    strobe_offs = 0;
     power_fsm_init();
 }
 
@@ -99,6 +110,7 @@ static bool stays_off(void) {
         CHECK(!pins[PIN_LATCH_CONTROL]);
         CHECK(!beam_on);
         CHECK(pins[PIN_HPF_TOGGLE] == HPF_SEL_TRACK);
+        CHECK(!pins[PIN_STROBE_PULSE] && !pins[PIN_GATE_PWM]);
         CHECK(latch_rises == rises);
     }
     return true;
@@ -407,6 +419,52 @@ static bool pi_shutdown_timeout(void) {
     return true;
 }
 
+// Every route to rail-down must stop the strobe BEFORE the latch drops (the
+// gpio_put() mock exits if it does not), and an orderly Pi shutdown must stop it
+// at the START of teardown, not 15 s later.
+static void strobe_active(void) {
+    pins[PIN_STROBE_PULSE] = true;
+    pins[PIN_GATE_PWM] = true;
+}
+
+static bool strobe_teardown(void) {
+    CHECK(start_bench());
+    strobe_active();
+    power_request_shutdown();
+    step(1);
+    step(1);
+    CHECK(strobe_offs >= 1u);
+    CHECK(stays_off());
+
+    CHECK(start_bench());
+    strobe_active();
+    power_request_force_off();
+    step(1);
+    CHECK(stays_off());
+
+    CHECK(start_bench());
+    strobe_active();
+    supply_v = 4.85f;
+    step(V5_MONITOR_INTERVAL_MS);
+    step(V5_LOW_DEBOUNCE_MS);
+    step(V5_MONITOR_INTERVAL_MS);
+    CHECK(fault == FAULT_SUPPLY_LOST);
+    supply_v = 5.20f;
+    CHECK(stays_off());
+
+    fault_clear();
+    CHECK(start_pi());
+    strobe_active();
+    unsigned before = strobe_offs;
+    power_request_shutdown();
+    step(1);
+    CHECK(power_fsm_state() == PS_SHUTTING_DOWN);
+    CHECK(strobe_offs > before);
+    CHECK(!pins[PIN_STROBE_PULSE] && !pins[PIN_GATE_PWM]);
+    CHECK(pins[PIN_LATCH_CONTROL]);
+    return true;
+}
+
 int main(int argc, char **argv) {
     static const struct { const char *name; bool (*run)(void); } cases[] = {
 #define TEST(name) {#name, name}
@@ -416,7 +474,8 @@ int main(int argc, char **argv) {
         TEST(fresh_on_after_cancel), TEST(shutdown_during_startup),
         TEST(shutdown_during_pi_boot), TEST(supply_loss), TEST(rail_collapse),
         TEST(usb_guard), TEST(button_cycle), TEST(long_press), TEST(stale_fault_ack),
-        TEST(request_on_result), TEST(pi_boot_timeout), TEST(pi_shutdown_timeout)
+        TEST(request_on_result), TEST(pi_boot_timeout), TEST(pi_shutdown_timeout),
+        TEST(strobe_teardown)
 #undef TEST
     };
     if (argc == 2) {

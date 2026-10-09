@@ -11,13 +11,17 @@ function validate(config, bytes) {
         }
     }
     const { width, height, stride, sizeimage, fourcc } = config;
-    if (fourcc !== "GREY" && fourcc !== "Y10P") {
+    if (fourcc !== "GREY" && fourcc !== "Y10P" && fourcc !== "Y12P") {
         throw new RangeError(`Unsupported raw format: ${fourcc}.`);
     }
     if (fourcc === "Y10P" && width % 4 !== 0) {
         throw new RangeError("Y10P width must contain complete groups of four pixels.");
     }
-    const rowBytes = fourcc === "GREY" ? width : (width / 4) * 5;
+    if (fourcc === "Y12P" && width % 2 !== 0) {
+        throw new RangeError("Y12P width must contain complete groups of two pixels.");
+    }
+    const rowBytes = fourcc === "GREY" ? width :
+        fourcc === "Y10P" ? (width / 4) * 5 : (width / 2) * 3;
     if (stride < rowBytes) {
         throw new RangeError("Stride is smaller than a packed pixel row.");
     }
@@ -43,7 +47,7 @@ function validate(config, bytes) {
 
 /**
  * Return native-sized, opaque RGBA bytes without normalization or enhancement.
- * GREY maps directly to RGB; Y10P maps each native 10-bit value using value >> 2.
+ * GREY maps directly; Y10P uses value >> 2; Y12P uses value >> 4.
  * Row padding and any trailing allocation bytes are not image pixels.
  */
 export function decodeRawToRgba(config, bytes) {
@@ -62,10 +66,11 @@ export function decodeRawToRgba(config, bytes) {
                 rgba[out++] = 255;
             }
         } else {
-            for (let group = 0; group < width / 4; group += 1) {
-                const offset = row + group * 5;
-                // The four high bytes are exactly the unpacked native values >> 2.
-                for (let pixel = 0; pixel < 4; pixel += 1) {
+            const count = fourcc === "Y10P" ? 4 : 2;
+            for (let group = 0; group < width / count; group += 1) {
+                const offset = row + group * (count + 1);
+                // The high bytes are exactly the native samples >> (depth - 8).
+                for (let pixel = 0; pixel < count; pixel += 1) {
                     const value = raw[offset + pixel];
                     rgba[out++] = value;
                     rgba[out++] = value;
@@ -78,7 +83,7 @@ export function decodeRawToRgba(config, bytes) {
     return rgba;
 }
 
-/** Return the unmodified native 8- or 10-bit pixel value at integer x, y. */
+/** Return the unmodified native 8-, 10- or 12-bit pixel value at integer x, y. */
 export function rawPixelAt(config, bytes, x, y) {
     const raw = validate(config, bytes);
     if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y) ||
@@ -89,7 +94,10 @@ export function rawPixelAt(config, bytes, x, y) {
     if (config.fourcc === "GREY") {
         return raw[row + x];
     }
-    const offset = row + Math.floor(x / 4) * 5;
-    const pixel = x % 4;
-    return (raw[offset + pixel] << 2) | ((raw[offset + 4] >> (pixel * 2)) & 3);
+    const count = config.fourcc === "Y10P" ? 4 : 2;
+    const shift = config.fourcc === "Y10P" ? 2 : 4;
+    const offset = row + Math.floor(x / count) * (count + 1);
+    const pixel = x % count;
+    return (raw[offset + pixel] << shift) |
+        ((raw[offset + count] >> (pixel * shift)) & ((1 << shift) - 1));
 }

@@ -45,6 +45,10 @@ fails bash "$SCRIPTS/configure-cameras.sh" --calculate --gain 2
 fails bash "$SCRIPTS/configure-cameras.sh" --calculate --apply
 fails bash "$SCRIPTS/configure-cameras.sh" --calculate --camera imx296 --exposure-us 12000
 fails bash "$SCRIPTS/configure-cameras.sh" --calculate --camera mira220 --exposure-us 27
+fails bash "$SCRIPTS/configure-cameras.sh" --calculate --mira-bit-depth 10
+fails bash "$SCRIPTS/configure-cameras.sh" --calculate --camera imx296 --mira-bit-depth 12
+bash "$SCRIPTS/configure-cameras.sh" --calculate --camera mira220 --mira-bit-depth 12 > "$work/raw12-calculate.txt"
+((checks+=1))
 timing mira220 11188.5 > "$work/upper-bound.tsv"
 equal "$(value "$work/upper-bound.tsv" exposure_lines)" 1411
 printf 'key\t1\nkey\t2\n' > "$work/duplicate.tsv"
@@ -271,4 +275,18 @@ cp "$work/storage-original.tsv" "$run/storage.tsv"
 manifest
 truncate -s 1 "$run/mira220.raw"
 fails bash "$SCRIPTS/verify-recording.sh" --run "$run"
+sed 's/fourcc\tGREY/fourcc\tY12P/; s/stride\t1600/stride\t2400/; s/sizeimage\t2240000/sizeimage\t3360000/' \
+    "$run/mira220.tsv" > "$work/mira12.tsv"
+printf 'native_depth\t12\n' >> "$work/mira12.tsv"
+load_camera "$work/mira12.tsv"
+equal "${CAM[native_depth]}" 12
+equal "${CAM[sizeimage]}" 3360000
+fails require_recording_profile
+sed 's/native_depth\t12/native_depth\t8/' "$work/mira12.tsv" > "$work/mira12-bad-depth.tsv"
+fails load_camera "$work/mira12-bad-depth.tsv"
+sed '/^native_depth\t/d' "$work/mira12.tsv" > "$work/mira12-missing-depth.tsv"
+fails load_camera "$work/mira12-missing-depth.tsv"
+load_camera "$run/mira220.tsv"
+require_recording_profile
+((checks+=1))
 printf '\nAll %d offline helper checks passed (synthetic fixtures; no Pi hardware tested).\n' "$checks"

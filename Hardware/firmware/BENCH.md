@@ -22,9 +22,10 @@ recorded inline below. **The 2026-09-18 Test 6 passed — owner-reported 2026-09
 
 **Regression found 2026-09-18, fixed in source/host tests, and bench-verified (Test 6 PASS, owner-reported 2026-09-28):**
 the **11:11:51 and earlier images** retain `on` sent while running and can restart the
-rail after a later `off`. **Reflash first with the 15:21:18 Release fix**, then run
-**Test 6 below**. New `on` is refused outside STANDBY; no later restart is queued.
-Until reflashed, issue `on` **only from confirmed STANDBY**; skip it if already running.
+rail after a later `off`. Every image from **15:21:18** on refuses it (board 3 runs a later
+one); on a board still carrying an older image, **reflash first**, then run **Test 6 below**.
+New `on` is refused outside STANDBY; no later restart is queued.
+On an older image, issue `on` **only from confirmed STANDBY**; skip it if already running.
 After shutdown, require `stat` **STANDBY / latch 0**; "requested shutdown" is not proof.
 Board 3 needed a second `off` to reach that state. See PROGRESS §6/§10 for the live status
 and source trace; the earlier phase passes do not close this new finding.
@@ -170,7 +171,7 @@ sees real power. All measurements are DMM/scope — the CLI plays no part.
 |---|---|---|
 | a | USB-C only, J1 unpowered, **J2 off** | +3V3 = **3.30 V**. Draw < 100 mA. TP2 = **0 V**. TP6/TP7 ≈ **0 V — up to a few hundred mV is normal**, see below. |
 | b | Unplug USB. PSU **5.2 V, limit 0.3 A** into J1. J2 off. | Only the +3V3 domain draws. Verify +5V is genuinely **0 V at J8.2**. Yellow LED still blinks — the MCU runs on +3V3 with no USB. |
-| c | Raise limit to **2 A**. Fit **J2** (forces latch on). | +5V = 5.2 V · VIR = **36 V** at J3 (open circuit is fine) · TP2 = **12 V** (11.4–12.7) · TP6/TP7/TP9/TP10 all = **+5VA / 2**, i.e. **≈2.59 V** on a 5.2 V rail — see note |
+| c | Raise limit to **2 A**. Fit **J2** (forces latch on). | +5V = 5.2 V · VIR = **36 V** at J3 **pin 1 to GND** (open circuit is fine; *not* across J3 — pin 2 is `VIR_RTN`, the LED return through Q9, which floats with J3 open) · TP2 = **12 V** (11.4–12.7) · TP6/TP7/TP9/TP10 all = **+5VA / 2**, i.e. **≈2.59 V** on a 5.2 V rail — see note |
 | d | Scope the LM5157 SW node — **L1 pad 1** or **R11 pad 1** (empty pad; R11/C9 are DNP). 🔴 **10× probe, short ground spring** — a long ground lead invents ringing and makes you fit a snubber you do not need | Decide the R11/C9 snubber (DNP by default — fit only if it rings), **and record f_SW**. ⚠ The 1.055 MHz nominal is **unconfirmed** — a rail measurement on board 3 found the only switcher tone at **801 kHz** (2026-08-31). This is the measurement that settles which converter that is. See `BENCH_P3_DETECT.md` §3.6 Check 1 |
 | e | Remove J2 | +5V drops, board returns to standby cleanly |
 
@@ -441,15 +442,25 @@ image. Expected `id` build stamp **Sep 18 2026 15:21:18**. Host tests pass; ✅ 
 
 `tests/CMakeLists.txt` is a **separate native CMake project**, not an RP2350 target.
 It compiles the actual `src/power_fsm.c` with the real board constants and mocked
-GPIO/time/ADC/beam/fault interfaces. It does not communicate with the board.
+GPIO/time/ADC/beam/fault interfaces, and since 2026-10-02 also `src/strobe_plan.c`
+(Phase 6 schedule and admission policy); since 2026-10-07 also `src/strobe_live.c` (the 6c
+ADC0 readback, budget and cal math) and `src/service.c` (the yield/abort contract and the
+watchdog kick). It does not communicate with the board.
 
 In CMake Tools, select `Hardware/firmware/tests` as source and `tests/build` as its
 separate build directory, use a **native compiler/generator** (Visual Studio 17 2022
 on this machine), select Release, build, then run CTest through CMake Tools.
-The **20 tests** cover stale/redundant requests, cancellation/force-off precedence,
-fresh starts, startup shutdown, button paths, fault recovery, supply guards and Pi
-timeout/pulse/hold-off behavior. The tests keep checking for unintended latch rises
-for **6 s of simulated time** after teardown and reject GPIO27 writes.
+The **21 power tests** cover stale/redundant requests, cancellation/force-off precedence,
+fresh starts, startup shutdown, button paths, fault recovery, supply guards, Pi
+timeout/pulse/hold-off behavior, and that every rail-down route stops the strobe before
+the latch drops. They keep checking for unintended latch rises for **6 s of simulated
+time** after teardown and reject GPIO27 writes. The **16 strobe tests** cover the schedule
+(`BENCH_P6_STROBE.md` 6a.3) and both admission policies, including an exhaustive sweep of the
+live policy (16 inputs × gate and staircase levels). The **33 live tests** cover the ADC0
+verdicts (overcurrent, stuck-on, clamp width, more current pulses than fired), the
+baseline/pulse split against any freeze delay, the charge budget and the `strobe cal`
+loop against a model of Q9. The **8 service tests** cover aborts on the final yield slice and
+fault detection by generation. **78 in all.**
 
 **Restore the firmware source directory, its original `build/`, Ninja generator and
 Release variant before building a UF2.** Host-test success is not physical rail proof.
@@ -823,14 +834,15 @@ pisim                       simulated-Pi inputs + pi_is_down
 
 adc <ch> [n]                oversampled read; ch 0,1,2,5,7 only
 adc5v                       +5V_IN volts + latch permit/inhibit verdict
-adc5vcal <dmm_volts>        trim the +5V_IN scale
+adc5vcal <dmm_volts>        trim the +5V_IN scale (RAM until `cfg save`)
 capture <mask> <n> <rate>   block capture -> CSV (the bench instrument)
 adcmode off|idle|armed|burst
 
-on / off / forceoff         power requests (on obeys the USB guard)
+on / off / forceoff         power requests (`on` only from STANDBY; USB guard)
 gpio <n> [0|1]              read/drive (writes are allowlisted)
 led r|y <0|1>               on-board D6/D5 — work in standby (+3V3)
-panel pwr|rdy <0-100|auto>  J7 panel LEDs — need the +5V rail latched
+panel pwr <0-100|auto>      J7 power LED — needs the +5V rail latched
+panel rdy <0-100|auto>      J7 ready LED — on/off only (>= 50 lights it), A7
 panel test                  ramp both 0->100->0 for a current/thermal check
 panel pattern <p|auto>      force a ring pattern (off powering booting running
                             shutdown fault) — testable without a Pi

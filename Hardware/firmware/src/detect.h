@@ -260,10 +260,12 @@ void     detect_service(void);
 uint32_t detect_events(void);        // completed passes since arm
 uint32_t detect_fragments(void);     // raw FIFO words READ since arm
 
-// FIFO words the PIO pushed and we never read, because `push noblock` discards
-// when the RX FIFO is full. Non-zero means the fragment counts are understated
-// and the superloop is not keeping up with the chatter. Polls and drains the
-// hardware RXSTALL latch, so call it before trusting detect_fragments().
+// Polls that found RXSTALL set: each means AT LEAST one word the PIO pushed and
+// we never read -- the latch does not count, so several lost words between two
+// polls still count once. Treat it as "loss happened", not as a word count.
+// Non-zero means the fragment counts are understated and the superloop is not
+// keeping up with the chatter. Polls and drains the hardware RXSTALL latch; the
+// `detect` status calls it and warns when it is non-zero.
 uint32_t detect_dropped(void);
 bool     detect_last_pass(detect_pass_t *out);
 

@@ -44,21 +44,22 @@ typedef enum {
     YIELD_ABORT_KEY,     // the operator pressed a key
 } yield_t;
 
-// One pass of background work: the power FSM, the detect FIFO drain, and the
-// indicators. Everything the superloop does EXCEPT cli_service(), which is
-// omitted on purpose -- calling it from inside a command would re-enter the
-// dispatcher.
+// One pass of background work: the power FSM, the detect FIFO drain, the live
+// strobe hold checks, and the indicators. Everything the superloop does EXCEPT
+// cli_service(), which is omitted on purpose -- calling it from inside a
+// command would re-enter the dispatcher.
 //
 // main() calls this too, so there is exactly one definition of "background
 // work" and a yield can never service less than the superloop does.
 yield_t pitrac_service(void);
 
-// Block for `ms`, servicing in slices. Returns as soon as an abort condition
-// appears, so a caller that checks the result unwinds within a slice.
+// Block for `ms`, servicing in slices, and report any abort condition that
+// appeared -- including one on the final slice (host-tested, audit SVC-03).
 //
-// Callers should still treat this as best-effort: aborting at the next loop
-// boundary rather than mid-sleep is a difference of one slice, and unwinding
-// cleanly (beam off, chop ended, ADC mode restored) matters more than latency.
+// It does NOT cut the delay short: a caller asking for 20 ms of settling gets
+// exactly 20 ms, because a shortened settle silently corrupts whatever is
+// measured next. Callers unwind at their next loop boundary; unwinding cleanly
+// (beam off, chop ended, ADC mode restored) matters more than latency.
 yield_t pitrac_yield_ms(uint32_t ms);
 
 // Has the operator asked to stop? Latched by pitrac_service() when a character
@@ -92,10 +93,12 @@ void pitrac_abort_clear(void);
 // watchdog's own scratch registers, so an armed watchdog fought it.
 //
 // WHERE IT EARNS ITS PLACE IS PHASE 6, where a hang with 9 A through a
-// linear-mode FET is a genuinely different risk. Arm it there, deliberately,
-// in the strobe code. `wdog on` arms it for a session; `stat` shows the state.
-// Phase 8 should re-evaluate the Pi-present rule next to the FSM transitions
-// it depends on, in power_fsm.c.
+// linear-mode FET is a genuinely different risk. Live strobe mode arms it
+// (strobe_live_arm(), 2026-10-07) and disarms it again when live mode ends --
+// unless it was already armed, or the operator typed `wdog on` while live, in
+// which case it stays armed. `wdog off` is refused while live. `stat` shows the
+// state. Phase 8 should re-evaluate the Pi-present rule next to the FSM
+// transitions it depends on, in power_fsm.c.
 //
 // This was left as a comment in main() until 2026-08-28 and is implemented
 // here now because pitrac_service() is the one function guaranteed to run on

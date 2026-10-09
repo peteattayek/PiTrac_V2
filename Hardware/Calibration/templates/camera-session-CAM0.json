@@ -1,0 +1,42 @@
+{
+  "schema": "pitrac-camera-distortion-session-v1",
+  "status": "draft",
+  "session_id": "CAM0_REPLACE_WITH_RUN_ID",
+  "created_utc": null,
+  "preview_session_id": null,
+  "camera": {
+    "role": "CAM0",
+    "module_id": null,
+    "lens_id": null,
+    "holder_id": null,
+    "filter_stack_id": null,
+    "aperture_description": "fixed - record actual lens",
+    "identity_confirmed": false,
+    "focus_locked": false,
+    "focus_reference_mm": 390,
+    "coordinate_orientation": "native",
+    "image_size": [1600, 1400]
+  },
+  "acquisition": {
+    "fourcc": "Y12P",
+    "native_bit_depth": 12,
+    "png_bit_depth": 16,
+    "gain": 1,
+    "exposure_us": null,
+    "illumination_nm": 850,
+    "illumination_id": null,
+    "preview_url": "http://127.0.0.1:8765",
+    "capture_alias": "mira220"
+  },
+  "target": {
+    "board_id": "pitrac-charuco-11x8-20mm-v1",
+    "definition_file": "targets/board.json",
+    "measured_square_x_mm": null,
+    "measured_square_y_mm": null,
+    "print_scale_x_100_mm": null,
+    "print_scale_y_100_mm": null,
+    "flatness_verified": false,
+    "ir_contrast_verified": false
+  },
+  "captures": []
+}

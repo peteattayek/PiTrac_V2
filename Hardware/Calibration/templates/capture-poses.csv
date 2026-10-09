@@ -1,0 +1,41 @@
+pose_id,split,repeats,zone,pitch_deg_hint,yaw_deg_hint,roll_deg_hint,size_hint,notes
+T01,fit,3,center,0,0,0,large,One frontoparallel reference; do not repeat this as the whole dataset
+T02,fit,3,center,20,0,15,medium,Keep focus locked; distribute corners in both axes
+T03,fit,3,center,0,-20,-20,small,Move target only while preserving adequate sharpness
+T04,fit,3,left,15,20,0,large,Bring useful corners toward the native left edge
+T05,fit,3,right,-20,15,30,medium,Bring useful corners toward the native right edge
+T06,fit,3,top,20,-15,-25,large,Bring useful corners toward the native top edge
+T07,fit,3,bottom,-15,-25,20,medium,Bring useful corners toward the native bottom edge
+T08,fit,3,top-left,20,20,-15,large,Partial view allowed only with reliable distributed corners
+T09,fit,3,top-right,-20,20,15,medium,Cover native top-right rather than displayed top-right
+T10,fit,3,bottom-left,20,-20,25,large,Partial view allowed only with reliable distributed corners
+T11,fit,3,bottom-right,-20,-20,-25,medium,Cover native bottom-right rather than displayed bottom-right
+T12,fit,3,center,25,15,35,large,New physical plane pose; not a saved-frame repeat
+T13,fit,3,left,-25,0,-35,small,Maintain reliable marker IDs and two-axis point extent
+T14,fit,3,right,25,0,40,large,Keep stationary for three distinct frames
+T15,fit,3,top,0,25,-40,medium,Keep target flat and clear of glare
+T16,fit,3,bottom,0,-25,45,small,Do not refocus to accommodate a new target distance
+T17,fit,3,top-left,30,15,0,medium,Inspect corner quality near the native image boundary
+T18,fit,3,top-right,15,-30,20,large,Inspect corner quality near the native image boundary
+T19,fit,3,bottom-left,-30,15,-20,small,Do not accept a nearly collinear partial detection
+T20,fit,3,bottom-right,-15,-30,30,large,Retain original RAW PNG and metadata archive
+T21,fit,3,center,-20,25,-45,medium,Introduce a new tilt combination and roll
+T22,fit,3,left,20,-25,35,large,Spread corners from the edge toward the interior
+T23,fit,3,right,-20,-15,-30,small,Maintain sharpness with the operating focus unchanged
+T24,fit,3,top,25,20,25,small,New plane pose with useful native top-edge coverage
+T25,fit,3,bottom,-25,20,-25,large,New plane pose with useful native bottom-edge coverage
+T26,fit,3,top-left,15,-20,40,small,Keep marker identity and broad corner distribution
+T27,fit,3,top-right,-15,25,-40,large,Keep marker identity and broad corner distribution
+T28,fit,3,bottom-left,25,-15,45,medium,Check blur clipping and glare before accepting
+T29,fit,3,bottom-right,-25,-15,-45,small,Check blur clipping and glare before accepting
+T30,fit,3,center,30,-25,10,large,Final distinct fit pose; never include validation images in fit
+V01,validation,3,center,-15,30,-10,medium,Fresh reserved pose; keep all repeats out of fit
+V02,validation,3,left,30,-20,15,large,Fresh reserved pose with native left-edge coverage
+V03,validation,3,right,15,25,-15,small,Fresh reserved pose with native right-edge coverage
+V04,validation,3,top,-30,15,30,medium,Fresh reserved pose with native top-edge coverage
+V05,validation,3,bottom,20,-30,-30,large,Fresh reserved pose with native bottom-edge coverage
+V06,validation,3,top-left,-20,30,25,medium,Fresh reserved pose; assess corner residuals
+V07,validation,3,top-right,30,20,-25,small,Fresh reserved pose; assess corner residuals
+V08,validation,3,bottom-left,-15,-30,35,large,Fresh reserved pose; assess corner residuals
+V09,validation,3,bottom-right,30,-15,-35,medium,Fresh reserved pose; assess corner residuals
+V10,validation,3,center,-25,-20,5,small,After holdout-informed changes capture new V IDs and a fresh holdout

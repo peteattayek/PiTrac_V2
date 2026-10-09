@@ -13,7 +13,7 @@ const { decodeRawToRgba, rawPixelAt } = await import(
 );
 
 function config(fourcc, width, height = 1, padding = 0) {
-    const stride = (fourcc === "GREY" ? width : width / 4 * 5) + padding;
+    const stride = (fourcc === "GREY" ? width : fourcc === "Y10P" ? width / 4 * 5 : width / 2 * 3) + padding;
     return { fourcc, width, height, stride, sizeimage: stride * height };
 }
 
@@ -30,6 +30,48 @@ function assertPixel(rgba, width, x, y, value) {
     const index = (y * width + x) * 4;
     assert.deepEqual([...rgba.subarray(index, index + 4)], [value, value, value, 255]);
 }
+
+function pack12(values, destination, offset) {
+    destination[offset] = values[0] >> 4;
+    destination[offset + 1] = values[1] >> 4;
+    destination[offset + 2] = (values[0] & 15) | ((values[1] & 15) << 4);
+}
+
+test("Y12P preserves every native 12-bit value and maps display using only value >> 4", () => {
+    const layout = config("Y12P", 4096, 2, 16);
+    const bytes = new Uint8Array(layout.sizeimage).fill(199);
+    for (let y = 0; y < 2; y++) {
+        for (let x = 0; x < 4096; x += 2) {
+            pack12([0, 1].map(i => y === 0 ? x + i : 4095 - x - i),
+                bytes, y * layout.stride + x / 2 * 3);
+        }
+    }
+    const rgba = decodeRawToRgba(layout, bytes);
+    for (let y = 0; y < 2; y++) {
+        for (let x = 0; x < 4096; x++) {
+            const value = y === 0 ? x : 4095 - x;
+            assert.equal(rawPixelAt(layout, bytes, x, y), value);
+            assertPixel(rgba, layout.width, x, y, value >> 4);
+        }
+    }
+});
+
+test("full Mira220 RAW12 dimensions retain row boundaries and low nibbles", () => {
+    const layout = config("Y12P", 1600, 1400);
+    assert.equal(layout.stride, 2400);
+    const bytes = new Uint8Array(layout.sizeimage).fill(199);
+    for (let y = 0; y < layout.height; y++) {
+        pack12([(y % 256) * 16 + 1, 0], bytes, y * layout.stride);
+        pack12([0, ((y + 71) % 256) * 16 + 15], bytes, y * layout.stride + 2397);
+    }
+    const rgba = decodeRawToRgba(layout, bytes);
+    for (let y = 0; y < layout.height; y++) {
+        assertPixel(rgba, layout.width, 0, y, y % 256);
+        assertPixel(rgba, layout.width, 1599, y, (y + 71) % 256);
+        assert.equal(rawPixelAt(layout, bytes, 0, y), (y % 256) * 16 + 1);
+        assert.equal(rawPixelAt(layout, bytes, 1599, y), ((y + 71) % 256) * 16 + 15);
+    }
+});
 
 test("GREY is direct linear RGB with opaque alpha and ignores row padding", () => {
     const layout = config("GREY", 3, 2, 2);
@@ -129,6 +171,8 @@ test("both exports reject invalid raw configurations and body lengths", () => {
         [{ ...good, width: 0x40000000, stride: 0x40000000, sizeimage: 0x40000000 }, new Uint8Array(4)],
         [{ fourcc: "Y10P", width: 3, height: 1, stride: 5, sizeimage: 5 }, new Uint8Array(5)],
         [{ fourcc: "Y10P", width: 4, height: 1, stride: 4, sizeimage: 4 }, new Uint8Array(4)],
+        [{ fourcc: "Y12P", width: 3, height: 1, stride: 6, sizeimage: 6 }, new Uint8Array(6)],
+        [{ fourcc: "Y12P", width: 4, height: 1, stride: 5, sizeimage: 5 }, new Uint8Array(5)],
         [good, new Uint8Array(3)],
         [good, new Uint8Array(5)],
         [good, new Uint16Array(2)],

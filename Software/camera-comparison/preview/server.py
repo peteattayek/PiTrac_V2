@@ -74,6 +74,7 @@ class CameraConfig:
             "width": self.width,
             "height": self.height,
             "fourcc": self.fourcc,
+            "native_bit_depth": native_bit_depth(self.fourcc),
             "stride": self.stride,
             "sizeimage": self.sizeimage,
             "target_fps": self.target_fps,
@@ -83,6 +84,13 @@ class CameraConfig:
             "exposure_lines": self.exposure_lines,
             "vertical_blanking": self.vblank,
         }
+
+
+def native_bit_depth(fourcc: str) -> int:
+    depths = {"GREY": 8, "Y10P": 10, "Y12P": 12}
+    if fourcc not in depths:
+        raise PreviewError(f"Unsupported native pixel format: {fourcc}")
+    return depths[fourcc]
 
 
 def read_config(path: Path, name: str) -> CameraConfig:
@@ -105,15 +113,21 @@ def read_config(path: Path, name: str) -> CameraConfig:
     except (KeyError, ValueError) as error:
         raise PreviewError(f"{path}: missing or invalid camera configuration: {error}") from error
     profiles = {
-        "mira220": (1600, 1400, "GREY", 1, 1600),
-        "imx296": (1456, 1088, "Y10P", 0, 1820),
+        ("mira220", "GREY"): (1600, 1400, 1, 1600),
+        ("mira220", "Y12P"): (1600, 1400, 1, 2400),
+        ("imx296", "Y10P"): (1456, 1088, 0, 1820),
     }
-    if name not in profiles:
-        raise PreviewError(f"Unsupported camera: {name}")
-    width, height, fourcc, unity, minimum_stride = profiles[name]
+    if (name, config.fourcc) not in profiles:
+        raise PreviewError(f"{path}: unsupported raw preview profile: {name}/{config.fourcc}")
+    width, height, unity, minimum_stride = profiles[name, config.fourcc]
+    depth = native_bit_depth(config.fourcc)
+    if fields.get("native_depth") not in (None, str(depth)) or (
+        config.fourcc == "Y12P" and fields.get("native_depth") != "12"
+    ):
+        raise PreviewError(f"{path}: native depth disagrees with the pixel format")
     if (
         not identity_valid
-        or (config.width, config.height, config.fourcc, gain) != (width, height, fourcc, unity)
+        or (config.width, config.height, gain) != (width, height, unity)
         or not re.fullmatch(r"/dev/video\d+", config.device)
         or not re.fullmatch(r"/dev/v4l-subdev\d+", config.subdevice)
         or config.exposure_lines < 1 or config.vblank < 1
@@ -166,14 +180,18 @@ def display_pixels(config: CameraConfig, frame: bytes) -> bytes:
     width, height, stride = config.width, config.height, config.stride
     if config.fourcc == "GREY":
         return b"".join(frame[y * stride:y * stride + width] for y in range(height))
-    if config.fourcc != "Y10P" or width % 4:
+    if config.fourcc not in ("Y10P", "Y12P"):
         raise PreviewError("Unsupported display format")
+    group = 4 if config.fourcc == "Y10P" else 2
+    if width % group:
+        raise PreviewError("Incomplete packed pixel group")
+    packed = group + 1
     pixels = bytearray(width * height)
     for y in range(height):
-        row = frame[y * stride:y * stride + width // 4 * 5]
-        # Four high bytes are exactly the native RAW10 values >> 2.
-        for pixel in range(4):
-            pixels[y * width + pixel:(y + 1) * width:4] = row[pixel::5]
+        row = frame[y * stride:y * stride + width // group * packed]
+        # Packed MIPI high bytes are exactly the native samples >> (depth - 8).
+        for pixel in range(group):
+            pixels[y * width + pixel:(y + 1) * width:group] = row[pixel::packed]
     return bytes(pixels)
 
 
@@ -187,28 +205,35 @@ def encode_jpeg(config: CameraConfig, frame: bytes, quality: int) -> bytes:
 
 
 def encode_png(config: CameraConfig, frame: bytes) -> bytes:
-    """Preserve native sample values, including RAW10 low bits, without scaling."""
+    """Preserve native sample values, including packed low bits, without scaling."""
     if Image is None or ImageChops is None:
         raise PreviewError("Lossless PNG capture needs Pillow (python3-pil).")
     if len(frame) != config.sizeimage:
         raise PreviewError("Incorrect native frame length")
     if config.fourcc == "GREY":
         mode, pixels = "L", display_pixels(config, frame)
-    elif config.fourcc == "Y10P" and config.width % 4 == 0:
+    elif config.fourcc in ("Y10P", "Y12P"):
         mode = "I;16"
+        shift = native_bit_depth(config.fourcc) - 8
+        group = 4 if config.fourcc == "Y10P" else 2
+        if config.width % group:
+            raise PreviewError("Incomplete packed pixel group")
+        packed = group + 1
         size = (config.width, config.height)
         low_bits = bytearray(config.width * config.height)
-        tables = [bytes((value >> (pixel * 2)) & 3 for value in range(256)) for pixel in range(4)]
+        tables = [bytes((value >> (pixel * shift)) & ((1 << shift) - 1) for value in range(256))
+                  for pixel in range(group)]
         for y in range(config.height):
-            row = frame[y * config.stride + 4:y * config.stride + config.width // 4 * 5:5]
+            row = frame[y * config.stride + group:
+                        y * config.stride + config.width // group * packed:packed]
             for pixel, table in enumerate(tables):
-                low_bits[y * config.width + pixel:(y + 1) * config.width:4] = row.translate(table)
+                low_bits[y * config.width + pixel:(y + 1) * config.width:group] = row.translate(table)
         # Rebuild byte planes in bulk rather than blocking capture threads in a per-pixel loop.
         unpacked = bytearray(config.width * config.height * 2)
         with Image.frombytes("L", size, display_pixels(config, frame)) as high, \
                 Image.frombytes("L", size, bytes(low_bits)) as low:
-            with high.point([(value << 2) & 255 for value in range(256)]) as base, \
-                    high.point([value >> 6 for value in range(256)]) as upper, \
+            with high.point([(value << shift) & 255 for value in range(256)]) as base, \
+                    high.point([value >> (8 - shift) for value in range(256)]) as upper, \
                     ImageChops.add(base, low) as lower:
                 unpacked[0::2] = lower.tobytes()
                 unpacked[1::2] = upper.tobytes()
@@ -464,6 +489,13 @@ class PreviewState:
                 capture_error = "Capture requires both Mira220 and IMX296."
             elif any(camera["state"] != "live" for camera in cameras):
                 capture_error = "Waiting for recent raw frames from both cameras."
+            individual_capture = {}
+            for name in ("mira220", "imx296"):
+                camera = next((camera for camera in cameras if camera["name"] == name), None)
+                error = ("Lossless PNG capture needs Pillow (python3-pil)." if Image is None else
+                         f"{name} is not configured." if camera is None else
+                         f"Waiting for recent raw frames from {name}." if camera["state"] != "live" else None)
+                individual_capture[name] = {"available": error is None, "error": error}
             result: dict[str, object] = {
                 "preview_fps": self.preview_fps,
                 "preview_transport": self.transport,
@@ -476,6 +508,7 @@ class PreviewState:
                     "available": capture_error is None,
                     "error": capture_error,
                     "destination": "browser-download",
+                    "by_camera": individual_capture,
                 },
                 "isp": False,
                 "cameras": cameras,
@@ -484,16 +517,21 @@ class PreviewState:
                 result["exposure_control"] = self.exposure_control.public()
             return result
 
-    def capture_archive(self, requested_session: str) -> tuple[str, bytes]:
+    def capture_archive(self, requested_session: str, camera_name: str | None = None) -> tuple[str, bytes]:
         frames: list[tuple[CameraConfig, int, bytes, float]] = []
         with self.exposure_control.lock if self.exposure_control is not None else nullcontext():
             if requested_session != self.session_id:
                 raise ExposureConflict("Preview or exposure changed; wait for fresh status and capture again.")
             if Image is None:
                 raise PreviewError("Lossless PNG capture needs Pillow (python3-pil).")
-            if not {"mira220", "imx296"} <= self.stores.keys():
+            if camera_name is not None and camera_name not in ("mira220", "imx296"):
+                raise PreviewError("Unknown capture camera.")
+            names = ("mira220", "imx296") if camera_name is None else (camera_name,)
+            if camera_name is None and not set(names) <= self.stores.keys():
                 raise PreviewError("Capture requires both Mira220 and IMX296.")
-            for name in ("mira220", "imx296"):
+            for name in names:
+                if name not in self.stores:
+                    raise PreviewError(f"{name} is not configured.")
                 store = self.stores[name]
                 try:
                     snapshot = store.snapshot_with_time()
@@ -514,10 +552,10 @@ class PreviewState:
             "session_id": requested_session,
             "selected_utc": selected_utc.isoformat(),
             "selected_monotonic_seconds": selected_at,
-            "selection": "Latest live native frame from each camera when the request is handled.",
+            "selection": "Latest live native frame from each selected camera when the request is handled.",
             "hardware_synchronized": False,
             "timestamp_meaning": "Pi frame-receipt times, not sensor exposure timestamps.",
-            "receive_time_difference_ms": abs(frames[0][3] - frames[1][3]) * 1000,
+            "receive_time_difference_ms": abs(frames[0][3] - frames[1][3]) * 1000 if len(frames) == 2 else None,
             "isp": False,
             "cameras": cameras,
         }
@@ -533,7 +571,6 @@ class PreviewState:
                         "frame_id": frame_id,
                         "received_monotonic_seconds": received_at,
                         "age_at_selection_ms": (selected_at - received_at) * 1000,
-                        "native_bit_depth": 8 if config.fourcc == "GREY" else 10,
                         "png_bit_depth": 8 if config.fourcc == "GREY" else 16,
                         "png_sample_mapping": "Native unsigned values unchanged; no shift or scaling.",
                         "raw_file": raw_name, "raw_bytes": len(raw),
@@ -543,10 +580,11 @@ class PreviewState:
                     })
                 archive.writestr("metadata.json", json.dumps(metadata, indent=2) + "\n")
                 archive.writestr("README.txt",
-                    "Paired full-resolution native camera frames; NOT hardware synchronized.\n"
-                    "Mira220 PNG: unchanged 8-bit grayscale samples (0..255).\n"
+                    "Full-resolution native frames from the selected camera(s); NOT hardware synchronized.\n"
+                    "Mira220 PNG: native 8-bit (0..255) or native 12-bit (0..4095), per metadata.\n"
+                    "12-bit Mira220 uses a 16-bit grayscale PNG with unchanged, right-aligned values.\n"
                     "IMX296 PNG: all 10-bit samples (0..1023) in a 16-bit grayscale PNG.\n"
-                    "IMX296 is NOT stretched to 65535 and may look dark in normal viewers.\n"
+                    "12-bit Mira220 and IMX296 are NOT stretched to 65535 and may look dark in normal viewers.\n"
                     "No resize, gamma, brightness normalization, JPEG or ISP processing.\n"
                     "RAW files are byte-exact native buffers, including row padding.\n"
                     "Use metadata.json for dimensions, stride, format, exposure and SHA-256.\n"
@@ -719,6 +757,8 @@ def make_handler(state: PreviewState, web_root: Path) -> type[BaseHTTPRequestHan
         "/stream.js": ("stream.js", "text/javascript; charset=utf-8"),
         "/exposure.js": ("exposure.js", "text/javascript; charset=utf-8"),
         "/capture.js": ("capture.js", "text/javascript; charset=utf-8"),
+        "/pupil.js": ("pupil.js", "text/javascript; charset=utf-8"),
+        "/archive.js": ("archive.js", "text/javascript; charset=utf-8"),
         "/preview.css": ("preview.css", "text/css; charset=utf-8"),
     }
 
@@ -823,16 +863,18 @@ def make_handler(state: PreviewState, web_root: Path) -> type[BaseHTTPRequestHan
                 LOG.debug("Preview POST client disconnected; check downloads or exposure status")
 
         def _capture(self, payload: object) -> None:
-            if (not isinstance(payload, dict) or set(payload) != {"session_id"}
-                    or not isinstance(payload["session_id"], str)):
-                self._json(HTTPStatus.BAD_REQUEST, {"error": "Capture requires the current session_id."})
+            if (not isinstance(payload, dict) or set(payload) not in ({"session_id"}, {"session_id", "camera"})
+                    or not isinstance(payload["session_id"], str)
+                    or ("camera" in payload and (not isinstance(payload["camera"], str)
+                                                or payload["camera"] not in ("mira220", "imx296")))):
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "Capture requires the current session_id and an optional valid camera."})
                 return
             if not state.capture_lock.acquire(blocking=False):
                 self._json(HTTPStatus.CONFLICT, {"error": "Another capture download is in progress; try again shortly."})
                 return
             try:
                 try:
-                    filename, body = state.capture_archive(payload["session_id"])
+                    filename, body = state.capture_archive(payload["session_id"], payload.get("camera"))
                 except ExposureConflict as error:
                     self._json(HTTPStatus.CONFLICT, {"error": str(error)})
                     return
@@ -1004,7 +1046,8 @@ def main() -> int:
         state = PreviewState({config.name: FrameStore(config) for config in configs},
                              args.preview_fps, args.transport, args.jpeg_quality)
         web_root = Path(__file__).resolve().parent.parent / "web"
-        for asset in ("index.html", "preview.js", "decoder.js", "stream.js", "exposure.js", "preview.css"):
+        for asset in ("index.html", "preview.js", "decoder.js", "stream.js", "exposure.js",
+                      "capture.js", "pupil.js", "archive.js", "preview.css"):
             if not (web_root / asset).is_file():
                 raise PreviewError(f"Missing preview asset: {asset}")
         server = PreviewHTTPServer(args.port, state, web_root)

@@ -4,7 +4,7 @@ Two independent phases sharing a document because neither is large.
 
 ---
 
-> ## 🟡 FIRMWARE STATUS, audited 2026-08-25, updated 2026-08-31
+> ## 🟡 FIRMWARE STATUS, audited 2026-08-25, updated 2026-08-31, re-checked 2026-10-05
 >
 > | | Exists today? |
 > |---|---|
@@ -14,7 +14,7 @@ Two independent phases sharing a document because neither is large.
 > | Mic onset detection (high-pass, energy window, trigger) | ❌ not written |
 > | Mic-as-veto logic in the firing path | ❌ not written |
 > | **Phase 7 handshake** (`wait_both`, `t_cam`, FIRING FSM, `CAM_TIMEOUT` fault) | ❌ not written |
-> | PIO camera handshake (A3) | ❌ not written; `src/` has only `detect.pio` |
+> | PIO camera handshake (A3) | ❌ not written; `src/` has `detect.pio` and `strobe_burst.pio`, no camera program |
 > | I²S digital mic (J5) | ❌ not written, and deliberately deferred |
 >
 > **Phase 5's bring-up section is the one part of this document you can run today**, and it
@@ -278,6 +278,10 @@ shifts, CR-09 may reduce to nothing.
 
 ## 7a — Loopback, no Pi, no cameras
 
+⏸ **Not runnable on the current firmware** — the Phase 7 handshake (`wait_both`, `t_cam`,
+FIRING, `CAM_TIMEOUT`) is not written (status table above). This is the acceptance procedure
+for when it is. The same applies to 7b and 7c.
+
 ✅ **Safe with no camera attached, and unaffected by the 1.8 V problem** — the jumpers connect
 J4 to itself, so no 1.8 V domain is involved.
 
@@ -293,9 +297,9 @@ J4 to itself, so no 1.8 V domain is involved.
 | Probes | scope on **J4.3** |
 | Pins | GPIO10 = trigger out, GPIO8 = strobe_0 in, GPIO9 = strobe_1 in |
 
-This simulates a camera whose shutter opens instantly, and exercises the entire
+This simulates a camera whose shutter opens instantly, and will exercise the entire
 `wait_both(...)` handshake, the `t_cam` measurement, the timeout/abort path, and the FIRING
-state machine — with zero Pi and zero cameras.
+state machine — with zero Pi and zero cameras — once that firmware exists.
 
 ### Step 1 — static check before any firing
 

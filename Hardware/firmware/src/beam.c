@@ -87,7 +87,11 @@ static void beam_plan(uint32_t freq_hz, uint32_t *out_top, uint32_t *out_div) {
     uint64_t n = ((uint64_t)SYSCLK_HZ + freq_hz / 2u) / freq_hz;
     if (n < 2) n = 2;
     uint32_t div = 1;
-    while (n > 65536 && div < 256) {
+    // 255, not 256: the divider's integer field is 8 bits, and beam_configure()
+    // writes (uint8_t)div. 256 used to wrap to 0 below ~9 Hz, so the hardware
+    // ran at a divider the duty-ceiling check never saw. Below ~9 Hz the period
+    // now saturates at 65536 x 255 counts and the ACTUAL frequency is reported.
+    while (n > 65536 && div < 255) {
         div++;
         n = ((uint64_t)SYSCLK_HZ / div + freq_hz / 2u) / freq_hz;
     }

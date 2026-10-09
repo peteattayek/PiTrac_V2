@@ -94,6 +94,31 @@ size_t adc_ring_history(unsigned chan, uint16_t *dst, size_t n);
 bool adc_ring_running(void);
 
 // ---------------------------------------------------------------------------
+// FREEZE AND COPY -- the strobe's per-firing readback (6c).
+//
+// Stops the conversions, lets the one in flight land, and copies every sample of
+// `chan` taken from `since_us` up to the stop, OLDEST FIRST, into dst (at most
+// `cap`). Nothing races the copy, which is the point: a 15,000-sample
+// adc_ring_history() at 500 ksps would lose its tail to the writer.
+//
+// *stop_us (may be NULL) is the instant the conversions were stopped, read with
+// interrupts disabled. The newest sample is within one conversion period of it,
+// so it -- not a clock read by the caller beforehand -- is what anchors the
+// samples in time (review finding 2026-10-07: a USB interrupt between a caller's
+// clock read and the stop shifted a baseline/pulse split by its own length).
+//
+// Only samples written since the CURRENT MODE STARTED are returned -- beyond
+// that the ring still holds the previous mode's interleave, which would decode
+// as a plausible waveform that never happened. So the return can be short.
+//
+// LEAVES THE ENGINE OFF (adc_engine_mode() == ADC_MODE_OFF): the caller restores
+// what it wants with adc_engine_set_mode(). *overran (may be NULL) is set if any
+// copied sample carried the FIFO error flag.
+// ---------------------------------------------------------------------------
+size_t adc_ring_freeze_copy(unsigned chan, uint64_t since_us, uint16_t *dst, size_t cap,
+                            bool *overran, uint64_t *stop_us);
+
+// ---------------------------------------------------------------------------
 // ZERO-COPY RING ACCESS
 //
 // adc_ring_history() copies, and copying is too slow for the firing path: 8192

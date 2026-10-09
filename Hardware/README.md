@@ -33,13 +33,22 @@ Hardware/
 `../HARDWARE_REFERENCE.md` (repo root) is **generated** from the netlist by
 `firmware/tools/netlist_report.py`. Regenerate it rather than editing it.
 
+### Camera calibration
+
+[Calibration/README.md](Calibration/README.md) contains the camera-distortion
+procedure, A4/Letter ChArUco print templates, capture checklist, and session/result
+records. Use a separate calibration for each identified physical camera/lens
+stack at its final filter, illumination, and locked-focus state. Digital target
+checks do not establish physical print quality or calibrated camera coefficients.
+
 ### Firmware documents, in reading order
 
 | File | What it is |
 |---|---|
 | **`firmware/START_HERE.md`** | **Start here if you have never built Pico firmware.** Toolchain install, build, flash, first CLI commands. Assumes no C or embedded experience. |
 | `firmware/HANDOFF.md` | Working conventions, safety rules, tooling traps and hard-won measurement lessons, for anyone taking over the bench work. |
-| `firmware/PROGRESS.md` | **The living record.** What is done, open questions with where each gets resolved, every bench measurement taken, and the decisions behind the design. §0 and §10 hold the live status. Read before changing anything. |
+| `firmware/PROGRESS.md` | **The living record.** What is done, open questions with where each gets resolved, recent bench measurements, the decisions behind the design, and the code-audit backlog. §0 and §10 hold the live status. Read before changing anything. |
+| `firmware/PROGRESS_ARCHIVE.md` | Closed history moved verbatim out of PROGRESS.md (older measurement log, superseded resume blocks, dated Phase 3 results). Nothing in it is current status. |
 | `firmware/ARCHITECTURE.md` | Hardware-offload audit — what runs on PIO/PWM/DMA versus the CPU, and why. |
 | `firmware/BRINGUP_NEW_BOARD.md` | **The driver for a newly assembled board.** Only the per-board steps, in order, with a sign-off table. |
 | `firmware/BENCH.md` | Bring-up procedures, phases 0 → 1c. |
@@ -57,7 +66,7 @@ Hardware/
 
 Bring-up is staged, and each phase is independently provable on the bench before
 the next begins. **The live status is always `firmware/PROGRESS.md` §0 and the top
-block of §10** — this table is a summary as of 2026-09-28.
+block of §10** — this table is a summary as of 2026-10-05.
 
 | Phase | |
 |---|---|
@@ -70,7 +79,7 @@ block of §10** — this table is a summary as of 2026-09-28.
 | 3 · photodiode chain and calibration | 🟡 §3.1–3.6 done on board 3; first real ball waveform passed; comparator timing and the 20-pass set are open |
 | 4 · trigger-source experiment | 🟡 firmware written, bench not started |
 | 5 · microphone | 🟡 front end validated; no onset-detection or veto firmware yet |
-| 6 · strobe | ❌ no firmware yet (`strobe_burst.pio` is assembled but not loaded) |
+| 6 · strobe | 🟡 **6a/6b dry tests PASS on board 1 (2026-10-06)** — U5 clamp 135 µs, PIO timing, schedule, A7, interlock, gate DAC. **6c/6d live-current firmware written 2026-10-07** (guarded: staircase, 70 % ceiling, ADC0 readback per firing, overcurrent/stuck-on faults, watchdog); TP3 loop stability PASS 2026-10-08; next is the first live pulses (6c) |
 | 7 · cameras | ❌ no firmware yet; blocked on the 1.8 V I/O translator (CR-09) |
 | 8 · Pi integration | 🟡 power and shutdown handshake done; UART protocol not written |
 

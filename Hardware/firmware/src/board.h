@@ -43,7 +43,7 @@
 //    no disable path on the beam watchdog -- by design, no DC beam mode exists.
 //
 // 6. Both one-shots (U5 strobe, U9 beam) run from +3V3, not 5 V. This matters
-//    for the clamp width -- see STROBE_HW_LIMIT_US_ASSUMED.
+//    for the clamp width -- see STROBE_HW_LIMIT_US.
 //
 // 7. Panel LEDs on J7 are fed from the SWITCHED +5V rail. They cannot indicate
 //    standby. Use the on-board D5/D6 (always-on +3V3) for pre-latch feedback.
@@ -93,7 +93,8 @@
 #define PIN_PULSE_LIMIT_DIS 27   // out : DANGER -- defeats the strobe watchdog. TEST ONLY.
 #define PIN_GATE_PWM        28   // out (PWM 6A) : strobe current setpoint DAC
                                  //   *** SHARES SLICE 6A WITH PIN_READY_LED (GPIO12).
-                                 //   *** See the PWM SLICE MAP below. Phase 6 blocker.
+                                 //   *** Resolved in firmware 2026-10-02: GPIO12 is SIO
+                                 //   *** on/off and strobe.c owns slice 6. See the map.
 
 // --- Optical chain ----------------------------------------------------------
 #define PIN_MOD_PWM         31   // out (PWM 7B) : beam carrier. R69 1K pulldown.
@@ -158,10 +159,10 @@
 // was documented as "2A", GPIO31 as "3B", GPIO39 as "7B" -- all wrong).
 //
 //   GPIO11  PWR_BTN_LED       slice  5B    panel, PWM, active
-//   GPIO12  READY_LED         slice  6A    panel, PWM, active
+//   GPIO12  READY_LED         slice  6A    SIO ONLY (on/off) since 2026-10-02
 //   GPIO15  LATCH_CONTROL     slice  7B    SIO ONLY
 //   GPIO27  PULSE_LIMIT_DIS   slice  5B    SIO ONLY
-//   GPIO28  GATE_PWM          slice  6A    strobe DAC, Phase 6
+//   GPIO28  GATE_PWM          slice  6A    strobe DAC, PWM, owned by strobe.c
 //   GPIO31  MOD_PWM           slice  7B    beam carrier, PWM, active
 //   GPIO39  DEMOD_PWM         slice 11B    demod clock, PWM, active
 //   GPIO44  THRESHOLD_PWM     slice 10A    comparator DAC, Phase 3
@@ -185,13 +186,12 @@
 // 16 apart.** Note slice 6 channel B (GPIO13/GPIO29) is unassigned -- had the
 // ready LED been routed to GPIO13, it and GPIO28 would have coexisted perfectly.
 //
-// 1. GPIO12 READY_LED  vs GPIO28 GATE_PWM   -- slice 6A. **A REAL CONFLICT, NOT
-//    YET HIT.** panel.c drives 6A today; Phase 6b needs it for the strobe current
-//    setpoint. Whichever is configured second silently takes over both. The LED
-//    brightness would become the 9 A current setpoint, or vice versa.
-//    RESOLUTION: the ready LED must give up the PWM block -- plain on/off, or
-//    software PWM off the 50 Hz timer (ARCHITECTURE.md A4). Both GPIO numbers are
-//    fixed by the PCB, so the indicator is the one that yields. Do this in 6b.
+// 1. GPIO12 READY_LED  vs GPIO28 GATE_PWM   -- slice 6A. RESOLVED IN FIRMWARE
+//    2026-10-02 (ARCHITECTURE.md A7). Whichever pin was configured second used to
+//    take over both, so LED brightness could have become the strobe current
+//    setpoint. The ready LED now gives up the PWM block: panel.c drives it as SIO
+//    on/off, and strobe.c owns slice 6 and refuses to raise the gate if GPIO12 is
+//    ever found on GPIO_FUNC_PWM again. Never put GPIO12 back on PWM.
 //
 // 2. GPIO15 LATCH_CONTROL vs GPIO31 MOD_PWM -- slice 7B. Safe ONLY because GPIO15
 //    stays SIO. If GPIO15 were ever set to GPIO_FUNC_PWM it would switch the +5V
@@ -386,11 +386,10 @@
 // defeat it. Measured on this board 2026-08-13: t_w = 122.68 us, spread 0.22 us
 // over 1291 pulses.
 //
-// This is SEPARATE from STROBE_HW_LIMIT_US_ASSUMED below even though both are
-// the same part and RC today. That one describes U5 and is a placeholder until
-// Phase 6a.1 measures it; this one describes U9 and IS measured. When U5's real
-// number lands the two will diverge, and a shared constant would silently move
-// the beam's safety check with it.
+// This is SEPARATE from STROBE_HW_LIMIT_US below even though both are the same
+// part and RC. They have already diverged: U5 measured 135 us on board 1 against
+// U9's 122.68 us. A shared constant would silently move the beam's safety check
+// with the strobe's.
 #define BEAM_ONESHOT_CLAMP_US    122u    // U9, MEASURED 2026-08-13 (122.68 us)
 
 // Average-current ceiling for the beam LED, as an EFFECTIVE duty after the U9
@@ -402,6 +401,10 @@
 
 // DAC PWM: TOP+1 = 1024 -> 146.5 kHz, 3.2 mV steps.
 //
+// Shared by both PWM DACs, because their filters are identical 10K/0.1uF ladders
+// (netlist, rechecked 2026-10-02): the comparator threshold DAC (GPIO44, R86/C74
+// then R89/C76) and the strobe gate DAC (GPIO28, R55/C52 then R58/C53).
+//
 // Filtered by R86/C74 then R89/C76 (10K/0.1uF each). Those are NOT two
 // independent 1 ms poles -- the second section loads the first, so the real
 // poles of the cascaded ladder are at RC/0.382 = 2.62 ms and RC/2.618 = 0.382 ms.
@@ -410,33 +413,34 @@
 #define DAC_SETTLE_MS          20u    // 5 x 2.62 ms dominant pole, rounded up
 
 // ---------------------------------------------------------------------------
-// !! UNVERIFIED -- MEASURE BEFORE RELYING ON THESE !!
+// U5 STROBE ONE-SHOT CLAMP -- MEASURED.
 //
-// The .md quotes 113 us for both 74LVC1G123 one-shots. The datasheet says
-// t_w ~= K * Rext * Cext with K ~= 0.7 at Vcc = 3.3 V (and both one-shots ARE
-// on +3V3). With R = 56K and C = 2.2 nF that gives ~86 us, not 113 us.
+// The number moved three times, so the history matters. The .md quoted 113 us
+// for both 74LVC1G123 one-shots. The datasheet's K ~= 0.7 at 3.3 V predicted
+// ~86 us from R = 56K, C = 2.2 nF. U9 -- the identical circuit, BOM-confirmed --
+// measured 122.68 us on 2026-08-13 (spread 0.22 us over 1291 pulses), so K ~ 1.0.
+// U5 itself measured 135 us on board 1 in 6a.1 (2026-10-06), the same at 200 and
+// 1000 us commanded. The RC therefore varies ~10 % between parts.
 //
-// If the real clamp is 86 us then a 100 us software limit is ABOVE the hardware
-// limit, and every slow-ball pulse gets silently truncated by hardware instead
-// of controlled by firmware. Measure both clamps (Phase 2 step 4 for U9,
-// Phase 6a for U5), then set these from measurement and delete this warning.
-// ---------------------------------------------------------------------------
-// MEASURED on U9 (the identical circuit: 74LVC1G123, R 56K, C 2.2nF -- same part
-// numbers, BOM-confirmed) on 2026-08-13: t_w = 122.68 us, spread 0.22 us over
-// 1291 pulses. So K ~ 1.0, NOT the 0.7 assumed above and not the .md's 113 us.
+// STROBE_HW_LIMIT_US is a WORST CASE, not one board's number: board 1's 135 us
+// plus a little for parts not yet measured. It is the longest pulse the
+// hardware can deliver, which is what the charge interlock must assume when a
+// request is longer than the clamp. A board that measures above it in 6a.1
+// raises it. (It was STROBE_HW_LIMIT_US_ASSUMED = 122, U9's value, until
+// 2026-10-07.)
 //
-// These constants govern U5 (strobe), which has not been measured yet -- do that
-// in Phase 6a.1 and set them from U5's own number. The values below are U9's
-// measurement, which is the best available evidence and far better than the 86
-// that the wrong K produced.
-//
-// NOTE the previous SW limit was 73 us, which is BELOW the 100 us that the
-// .md S15 slow-ball row needs at 10 m/s -- so slow-ball pulses would have been
-// firmware-truncated by 27 %. 100 us sits 18 % under the measured 122.7 us
-// clamp, so it is both achievable and safely below the hardware limit.
-#define STROBE_HW_LIMIT_US_ASSUMED 122    // U9 measured; VERIFY ON U5 in Phase 6a.1
-#define STROBE_SW_MAX_US           100    // meets .md S15 at 10 m/s; 0.82 x HW limit
+// STROBE_SW_MAX_US must stay BELOW every board's clamp, or slow-ball pulses get
+// truncated by hardware instead of controlled by firmware. 100 us sits 35 us
+// under board 1's U5. It also meets the .md S15 slow-ball row (100 us at
+// 10 m/s); the 73 us limit before 2026-08-13 did not. A board whose U5 measures
+// under ~110 us needs a look at this margin.
+#define STROBE_HW_LIMIT_US         137    // U5 worst case; board 1 measured 135 us (6a.1)
+#define STROBE_SW_MAX_US           100    // meets .md S15 at 10 m/s; 35 us under board 1's U5
 #define STROBE_MIN_GAP_US          150    // let the VIR bulk caps breathe between pulses
+
+// How long past the nominal enable->IRQ0 time a firing may run before the engine
+// is stopped and the run reported as TIMEOUT.
+#define STROBE_TIMEOUT_MARGIN_US 20000u
 
 // Per-burst charge ceiling, in millicoulombs. BENCH_P6_STROBE 6a.3 has referred
 // to this constant since it was written; it did not exist until 2026-08-28.
@@ -451,14 +455,140 @@
 //   10 m/s  100 us   9.00 mC     *** OVER -- the interlock must SHED pulses ***
 //
 // So the slow-ball row is the only one that trips it, and shedding there is the
-// designed behaviour rather than an error: a slow ball crosses the frame over a
-// longer window, so dropping pulses costs sample density, not coverage.
+// designed behaviour rather than an error. The design (.md 13.4) sheds pulses
+// and KEEPS THE SPACING, down to BURST_PULSES_MIN: at 10 m/s the burst becomes
+// 6 pulses spanning 21.4 ms instead of 10 spanning 38.5 ms -- fewer freeze
+// positions, not sparser ones. (This comment used to say shedding "costs sample
+// density, not coverage". That contradicted the design and is withdrawn.)
 //
-// 🔴 UNVALIDATED. The 6.0 figure is a thermal budget for the LED bank that has
-// never been checked against the real bank, and 6a.3's job is to confirm the
-// interlock actually sheds at 10 m/s. Do not raise it to make a test pass.
+// What the number is: a VIR sag budget, Q = C x dV = ~670 uF x ~9 V (.md 13.1,
+// section 15), keeping headroom over the LED string Vf. It is not a thermal
+// limit, and the 670 uF effective bulk has never been measured.
+//
+// 🔴 UNVALIDATED on the real bank. 6a.3 confirms the interlock sheds at 10 m/s;
+// 6c is where it meets real current. Do not raise it to make a test pass.
 #define BURST_CHARGE_MAX_MC        6.0f
 #define BURST_PULSES_NOMINAL       10u    // S15 assumes 10 per burst, 9 gaps
+#define BURST_PULSES_MIN            3u    // .md 13.4: shed no further than this
+
+// Schedule inputs from the design (.md 13.1 config, 13.4 compute_schedule()).
+// Integer micrometres, so the section-15 table rounds exactly: as a float,
+// 42.67 is 42.66999817..., which would round the 20 m/s period (exactly
+// 2133.5 us) down to 2133 instead of 2134.
+#define STROBE_BLUR_BUDGET_UM      1000u   // max ball travel during one pulse
+#define STROBE_FREEZE_SPACING_UM  42670u   // one ball diameter between freezes
+#define STROBE_V_MIN_MPS            2.0f   // .md 13.1 plausibility window
+#define STROBE_V_MAX_MPS          100.0f
+
+// The DESIGN target (2 strings x 4.5 A). It is what `strobe cal` solves for by
+// default (6c) and the current at which burst charge is evaluated -- always the
+// design value, never a measured one, so the charge limits stay pessimistic.
+#define STROBE_TARGET_CURRENT_A     9.0f
+
+// The DAC filter output feeds U6A, a non-inverting stage referenced to ground:
+// gain = 1 + R60 20K / R59 10K = 3 (netlist 2026-10-02). U7, a complementary
+// emitter follower, drives TP3 and closes the loop, so TP3 = 3 x the filtered
+// DAC. U6 runs from +12 V, so TP3 cannot reach 3 x 3.3 V = 9.9 V exactly: expect
+// it to flatten somewhere near the top. R59 + R60 also load TP3 with 30K to GND.
+#define STROBE_GATE_AMP_GAIN        3.0f
+
+// Bench-command bounds. Written without a `u` suffix so cli.c can stringify them
+// into `help`, which keeps the help text from drifting away from the limits.
+#define STROBE_MIN_WIDTH_US          5     // .md 13.4 clamp floor; PIO encodes >= 3
+#define STROBE_CLAMPTEST_MAX_US   2000     // 6a.1 only: deliberately past the U5 clamp
+#define STROBE_MAX_GAP_US        50000     // sanity bound on a typed manual gap
+#define STROBE_BURST_MAX_PULSES     16
+
+// ---------------------------------------------------------------------------
+// 6c/6d LIVE MODE -- the first firmware that can command LED-bank current.
+//
+// Bench guards, not production limits: Phase 7's firing path will need its own.
+// The policy is in strobe_plan.c and the measurement in strobe_live.c, both
+// host-tested.
+//
+// THE ESTIMATE THE GUARDS ARE SIZED FROM -- NOT MEASURED; 6c measures it. There
+// is no analog servo: current = (TP3 - Vgs(Q9)) / (R65||R66 0.135 R + Q10's
+// Rds(on) ~0.02 R), so at most ~6 A per volt at TP3, less once Q9's own
+// transconductance is counted. One DAC level is 3.29 V x 3 / 1024 = 9.6 mV at
+// TP3, so at most ~0.06 A. The design expects TP3 ~4.5-6 V at 9 A.
+// ---------------------------------------------------------------------------
+
+// Gate ceiling while live: 717 of 1024 = 70.0 % (what `strobe gate 70` asks for)
+// -> TP3 ~6.9 V, above the 4.5-6 V the design expects at 9 A. `strobe cal`
+// fails at it rather than pass it.
+#define STROBE_LIVE_GATE_CEILING      717u
+
+// THE STAIRCASE RULE. While live, the gate may be raised to at most this many
+// levels above the highest level already FIRED AND MEASURED within limits since
+// live mode was armed. 31 levels = 3.0 % = 0.30 V at TP3 = at most ~1.8 A. So no
+// typed command can jump from a measured current to an unmeasured one more than
+// ~1.8 A higher. Arming starts the staircase again from 0. Typed steps of 3 %
+// (`strobe gate 3`, 6, 9 ... 69, 70) always fit: 3 % rounds to 30 or 31 levels.
+#define STROBE_LIVE_GATE_STEP_MAX      31u
+
+// Stop current: 1.2 x the 9 A design target (BENCH_P6 6c). A plateau above
+// I_STOP, or any single sample above I_PEAK_STOP, latches
+// FAULT_STROBE_OVERCURRENT and leaves live mode with the gate at 0.
+#define STROBE_LIVE_I_STOP_A         10.8f
+#define STROBE_LIVE_I_PEAK_STOP_A    13.0f
+
+// Pacing. Pulses come from the VIR bulk caps and the PSU only sees the average:
+//   - at least 100 ms between live firings (a burst is one firing);
+//   - at most 30 mC in any 10 s, booked BEFORE firing at the 9 A design current
+//     and the clamp-limited width -- pessimistic by construction. 30 mC per 10 s
+//     is 3 mA average from VIR. A 20 us pulse books 0.18 mC; a burst at the
+//     6 mC BURST_CHARGE_MAX_MC limit books 6 mC, so five of those per 10 s.
+#define STROBE_LIVE_MIN_INTERVAL_MS     100u
+#define STROBE_LIVE_BUDGET_MC          30.0f
+#define STROBE_LIVE_BUDGET_WINDOW_MS  10000u
+#define STROBE_LIVE_BUDGET_SLOTS        128u   // > window / interval: cannot fill
+
+// Live mode drops itself after this long with no strobe command: gate to 0,
+// and the watchdog it armed back off.
+#define STROBE_LIVE_IDLE_TIMEOUT_MS  300000u
+
+// ADC0 readback. BURST mode is ch0 alone at 500 ksps = 2 us per sample, into the
+// 16384-sample ring (32.768 ms). A live firing's enable->IRQ0 time must fit in
+// SPAN_MAX, leaving room for the PRE (baseline) and POST (turn-off) windows.
+// The S15 schedules at 10 m/s and faster span <= 21.4 ms, so they fit.
+#define STROBE_LIVE_SAMPLE_US             2u
+#define STROBE_LIVE_PRE_US              200u
+#define STROBE_LIVE_POST_US             200u
+#define STROBE_LIVE_SPAN_MAX_US       30000u
+#define STROBE_LIVE_WAVE_MAX_SAMPLES  15360u   // 30.72 ms: SPAN_MAX + PRE + POST
+
+// Pulse detection, in ADC codes (0.806 mV = 6.0 mA at 135 mV/A):
+//   - a pulse is a run of samples more than max(DETECT_MIN, half the peak)
+//     above the baseline;
+//   - a baseline (the mean of the window before the first edge) above
+//     BASELINE_MAX means current was flowing BEFORE the pulse.
+#define STROBE_LIVE_DETECT_MIN_CODES     12u   // ~72 mA
+#define STROBE_LIVE_BASELINE_MAX_CODES   40u   // ~0.24 A
+
+// Applied to EVERY live firing: current on for longer than this, still on at
+// the end of the window, or flowing before the pulse means the U5 clamp or Q10
+// did not end it -> FAULT_STROBE_CLAMP. (U5 measured 135 us.)
+#define STROBE_LIVE_MAX_ON_US           200u
+
+// 6d: `strobe clamptest` while live is admitted only at the gate level of the
+// most recent live firing, and only if that firing measured 0.5-2.5 A -- "low
+// only, ~2 A" (BENCH_P6 6d), and enough current that TP4 shows the pulse.
+#define STROBE_6D_MIN_A                 0.5f
+#define STROBE_6D_MAX_A                 2.5f
+
+// `strobe cal [A]`: one 20 us pulse per step. Coarse steps while no current is
+// detected (Q9 below threshold), fine steps once it is. Abort above 1.2 x the
+// target; fail at the ceiling. Both step sizes are under the staircase limit.
+#define STROBE_CAL_WIDTH_US              20u
+#define STROBE_CAL_COARSE_STEP           20u   // ~2.0 %, <= ~1.2 A
+#define STROBE_CAL_FINE_STEP              5u   // ~0.5 %, <= ~0.3 A
+#define STROBE_CAL_ABORT_RATIO          1.2f
+// 2 A, not lower: below it the first coarse step that shows current could land
+// over 1.2 x the target (tests: cal_steps_cannot_overshoot). 6d's ~2 A is in range.
+#define STROBE_CAL_MIN_A                2.0f
+#define STROBE_CAL_CONFIRM_PULSES         3u
+#define STROBE_CAL_CONFIRM_TOL          0.05f  // +-5 % of the target
+#define STROBE_CAL_MAX_POINTS           160u
 
 // ===========================================================================
 // Pi 5 SOFT-SHUTDOWN -- polarity decision

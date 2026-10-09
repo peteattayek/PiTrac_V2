@@ -32,6 +32,7 @@ esac
 total=0 rate=0 first=0 last=0 min_exposure= max_exposure= requested=
 for sensor in "${sensors[@]}"; do
     load_camera "$run/$sensor.tsv"
+    require_recording_profile
     frames=$(value "$run/run.tsv" "$sensor.frames")
     positive_integer "$frames" || die "Invalid expected frame count."
     awk -v warmup="$warmup" -v expected="$frames" -v bytes="${CAM[sizeimage]}" \

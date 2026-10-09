@@ -41,6 +41,9 @@ A [public Mira220 Pi 5/CFE streaming failure][mira-issue] remains open as of
 For live focusing with optional lossless paired-image downloads, see
 [the raw browser preview](FOCUS.md).
 It uses the same direct V4L2 configuration and must be stopped before recording.
+The preview also offers an opt-in native 12-bit Mira220 pupil/still profile;
+the video comparison and conversion workflow remains on the tested 8-bit Mira220
+and 10-bit IMX296 formats. See [the 12-bit pupil setup](FOCUS.md#optional-native-12-bit-mira220-pupil-profile).
 
 | Camera | Physical Pi port | Full active image | Sensor bus format | Memory fourcc | Timing target | Unity analogue gain code |
 |---|---|---|---|---|---|---|

@@ -22,6 +22,7 @@
 #include "pio_alloc.h"
 #include "config_store.h"
 #include "shot.h"
+#include "strobe.h"
 #include "service.h"
 #include "cli.h"
 
@@ -58,6 +59,10 @@ int main(void) {
 
     power_fsm_init();
     panel_init();
+    // After panel_init() (which must have taken GPIO12 off PWM -- A7) and after
+    // pio_alloc_init(). Leaves GPIO25 SIO low and the gate DAC at zero; nothing
+    // can pulse until the rail is up and a command is admitted.
+    strobe_init();
     // Configures the PWM slices but leaves GPIO31/39 as SIO outputs driven low.
     // The beam stays dark until 'beam on' is typed, and cannot start at boot.
     beam_init();
@@ -92,8 +97,9 @@ int main(void) {
     //
     // WHERE IT EARNS ITS PLACE IS PHASE 6. A hang with 9 A running through a
     // linear-mode FET is a genuinely different risk from a hang on the bench,
-    // and that is the point to arm it -- deliberately, in the strobe code,
-    // rather than as an ambient default nobody remembers is on.
+    // so live strobe mode (6c/6d, `strobe live on confirm`) arms it itself and
+    // disarms it again on exit -- rather than an ambient default nobody
+    // remembers is on.
     //
     // `wdog on` arms it for a session. Phase 8 will want it re-evaluated as the
     // FSM enters and leaves PS_RUNNING; the hook is pitrac_watchdog_enable()

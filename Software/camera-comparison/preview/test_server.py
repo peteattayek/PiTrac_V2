@@ -128,6 +128,27 @@ class FrameTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_mira12_profile_requires_correct_depth_and_stride(self) -> None:
+        fields = {
+            "schema": "1", "sensor": "mira220", "video": "/dev/video0",
+            "width": "1600", "height": "1400", "fourcc": "Y12P", "native_depth": "12",
+            "stride": "2400", "sizeimage": "3360000", "fps": "89.080246455",
+            "requested_exposure_us": "1000", "estimated_exposure_us": "999.761667",
+            "gain_code": "1", "subdev": "/dev/v4l-subdev2", "exposure_lines": "124", "vblank": "18",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mira220.tsv"
+            for bad in ({}, {"native_depth": "8"}, {"native_depth": None}, {"stride": "1600"}):
+                actual = {**fields, **bad}
+                path.write_text("".join(f"{key}\t{value}\n" for key, value in actual.items()
+                                        if value is not None), encoding="utf-8")
+                if bad:
+                    with self.assertRaises(PreviewError):
+                        read_config(path, "mira220")
+                else:
+                    config = read_config(path, "mira220")
+                    self.assertEqual(config.public()["native_bit_depth"], 12)
+
     def test_supported_profile_and_duplicate_rejection(self) -> None:
         fields = {
             "schema": "1", "sensor": "imx296", "video": "/dev/video8",
@@ -163,6 +184,15 @@ class ConfigTests(unittest.TestCase):
 
 
 class DisplayTests(unittest.TestCase):
+    def test_raw12_display_preserves_high_bytes_without_normalization(self) -> None:
+        from .test_capture import raw12_frame
+        config = CameraConfig("mira220", "/dev/video0", 4096, 2, "Y12P", 6160, 12320, 89, 1000, 1000)
+        raw, _ = raw12_frame(config)
+        expected = bytes((value % 4096) >> 4 for value in range(8192))
+        self.assertEqual(display_pixels(config, raw), expected)
+        with self.assertRaises(PreviewError):
+            display_pixels(replace(config, width=4095), raw)
+
     def test_grey_removes_padding_without_changing_values(self) -> None:
         self.assertEqual(display_pixels(small_config(), bytes([0, 127, 255, 88, 1, 2, 3, 99])),
                          bytes([0, 127, 255, 1, 2, 3]))

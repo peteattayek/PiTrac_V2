@@ -5,20 +5,22 @@ set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/common.sh"
 
-output= exposure=1000 gain=1 selection=both apply=0 calculate=0
+output= exposure=1000 gain=1 selection=both mira_depth=8 apply=0 calculate=0
 while (($#)); do
     case $1 in
         --help)
             echo "Usage: bash configure-cameras.sh --output NEW_DIR --apply [--camera both|mira220|imx296]"
             echo "       [--exposure-us 1000] [--gain 1]"
+            echo "       [--mira-bit-depth 8|12] (12: pupil preview/stills only, not video comparison)"
             echo "       bash configure-cameras.sh --calculate [--exposure-us 1000]"
             echo "--calculate is offline; --apply resets mutable links only on each selected CFE graph."
             exit 0 ;;
-        --output|--exposure-us|--gain|--camera)
+        --output|--exposure-us|--gain|--camera|--mira-bit-depth)
             (($# >= 2)) || die "Missing value for $1"
             case $1 in
                 --output) output=$2 ;; --exposure-us) exposure=$2 ;;
                 --gain) gain=$2 ;; --camera) selection=$2 ;;
+                --mira-bit-depth) mira_depth=$2 ;;
             esac
             shift 2 ;;
         --apply) apply=1; shift ;;
@@ -28,6 +30,8 @@ while (($#)); do
 done
 [[ $gain == 1 ]] || die "Matched comparison supports only 1x analogue gain; no digital substitute."
 [[ $selection == both || $selection == mira220 || $selection == imx296 ]] || die "Invalid camera selection."
+[[ $mira_depth == 8 || $mira_depth == 12 ]] || die "Mira220 bit depth must be 8 or 12."
+[[ $mira_depth == 8 || $selection != imx296 ]] || die "12-bit selection requires Mira220."
 validate_shared_exposure "$exposure"
 sensors=(mira220 imx296)
 [[ $selection == both ]] || sensors=("$selection")
@@ -81,6 +85,7 @@ for sensor in "${sensors[@]}"; do
     blank=$(value /dev/stdin vblank <<< "$settings")
     if [[ $sensor == mira220 ]]; then
         width=1600 height=1400 code=Y8_1X8 fourcc=GREY depth=8 hblank=1440 pixel_rate=384000000
+        if [[ $mira_depth == 12 ]]; then code=Y12_1X12 fourcc=Y12P depth=12; fi
     else
         width=1456 height=1088 code=Y10_1X10 fourcc=Y10P depth=10 hblank=304 pixel_rate=118800000
     fi

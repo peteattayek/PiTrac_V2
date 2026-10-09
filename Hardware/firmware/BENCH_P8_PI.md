@@ -26,7 +26,8 @@ exists to make this step boring.
 > | `pisim` for simulating a Pi | ✅ yes |
 > | **8.6 halt telemetry** (`PS_RUNNING` watching for an unrequested Pi drop, a `hist` command) | ❌ **not written** — see the prerequisite block in 8.6 |
 >
-> **8.0 through 8.5 are runnable as soon as phases 2–7 are done.** 8.6 is a firmware
+> **8.0 through 8.5 are runnable as soon as phases 2–7 are done** — and Phase 7's camera
+> handshake is not written yet (re-checked 2026-10-05), so not before then. 8.6 is a firmware
 > requirement written up as a bench section; it needs code before it can be tested.
 
 ## How to read the procedures below

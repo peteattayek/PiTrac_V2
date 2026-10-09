@@ -483,7 +483,7 @@ def main():
     w("")
     w("| pair | slice | status |")
     w("|---|---|---|")
-    w("| GPIO12 READY_LED / GPIO28 GATE_PWM | 6A | 🔴 **live conflict** — `panel.c` owns 6A now, Phase 6b wants it for the 9 A setpoint. `NEXT_BOARD_REV.md` CR-01 |")
+    w("| GPIO12 READY_LED / GPIO28 GATE_PWM | 6A | 🟠 **resolved in firmware 2026-10-02** — the ready LED is SIO on/off and `strobe.c` owns 6A for the gate DAC. **Never put GPIO12 back on PWM**: it would share the current setpoint. `NEXT_BOARD_REV.md` CR-01 |")
     w("| GPIO36 UART_TX / GPIO44 THRESHOLD_PWM | 10A | 🔴 **half-live** — the DAC is real PWM as of Phase 3. Safe only while GPIO36 stays SIO/UART. **Never put GPIO36 on PWM** |")
     w("| GPIO2 SYSTEM_READY / GPIO18 LED_RED | 1A | 🟠 **latent trap** — putting a status LED on PWM to dim it would toggle a Pi-facing signal |")
     w("| GPIO3 IRQ_OUT / GPIO19 LED_YELLOW | 1B | 🟠 **latent trap** — same, and IRQ_OUT goes to the Pi |")

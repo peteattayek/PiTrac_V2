@@ -129,6 +129,10 @@ bool detect_arm(bool on) {
         pio_sm_clear_fifos(PIO_BLK_HIGH, PIO_SM_DETECT);
         pio_sm_restart(PIO_BLK_HIGH, PIO_SM_DETECT);
         pio_sm_exec(PIO_BLK_HIGH, PIO_SM_DETECT, pio_encode_jmp(s_pio_offset));
+        // RXSTALL is sticky until written, and neither restart nor clear_fifos
+        // touches FDEBUG -- clear it with the counter so an overflow from before
+        // this arm is not reported against this run.
+        PIO_BLK_HIGH->fdebug = 1u << (PIO_FDEBUG_RXSTALL_LSB + PIO_SM_DETECT);
         s_events = s_fragments = s_dropped = 0;
         s_frag_open = false;
         s_have_last = false;
@@ -148,13 +152,14 @@ bool     detect_armed(void)      { return s_armed; }
 uint32_t detect_events(void)     { return s_events; }
 uint32_t detect_fragments(void)  { return s_fragments; }
 
-// Words the PIO pushed that we never read.
+// Overflow events: polls that found words discarded.
 //
 // `push noblock` DISCARDS when the 4-deep RX FIFO is full -- deliberately, so a
 // slow consumer can never stall the timer. But that makes the loss invisible to
 // a counter of what was read, and the case where it happens is heavy chatter,
 // which is precisely what the fragment count exists to measure. RXSTALL latches
-// it in hardware; we drain the latch so the count is cumulative.
+// it in hardware; we drain the latch so the count is cumulative. It is a count
+// of polls that saw the latch, NOT of words: >= 1 word was lost per increment.
 uint32_t detect_dropped(void) {
     uint32_t bit = 1u << (PIO_FDEBUG_RXSTALL_LSB + PIO_SM_DETECT);
     if (PIO_BLK_HIGH->fdebug & bit) {

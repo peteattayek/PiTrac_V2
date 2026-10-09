@@ -6,6 +6,7 @@
 #include "hardware/gpio.h"
 
 static volatile fault_t s_fault = FAULT_NONE;
+static volatile uint32_t s_fault_gen;
 
 static const char *const k_fault_names[FAULT__COUNT] = {
     [FAULT_NONE]                = "none",
@@ -18,6 +19,8 @@ static const char *const k_fault_names[FAULT__COUNT] = {
     [FAULT_ADC_OVERRUN]         = "ADC_OVERRUN",
     [FAULT_BEAM_BLOCKED]        = "BEAM_BLOCKED",
     [FAULT_CAM_TIMEOUT]         = "CAM_TIMEOUT",
+    [FAULT_STROBE_OVERCURRENT]  = "STROBE_OVERCURRENT",
+    [FAULT_STROBE_CLAMP]        = "STROBE_CLAMP",
     [FAULT_INTERNAL]            = "INTERNAL",
 };
 
@@ -174,11 +177,15 @@ void safe_state_reclaim_pins(void) {
 
 void fault_raise(fault_t f) {
     if (f == FAULT_NONE) return;
-    if (s_fault == FAULT_NONE) s_fault = f;   // first fault wins
+    if (s_fault == FAULT_NONE) {              // first fault wins
+        s_fault = f;
+        s_fault_gen++;
+    }
 }
 
 void fault_clear(void)      { s_fault = FAULT_NONE; }
 fault_t fault_current(void) { return s_fault; }
+uint32_t fault_generation(void) { return s_fault_gen; }
 
 const char *fault_name(fault_t f) {
     // No `f < 0` check: the enum has no negative members so its underlying type

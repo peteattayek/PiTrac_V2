@@ -11,6 +11,9 @@ encoded timestamp and duration with `ffprobe`. Frames are not duplicated or
 dropped to make a constant-rate video.
 
 The raw files, capture logs, frame tables and configuration remain unchanged.
+Native 12-bit Mira220 pupil captures are still-image inputs, not supported
+recording inputs to this converter. Use the default 8-bit Mira220 profile for
+video comparison; see [the pupil profile](FOCUS.md#optional-native-12-bit-mira220-pupil-profile).
 Input must be a completed disk recording marked `VERIFIED_RECORDING` or
 `VERIFIED_RECORDING_REDUCED_HEADROOM`. The converter checks the input manifest,
 native file sizes, frame sequences, timestamps and original capture-log evidence

@@ -12,15 +12,15 @@
 // always-on +3V3. (.md Section 17 item 7: a "soft-off glow" would need a wiring
 // change, not firmware.)
 //
-// Driven by PWM so brightness is controllable and so patterns can breathe rather
-// than just blink:
+// The ring LED is driven by PWM so patterns can breathe rather than just blink:
 //   GPIO11 -> PWM slice 5 channel B
-//   GPIO12 -> PWM slice 6 channel A
-// Slice 6A IS SHARED with GPIO28 GATE_PWM, the Phase 6b strobe-current DAC -- same
-// slice AND channel, so one compare register would drive both pins. The ready LED
-// must come off PWM before the gate DAC is ever configured (ARCHITECTURE.md A7,
-// NEXT_BOARD_REV.md CR-01). Slice 5B is shared with GPIO27, which must stay SIO.
-// (This line used to say neither slice collided; that used RP2040 numbering.)
+// The ready LED is plain SIO on/off (any brightness >= 50 % is on). GPIO12 is
+// PWM slice 6 channel A -- the SAME channel as GPIO28 Gate_PWM, the strobe
+// current DAC -- so it gave up PWM on 2026-10-02 (ARCHITECTURE.md A7,
+// NEXT_BOARD_REV.md CR-01). Never put it back on PWM: strobe.c owns slice 6 and
+// strobe_init() panics if it finds GPIO12 on PWM. Slice 5B is shared with
+// GPIO27, which must stay SIO.
+// (An older note here said neither slice collided; that used RP2040 numbering.)
 
 #ifndef PITRAC_PANEL_H
 #define PITRAC_PANEL_H
@@ -55,6 +55,7 @@ void panel_init(void);
 void panel_update(void);
 
 // Brightness override: 0..100 percent, -1 back to automatic, < -1 leave unchanged.
+// The ready LED is on/off: it lights at >= 50 %.
 void panel_override(int pwr_pct, int rdy_pct);
 bool panel_override_active(void);
 

@@ -1,0 +1,440 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pitrac:camera-distortion:result:v1",
+  "title": "PiTrac camera distortion result v1",
+  "description": "Structural and declared-status validation only; not proof of physical target quality, evidence truth, or system accuracy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "calibration_id", "session_id", "created_utc", "camera", "target", "coordinates", "model", "fit", "validation", "method", "provenance", "evidence"],
+  "properties": {
+    "schema": {"const": "pitrac-camera-distortion-result-v1"},
+    "status": {"enum": ["unmeasured", "fitted", "validated"]},
+    "calibration_id": {"type": "string", "pattern": "^CAM[01]_\\S+$"},
+    "session_id": {"type": "string", "pattern": "^CAM[01]_\\S+$"},
+    "created_utc": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/utc"}]},
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "module_id", "lens_id", "holder_id", "filter_stack_id", "coordinate_orientation", "image_size"],
+      "properties": {
+        "role": {"enum": ["CAM0", "CAM1"]},
+        "module_id": {"type": ["string", "null"]},
+        "lens_id": {"type": ["string", "null"]},
+        "holder_id": {"type": ["string", "null"]},
+        "filter_stack_id": {"type": ["string", "null"]},
+        "coordinate_orientation": {"const": "native"},
+        "image_size": {"type": "array", "prefixItems": [{"const": 1600}, {"const": 1400}], "items": false, "minItems": 2, "maxItems": 2}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["board_id", "definition_file", "definition_sha256", "dictionary", "squares", "square_length_mm", "marker_length_mm", "legacy_pattern", "marker_border_bits", "board_size_mm", "measured_square_x_mm", "measured_square_y_mm", "print_scale_x_100_mm", "print_scale_y_100_mm", "flatness_verified", "ir_contrast_verified"],
+      "properties": {
+        "board_id": {"const": "pitrac-charuco-11x8-20mm-v1"},
+        "definition_file": {"const": "targets/board.json"},
+        "definition_sha256": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "dictionary": {"const": "DICT_5X5_250"},
+        "squares": {"const": [11, 8]},
+        "square_length_mm": {"const": 20},
+        "marker_length_mm": {"const": 15},
+        "legacy_pattern": {"const": false},
+        "marker_border_bits": {"const": 1},
+        "board_size_mm": {"const": [220, 160]},
+        "measured_square_x_mm": {"$ref": "#/$defs/nullablePositive"},
+        "measured_square_y_mm": {"$ref": "#/$defs/nullablePositive"},
+        "print_scale_x_100_mm": {"$ref": "#/$defs/nullablePositive"},
+        "print_scale_y_100_mm": {"$ref": "#/$defs/nullablePositive"},
+        "flatness_verified": {"type": "boolean"},
+        "ir_contrast_verified": {"type": "boolean"}
+      }
+    },
+    "coordinates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "x_direction", "y_direction", "point_space", "pixel_units", "object_units", "distortion_units"],
+      "properties": {
+        "origin": {"const": "top-left-pixel-center"},
+        "x_direction": {"const": "right"},
+        "y_direction": {"const": "down"},
+        "point_space": {"const": "native-distorted-pixels"},
+        "pixel_units": {"const": "native-px"},
+        "object_units": {"const": "mm"},
+        "distortion_units": {"const": "dimensionless"}
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "coefficient_order", "camera_matrix", "distortion_coefficients"],
+      "properties": {
+        "name": {"const": "opencv-brown-conrady-5"},
+        "coefficient_order": {"const": ["k1", "k2", "p1", "p2", "k3"]},
+        "camera_matrix": {"$ref": "#/$defs/nullableK"},
+        "distortion_coefficients": {"type": "array", "items": {"type": ["number", "null"]}, "minItems": 5, "maxItems": 5}
+      }
+    },
+    "fit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pose_ids", "source_image_count", "accepted_image_count", "detected_corner_count", "rms_native_px", "max_native_px", "per_pose_residuals"],
+      "properties": {
+        "pose_ids": {"type": "array", "items": {"type": "string", "pattern": "^T[0-9]+$"}, "uniqueItems": true},
+        "source_image_count": {"$ref": "#/$defs/nullableCount"},
+        "accepted_image_count": {"$ref": "#/$defs/nullableCount"},
+        "detected_corner_count": {"$ref": "#/$defs/nullableCount"},
+        "rms_native_px": {"$ref": "#/$defs/nullableError"},
+        "max_native_px": {"$ref": "#/$defs/nullableError"},
+        "per_pose_residuals": {"type": "array", "items": {"allOf": [{"$ref": "#/$defs/poseResidual"}, {"properties": {"pose_id": {"pattern": "^T[0-9]+$"}}}]}, "uniqueItems": true}
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pose_ids", "source_image_count", "accepted_image_count", "detected_corner_count", "holdout_is_fresh", "provisional_rms_limit_native_px", "heldout_rms_native_px", "heldout_max_native_px", "center_rms_native_px", "edge_rms_native_px", "coverage_grid", "occupied_cells", "coverage_fraction", "zones", "per_pose_residuals", "straight_line_checks", "subset_stability"],
+      "properties": {
+        "pose_ids": {"type": "array", "items": {"type": "string", "pattern": "^V[0-9]+$"}, "uniqueItems": true},
+        "source_image_count": {"$ref": "#/$defs/nullableCount"},
+        "accepted_image_count": {"$ref": "#/$defs/nullableCount"},
+        "detected_corner_count": {"$ref": "#/$defs/nullableCount"},
+        "holdout_is_fresh": {"type": "boolean"},
+        "provisional_rms_limit_native_px": {"const": 0.5},
+        "heldout_rms_native_px": {"$ref": "#/$defs/nullableError"},
+        "heldout_max_native_px": {"$ref": "#/$defs/nullableError"},
+        "center_rms_native_px": {"$ref": "#/$defs/nullableError"},
+        "edge_rms_native_px": {"$ref": "#/$defs/nullableError"},
+        "coverage_grid": {"const": [4, 4]},
+        "occupied_cells": {"type": ["integer", "null"], "minimum": 0, "maximum": 16},
+        "coverage_fraction": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "zones": {"type": "array", "items": {"enum": ["center", "left", "right", "top", "bottom", "top-left", "top-right", "bottom-left", "bottom-right"]}, "uniqueItems": true},
+        "per_pose_residuals": {"type": "array", "items": {"allOf": [{"$ref": "#/$defs/poseResidual"}, {"properties": {"pose_id": {"pattern": "^V[0-9]+$"}}}]}, "uniqueItems": true},
+        "straight_line_checks": {"type": "array", "items": {"$ref": "#/$defs/straightLine"}, "uniqueItems": true},
+        "subset_stability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["checked", "max_focal_relative_change", "max_principal_point_shift_native_px", "max_corrected_point_shift_native_px"],
+          "properties": {
+            "checked": {"type": "boolean"},
+            "max_focal_relative_change": {"$ref": "#/$defs/nullableError"},
+            "max_principal_point_shift_native_px": {"$ref": "#/$defs/nullableError"},
+            "max_corrected_point_shift_native_px": {"$ref": "#/$defs/nullableError"}
+          }
+        }
+      }
+    },
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opencv_version", "opencv_build_sha256", "solver", "fit_flags", "initial_camera_matrix", "detector_derivative", "refinement_intensity_space", "detector_settings_description", "object_geometry_description", "residual_definition", "validation_strategy", "acceptance_criteria", "thresholds_locked_before_validation"],
+      "properties": {
+        "opencv_version": {"type": ["string", "null"]},
+        "opencv_build_sha256": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "solver": {"type": ["string", "null"]},
+        "fit_flags": {"type": "array", "items": {"$ref": "#/$defs/nonblank"}, "uniqueItems": true},
+        "initial_camera_matrix": {"$ref": "#/$defs/nullableK"},
+        "detector_derivative": {"const": "uint8 = uint16 >> 4"},
+        "refinement_intensity_space": {"enum": ["not-run", "uint8-derivative", "float32-native-12bit"]},
+        "detector_settings_description": {"type": ["string", "null"]},
+        "object_geometry_description": {"type": ["string", "null"]},
+        "residual_definition": {"const": "sqrt(mean(dx*dx + dy*dy))"},
+        "validation_strategy": {"const": "pose-disjoint-holdout"},
+        "acceptance_criteria": {"type": ["string", "null"]},
+        "thresholds_locked_before_validation": {"type": "boolean"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_manifest_file", "session_manifest_sha256", "source_images"],
+      "properties": {
+        "session_manifest_file": {"$ref": "#/$defs/nullablePath"},
+        "session_manifest_sha256": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "source_images": {"type": "array", "items": {"$ref": "#/$defs/capture"}, "uniqueItems": true}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fit_report_file", "heldout_report_file", "spatial_residual_map_file", "coverage_report_file", "straight_line_report_file", "subset_stability_report_file"],
+      "properties": {
+        "fit_report_file": {"$ref": "#/$defs/nullablePath"},
+        "heldout_report_file": {"$ref": "#/$defs/nullablePath"},
+        "spatial_residual_map_file": {"$ref": "#/$defs/nullablePath"},
+        "coverage_report_file": {"$ref": "#/$defs/nullablePath"},
+        "straight_line_report_file": {"$ref": "#/$defs/nullablePath"},
+        "subset_stability_report_file": {"$ref": "#/$defs/nullablePath"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"camera": {"properties": {"role": {"const": "CAM0"}}, "required": ["role"]}}, "required": ["camera"]},
+      "then": {"properties": {"calibration_id": {"pattern": "^CAM0_\\S+$"}, "session_id": {"pattern": "^CAM0_\\S+$"}}}
+    },
+    {
+      "if": {"properties": {"camera": {"properties": {"role": {"const": "CAM1"}}, "required": ["role"]}}, "required": ["camera"]},
+      "then": {"properties": {"calibration_id": {"pattern": "^CAM1_\\S+$"}, "session_id": {"pattern": "^CAM1_\\S+$"}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "unmeasured"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "model": {
+            "properties": {
+              "camera_matrix": {"const": [[null, 0, null], [0, null, null], [0, 0, 1]]},
+              "distortion_coefficients": {"const": [null, null, null, null, null]}
+            }
+          },
+          "fit": {
+            "properties": {
+              "pose_ids": {"maxItems": 0},
+              "source_image_count": {"type": "null"},
+              "accepted_image_count": {"type": "null"},
+              "detected_corner_count": {"type": "null"},
+              "rms_native_px": {"type": "null"},
+              "max_native_px": {"type": "null"},
+              "per_pose_residuals": {"maxItems": 0}
+            }
+          },
+          "validation": {
+            "properties": {
+              "pose_ids": {"maxItems": 0},
+              "source_image_count": {"type": "null"},
+              "accepted_image_count": {"type": "null"},
+              "detected_corner_count": {"type": "null"},
+              "holdout_is_fresh": {"const": false},
+              "heldout_rms_native_px": {"type": "null"},
+              "heldout_max_native_px": {"type": "null"},
+              "center_rms_native_px": {"type": "null"},
+              "edge_rms_native_px": {"type": "null"},
+              "occupied_cells": {"type": "null"},
+              "coverage_fraction": {"type": "null"},
+              "zones": {"maxItems": 0},
+              "per_pose_residuals": {"maxItems": 0},
+              "straight_line_checks": {"maxItems": 0},
+              "subset_stability": {
+                "properties": {
+                  "checked": {"const": false},
+                  "max_focal_relative_change": {"type": "null"},
+                  "max_principal_point_shift_native_px": {"type": "null"},
+                  "max_corrected_point_shift_native_px": {"type": "null"}
+                }
+              }
+            }
+          },
+          "method": {"properties": {"initial_camera_matrix": {"const": [[null, 0, null], [0, null, null], [0, 0, 1]]}}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"enum": ["fitted", "validated"]}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "calibration_id": {"pattern": "^CAM[01]_(?!REPLACE_WITH_RUN_ID$)\\S+$"},
+          "session_id": {"pattern": "^CAM[01]_(?!REPLACE_WITH_RUN_ID$)\\S+$"},
+          "created_utc": {"$ref": "#/$defs/utc"},
+          "camera": {
+            "properties": {
+              "module_id": {"$ref": "#/$defs/nonblank"},
+              "lens_id": {"$ref": "#/$defs/nonblank"},
+              "holder_id": {"$ref": "#/$defs/nonblank"},
+              "filter_stack_id": {"$ref": "#/$defs/nonblank"}
+            }
+          },
+          "target": {
+            "properties": {
+              "definition_sha256": {"$ref": "#/$defs/sha256"},
+              "measured_square_x_mm": {"$ref": "#/$defs/positive"},
+              "measured_square_y_mm": {"$ref": "#/$defs/positive"},
+              "print_scale_x_100_mm": {"$ref": "#/$defs/positive"},
+              "print_scale_y_100_mm": {"$ref": "#/$defs/positive"},
+              "flatness_verified": {"const": true},
+              "ir_contrast_verified": {"const": true}
+            }
+          },
+          "model": {
+            "properties": {
+              "camera_matrix": {"$ref": "#/$defs/measuredK"},
+              "distortion_coefficients": {"items": {"type": "number"}}
+            }
+          },
+          "fit": {
+            "properties": {
+              "pose_ids": {"minItems": 30},
+              "source_image_count": {"type": "integer", "minimum": 90},
+              "accepted_image_count": {"$ref": "#/$defs/count"},
+              "detected_corner_count": {"$ref": "#/$defs/count"},
+              "rms_native_px": {"$ref": "#/$defs/error"},
+              "max_native_px": {"$ref": "#/$defs/error"},
+              "per_pose_residuals": {"minItems": 30}
+            }
+          },
+          "method": {
+            "properties": {
+              "opencv_version": {"$ref": "#/$defs/nonblank"},
+              "opencv_build_sha256": {"$ref": "#/$defs/sha256"},
+              "solver": {"$ref": "#/$defs/nonblank"},
+              "initial_camera_matrix": {"$ref": "#/$defs/measuredK"},
+              "refinement_intensity_space": {"enum": ["uint8-derivative", "float32-native-12bit"]},
+              "detector_settings_description": {"$ref": "#/$defs/nonblank"},
+              "object_geometry_description": {"$ref": "#/$defs/nonblank"},
+              "acceptance_criteria": {"$ref": "#/$defs/nonblank"}
+            }
+          },
+          "provenance": {
+            "properties": {
+              "session_manifest_file": {"$ref": "#/$defs/relativePath"},
+              "session_manifest_sha256": {"$ref": "#/$defs/sha256"},
+              "source_images": {
+                "minItems": 90,
+                "contains": {"properties": {"split": {"const": "fit"}}, "required": ["split"]},
+                "minContains": 90
+              }
+            }
+          },
+          "evidence": {"properties": {"fit_report_file": {"$ref": "#/$defs/relativePath"}}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "validated"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "validation": {
+            "properties": {
+              "pose_ids": {"minItems": 10},
+              "source_image_count": {"type": "integer", "minimum": 30},
+              "accepted_image_count": {"$ref": "#/$defs/count"},
+              "detected_corner_count": {"$ref": "#/$defs/count"},
+              "holdout_is_fresh": {"const": true},
+              "heldout_rms_native_px": {"type": "number", "minimum": 0, "maximum": 0.5},
+              "heldout_max_native_px": {"$ref": "#/$defs/error"},
+              "center_rms_native_px": {"$ref": "#/$defs/error"},
+              "edge_rms_native_px": {"$ref": "#/$defs/error"},
+              "occupied_cells": {"type": "integer", "minimum": 1},
+              "coverage_fraction": {"type": "number", "exclusiveMinimum": 0},
+              "zones": {"minItems": 9},
+              "per_pose_residuals": {"minItems": 10},
+              "straight_line_checks": {
+                "minItems": 2,
+                "allOf": [
+                  {"contains": {"properties": {"region": {"const": "center"}}, "required": ["region"]}},
+                  {"contains": {"properties": {"region": {"const": "edge"}}, "required": ["region"]}}
+                ]
+              },
+              "subset_stability": {
+                "properties": {
+                  "checked": {"const": true},
+                  "max_focal_relative_change": {"$ref": "#/$defs/error"},
+                  "max_principal_point_shift_native_px": {"$ref": "#/$defs/error"},
+                  "max_corrected_point_shift_native_px": {"$ref": "#/$defs/error"}
+                }
+              }
+            }
+          },
+          "method": {"properties": {"thresholds_locked_before_validation": {"const": true}}},
+          "provenance": {
+            "properties": {
+              "source_images": {
+                "minItems": 120,
+                "contains": {"properties": {"split": {"const": "validation"}}, "required": ["split"]},
+                "minContains": 30
+              }
+            }
+          },
+          "evidence": {
+            "properties": {
+              "heldout_report_file": {"$ref": "#/$defs/relativePath"},
+              "spatial_residual_map_file": {"$ref": "#/$defs/relativePath"},
+              "coverage_report_file": {"$ref": "#/$defs/relativePath"},
+              "straight_line_report_file": {"$ref": "#/$defs/relativePath"},
+              "subset_stability_report_file": {"$ref": "#/$defs/relativePath"}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonblank": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "positive": {"type": "number", "exclusiveMinimum": 0},
+    "nullablePositive": {"type": ["number", "null"], "exclusiveMinimum": 0},
+    "count": {"type": "integer", "minimum": 1},
+    "nullableCount": {"type": ["integer", "null"], "minimum": 0},
+    "error": {"type": "number", "minimum": 0},
+    "nullableError": {"type": ["number", "null"], "minimum": 0},
+    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "utc": {"type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|\\+00:00)$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\:\\s]+(?:/[^/\\\\:\\s]+)*$"},
+    "nullablePath": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/relativePath"}]},
+    "nullableK": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {"type": "array", "minItems": 3, "maxItems": 3, "prefixItems": [{"$ref": "#/$defs/nullablePositive"}, {"const": 0}, {"type": ["number", "null"]}], "items": false},
+        {"type": "array", "minItems": 3, "maxItems": 3, "prefixItems": [{"const": 0}, {"$ref": "#/$defs/nullablePositive"}, {"type": ["number", "null"]}], "items": false},
+        {"const": [0, 0, 1]}
+      ],
+      "items": false
+    },
+    "measuredK": {
+      "allOf": [
+        {"$ref": "#/$defs/nullableK"},
+        {
+          "prefixItems": [
+            {"prefixItems": [{"$ref": "#/$defs/positive"}, {"const": 0}, {"type": "number"}]},
+            {"prefixItems": [{"const": 0}, {"$ref": "#/$defs/positive"}, {"type": "number"}]},
+            {"const": [0, 0, 1]}
+          ]
+        }
+      ]
+    },
+    "poseResidual": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pose_id", "accepted_image_count", "corner_count", "rms_native_px", "max_native_px"],
+      "properties": {
+        "pose_id": {"type": "string", "pattern": "^[TV][0-9]+$"},
+        "accepted_image_count": {"type": "integer", "minimum": 1, "maximum": 3},
+        "corner_count": {"$ref": "#/$defs/count"},
+        "rms_native_px": {"$ref": "#/$defs/error"},
+        "max_native_px": {"$ref": "#/$defs/error"}
+      }
+    },
+    "straightLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line_id", "region", "point_count", "source_archive_sha256", "before_rms_native_px", "after_rms_native_px", "before_max_native_px", "after_max_native_px"],
+      "properties": {
+        "line_id": {"$ref": "#/$defs/nonblank"},
+        "region": {"enum": ["center", "edge"]},
+        "point_count": {"type": "integer", "minimum": 3},
+        "source_archive_sha256": {"$ref": "#/$defs/sha256"},
+        "before_rms_native_px": {"$ref": "#/$defs/error"},
+        "after_rms_native_px": {"$ref": "#/$defs/error"},
+        "before_max_native_px": {"$ref": "#/$defs/error"},
+        "after_max_native_px": {"$ref": "#/$defs/error"}
+      }
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pose_id", "repeat", "split", "archive", "archive_sha256", "frame_id", "capture_id", "selected_utc"],
+      "properties": {
+        "pose_id": {"type": "string", "pattern": "^[TV][0-9]+$"},
+        "repeat": {"type": "integer", "minimum": 1, "maximum": 3},
+        "split": {"enum": ["fit", "validation"]},
+        "archive": {"$ref": "#/$defs/relativePath"},
+        "archive_sha256": {"$ref": "#/$defs/sha256"},
+        "frame_id": {"type": "integer", "minimum": 0},
+        "capture_id": {"$ref": "#/$defs/nonblank"},
+        "selected_utc": {"$ref": "#/$defs/utc"}
+      },
+      "allOf": [
+        {"if": {"properties": {"split": {"const": "fit"}}, "required": ["split"]}, "then": {"properties": {"pose_id": {"pattern": "^T[0-9]+$"}}}},
+        {"if": {"properties": {"split": {"const": "validation"}}, "required": ["split"]}, "then": {"properties": {"pose_id": {"pattern": "^V[0-9]+$"}}}}
+      ]
+    }
+  }
+}

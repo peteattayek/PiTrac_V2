@@ -6,6 +6,7 @@
 #include "adc_engine.h"
 #include "detect.h"
 #include "beam.h"
+#include "strobe.h"
 
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
@@ -206,13 +207,14 @@ bool power_rails_ready(void) {
 
 static void begin_shutdown(void) {
     // Nothing high-energy may run during teardown, ever.
-    // (Detection/strobe lockout hooks land here in phases 3 and 6.)
     // The panel LEDs are owned by panel.c and follow the state automatically.
     //
     // The beam goes dark at the START of teardown, not 15 s
     // later when the Pi finally reports down -- there is no reason to keep
     // driving D11 through a shutdown, and PI_SHUTDOWN_MAX_WAIT_MS is long.
     beam_enable(false);
+    // Same for the strobe: pulse pin low, engine stopped, gate setpoint zero.
+    strobe_safe_off();
     gpio_put(PIN_SYSTEM_READY, 0);
 
     pi_shutdown_assert(true);
@@ -416,6 +418,12 @@ void power_fsm_step(void) {
         // rail-down lands here, so this covers the button and the escape hatch
         // and the fault paths, not just the CLI.
         beam_enable(false);
+        // The strobe too, and for the same back-feed reason: U5 runs from the
+        // always-on +3V3, so a high GPIO25 would drive U8 (MCP1416, on +12 V
+        // derived from VIR) while it is losing power. Gate DAC to zero as well,
+        // so the next `on` never starts with a current setpoint -- and live
+        // strobe mode ends here too, restoring the watchdog it armed.
+        strobe_safe_off();
         gpio_put(PIN_LATCH_CONTROL, 0);
         gpio_put(PIN_SYSTEM_READY, 0);
         // GPIO33 must go low with the rail. U14 (the gated-HPF mux) runs from

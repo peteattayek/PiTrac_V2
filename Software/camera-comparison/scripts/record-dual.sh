@@ -14,6 +14,7 @@ while (($#)); do
             echo "       [--buffers 32] (8..32 mmap buffers requested per camera)"
             echo "Disk recording also uses a bounded 128 MiB mbuffer writer per camera."
             echo "Records all configured cameras. Seconds must be 1..60."
+            echo "12-bit Mira220 pupil profiles are preview/stills only; reconfigure 8-bit for recording."
             echo "Retains one extra second per camera so overlap can cover the requested duration."
             exit 0 ;;
         --config|--output|--seconds|--storage-report|--min-headroom-percent|--buffers)
@@ -81,6 +82,7 @@ buffers=0
 for sensor in mira220 imx296; do
     [[ -f $config/$sensor.tsv ]] || continue
     load_camera "$config/$sensor.tsv"
+    require_recording_profile
     assert_camera_live
     graph=$(media-ctl -d "${CAM[media]}" -p)
     idle_graph "$graph"

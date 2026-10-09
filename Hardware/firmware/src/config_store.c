@@ -48,10 +48,16 @@ static const pitrac_cfg_t *slot_ptr(int slot) {
     return (const pitrac_cfg_t *)(XIP_BASE + (slot ? CFG_SLOT_B : CFG_SLOT_A));
 }
 
+// The version must match too. Magic, size and CRC prove the record is intact,
+// not that its fields mean what this build thinks they mean: a layout change
+// that keeps the size (a field repurposed, a float read as int) would pass all
+// three. Bump CFG_VERSION on any such change and the old record falls back to
+// defaults instead of being misread. Board 3's record is v1 (seq 5).
 static bool slot_valid(const pitrac_cfg_t *c) {
-    return c->magic == CFG_MAGIC &&
-           c->size  == sizeof(pitrac_cfg_t) &&
-           c->crc32 == cfg_crc(c);
+    return c->magic   == CFG_MAGIC &&
+           c->version == CFG_VERSION &&
+           c->size    == sizeof(pitrac_cfg_t) &&
+           c->crc32   == cfg_crc(c);
 }
 
 void cfg_defaults(pitrac_cfg_t *c) {

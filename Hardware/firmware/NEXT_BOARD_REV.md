@@ -17,25 +17,37 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 
 | # | Change | Priority | Effort | If skipped |
 |---|---|---|---|---|
-| **CR-01** | Ready LED and strobe gate DAC share PWM slice 6A | 🔴 High | 1 trace | Firmware workaround exists, but no PWM dimming on the ready LED |
+| **CR-01** | Ready LED and strobe gate DAC share PWM slice 6A | 🟢 Low — **fixed in firmware 2026-10-02** | 1 trace | Only cost now: no PWM dimming on the ready LED (SIO on/off) |
 | **CR-02** | Virtual ground tracks the +5 V rail → false triggers | 🔴 **High — MEASURED ×7.43** | 1 part *or* 1 stage | ✅ **Confirmed on board 3 2026-08-31, at the predicted magnitude.** A 39 mV rail step reads as a ball at a 300 mV threshold; a rail sag *blinds* the detector. `PROGRESS.md` Q8, `BENCH_P3_DETECT.md` §3.6b |
 | **CR-03** | R46/R47 100K → 10K | 🟡 Med | 2 parts | ADC read path stays ~5 % low, needs a firmware fudge factor. Q9 |
 | **CR-04** | 10 kΩ pull-up on J8.37 | 🟡 Med | 1 part | Reset presents an ambiguous level to the Pi. Q10 |
 | **CR-05** | Panel ring LED on always-on power | 🟡 Med | Rework J7 feed | No fault indication whenever the rail is down |
-| **CR-06** | J1 terminal block for 14 AWG stranded | 🟡 Med | 1 part + footprint | Cannot land the supply wire you want to use |
+| **CR-06** | Larger terminals for +5 V power input and strobe output | 🟡 Med | 2 parts + footprints | Cannot land the intended power and strobe wiring |
 | **CR-07** | 12 V shunt regulator burns ~40 mA at idle | 🟢 Low | Redesign | ~31 % of idle power, forever |
 | **CR-08** | No PGOOD or VIR sense | 🟢 Low | Needs a free ADC | Boost readiness stays open-loop timed |
-| **CR-09** | Mira220 1.8 V I/O translation | 🔴 **Unblocked** | High | **Q6 ANSWERED**: I/O is 1.8 V, no 3.3 V tolerance. Both directions fail; 220 Ω fixes neither |
+| **CR-09** | Mira220 1.8 V I/O translation | 🔴 **High — Q6 answered; translation still required** before J4 meets a camera | High | **Q6 ANSWERED**: I/O is 1.8 V, no 3.3 V tolerance. Both directions fail; 220 Ω fixes neither |
 | **CR-11** | Net `Strobe_GND` is not ground — rename it | 🟢 Low | Rename | A name that invites clipping a scope ground to Q11's drain |
+| **CR-13** | U15 comparator has no hysteresis → chatters on every slow edge | 🔴 High (respin) | 1 resistor | One ball gives several edge pairs; the comparator transit becomes a lower bound and the ADC path has to carry those passes (firmware coalesces and flags them) |
+| **CR-14** | U15's input common-mode ceiling (~3.5 V) is below what U12B drives (~5.2 V) | 🟡 Med | Supply/clamp change *or* part swap | Large returns can push the LM393 outside its valid input range, where some parts invert; ADC saturation is the early warning |
 | **CR-16** | **Analog chain runs 0-5.2 V into a 3.3 V ADC** | 🔴 High | Rail or scale | **36 % of every signal is invisible to firmware**, and clipping corrupts the ADC reference |
 | **CR-17** | No test point on the comparator input node | 🟡 Med | 1 pad | The detection decision node cannot be probed; TP8 gives the threshold but not the signal |
 | **CR-18** | Mic high-pass corner may be too high at 2.41 kHz | 🟡 **Open — needs a ball** | 1 part (C84) | **45 % of a clap's energy sits below the corner** (measured 2026-08-31). If a ball impact looks like a clap rather than a snap, the front end is discarding the band the signal lives in. `BENCH_P5_P7_MIC_CAMERA.md` Phase 5 |
 | **CR-15** | LED→PD crosstalk saturates the TIA | 🟡 **Mitigated** | Baffle (mech) | ✅ **Fixed on the bench 2026-08-19** — linear to 25 % duty with good baffles and hands clear. Board fix still wanted; the workaround relies on operator discipline |
 | **CR-12** | Beam LED thermal path caps sustained duty at ~20 % | 🔴 High | **Vias + bigger sink** (fanless target) | Beam runs at 2/3 optical power while armed → worse Phase 3 SNR |
+| **CR-19** | TIA feedback: 120 kΩ resistor and 1.5 pF capacitor | Requested 2026-09-30 | Feedback component values / BOM | Requested TIA feedback values are not incorporated |
+| **CR-20** | Reduce the on-board green LED brightness | Requested 2026-09-30 | LED current-setting component | Green indicator remains too bright |
+| **CR-21** | Test points on the strobe drive chain (U5 Q, Q10 gate), and a GND test point by TP3/TP4 | 🟡 Med — **a probe sparked at R61, 2026-10-05**; the only GND TP is 72 mm from TP3 (2026-10-07) | 3–4 test points | The clamped pulse can only be probed at R61, 0.58–1.15 mm from +12 V and GND pads; a TP1 ground picks up ±80 mV of boost |
+
+*CR-10 was never assigned.*
 
 ---
 
-## CR-01 — 🔴 Ready LED and strobe gate DAC are the same PWM channel
+## CR-01 — 🟢 Ready LED and strobe gate DAC are the same PWM channel — optional since the firmware fix
+
+> **Status 2026-10-02: resolved in firmware.** `panel.c` drives GPIO12 as SIO on/off and
+> `strobe.c` owns slice 6, refusing to raise the gate if GPIO12 is ever found on PWM again
+> (6b bench proof pending). The board change below is now **optional** — it only buys back
+> ready-LED dimming. The analysis is the original finding, kept as written.
 
 ### Why
 
@@ -71,12 +83,12 @@ alternative if routing prefers it.
 
 ### Do you actually need this?
 
-**No — firmware can resolve it with no board change at all**, by driving the ready LED as
-plain on/off SIO and giving up PWM dimming on it. That is the planned Phase 6b fix and it
-costs nothing.
+**No — firmware resolves it with no board change at all**, by driving the ready LED as
+plain on/off SIO and giving up PWM dimming on it. ✅ **That fix landed 2026-10-02**
+(`panel.c`, `strobe.c`; `ARCHITECTURE.md` A7), bench check pending in 6b.
 
-Make this change only if **PWM brightness control on the ready indicator is wanted.** It is
-listed high priority because the *conflict* is high priority, not because the trace move is.
+Make this change only if **PWM brightness control on the ready indicator is wanted.** It was
+listed high priority because the *conflict* was high priority, not because the trace move is.
 
 ### Firmware impact
 
@@ -85,7 +97,7 @@ listed high priority because the *conflict* is high priority, not because the tr
 - Slice 6's `wrap`/`clkdiv` become owned by the strobe code. `panel.c` must not reconfigure
   them.
 - If the change is *not* made, `panel.c` must stop calling `gpio_set_function(PIN_READY_LED,
-  GPIO_FUNC_PWM)` before Phase 6b.
+  GPIO_FUNC_PWM)` before Phase 6b. ✅ Done 2026-10-02.
 
 ### Verify
 
@@ -317,7 +329,7 @@ code matches what the ring is showing.
 
 ---
 
-## CR-06 — 🟡 J1 terminal block for 14 AWG stranded
+## CR-06 — 🟡 Larger terminals for +5 V power input and strobe output
 
 ### Why
 
@@ -325,9 +337,12 @@ J1 is currently a **Würth 691137710002** (`CONN2_710002_WRE`, 2-position screw 
 3.5 mm-pitch WR-TBL family tops out around **1.5 mm² / 16 AWG** — confirm against the
 datasheet, but that is the family limit and it is why 14 AWG stranded will not land.
 
+**Scope expanded 2026-09-30:** larger terminals are requested for both the **+5 V power
+input** and the **strobe output**, not just J1.
+
 ### The change
 
-A larger block. Specify on **rating**, not only on wire gauge:
+A larger block for J1. Specify on **rating**, not only on wire gauge:
 
 | Requirement | Value |
 |---|---|
@@ -346,10 +361,20 @@ Ferrules on stranded wire are worth specifying in the build docs: bare stranded 
 clamp relaxes over thermal cycles, and this is the connector where a loose joint browns out a
 Pi.
 
+**Also enlarge the strobe output terminal and its PCB footprint.** Select its wire capacity
+and current rating for the intended strobe harness and pulse load; the exact replacement
+part is still to be selected.
+
+### Firmware impact
+
+None expected from the terminal changes.
+
 ### Verify
 
 Land 14 AWG stranded with a ferrule, torque to spec, then a thermal image at full load. The
-terminal should not be a hot spot relative to the pour.
+input terminal should not be a hot spot relative to the pour. Verify that the intended
+strobe wiring fits the new output terminal securely, and check it under the normal strobe
+pulse load.
 
 ---
 
@@ -425,7 +450,7 @@ tradeoff is visible at layout time, not as a recommendation.
 
 ---
 
-## CR-09 — 🔴 Mira220 1.8 V I/O translation — **Q6 ANSWERED 2026-08-14, no longer blocked**
+## CR-09 — 🔴 Mira220 1.8 V I/O translation — **Q6 ANSWERED 2026-08-14; translation still required**
 
 ### The sensor spec, from the datasheet
 
@@ -742,8 +767,10 @@ a component swap, and it should not be bolted on casually.
 
 ## When this list is acted on
 
-Update `PROGRESS.md` — close Q8 (CR-02), Q9 (CR-03), Q10 (CR-04) and A7 (CR-01), and move
-their measurement rows in §6 to reference the revision they were fixed in. Several bench
+Update `PROGRESS.md` — close Q8 (CR-02), Q9 (CR-03) and Q10 (CR-04), and move their
+measurement rows in §6 (most are now in `PROGRESS_ARCHIVE.md` §6) to reference the revision
+they were fixed in. A7 / CR-01 is already resolved in firmware; the trace move only restores
+ready-LED dimming. Several bench
 procedures change too; the ones that name specific voltages (2.59 V virtual ground, the 1.063
 ADC scale) are written against **this** board and will be wrong on the next one.
 
@@ -901,9 +928,7 @@ urgent or academic.
 > board change is still worth making, because the fix currently depends on baffling and on
 > operator discipline about hands.
 
-### (original finding, retained)
-
-## CR-15 (original) — Beam coupling saturates the TIA above ~2-3 % duty — CONFIRMED ON TWO BOARDS
+### Original finding (retained): beam coupling saturates the TIA above ~2-3 % duty — CONFIRMED ON TWO BOARDS
 
 > ### ⚠ CORRECTION 2026-08-19 — only the BOTTOM clipping is real
 >
@@ -1337,3 +1362,95 @@ ADC5 is this node **through R102 with a D14 clamp**, i.e. a copy truncated at 3.
 without this test point there is **no way to observe the true comparator input at all** - not
 by firmware, not on the bench. Every conclusion about detection margin currently rests on a
 clipped copy.
+
+---
+
+## CR-19 — TIA feedback resistor and capacitor values
+
+### Why
+
+Requested for the next board revision on **2026-09-30**.
+
+### The change
+
+- Change the **TIA feedback resistor R80 to 120 kΩ**.
+- Change the **TIA feedback capacitor to 1.5 pF**.
+
+The current schematic uses C68 and C70 in series for the feedback capacitance. Confirm the
+updated capacitor topology and component allocation when implementing the 1.5 pF target;
+do not apply that value to both existing capacitors without checking the resulting
+feedback capacitance.
+
+### Firmware impact
+
+Recheck detector gain, demodulator phase calibration, and detection thresholds against the
+revised feedback network. Update revision-specific hardware references and bench expectations
+when the schematic changes.
+
+### Verify
+
+Check the revised schematic and BOM for the 120 kΩ / 1.5 pF targets, then measure TIA
+stability, carrier response, and detection margin on the new board.
+
+---
+
+## CR-20 — Reduce the on-board green LED brightness
+
+### Why
+
+The on-board green LED is too bright; brightness reduction was requested on **2026-09-30**.
+This request concerns the board indicator, not the external panel ring LED.
+
+### The change
+
+Reduce the green LED's drive current while keeping it clearly visible as an indicator.
+Select the revised current-setting component value during the board revision design;
+no specific brightness or resistor value has been requested.
+
+### Firmware impact
+
+None expected for a hardware current reduction. This does not replace the separate ready
+LED / PWM-channel change in CR-01.
+
+### Verify
+
+Compare the indicator with the current board under the same supply and lighting conditions.
+Confirm reduced brightness and clear visibility.
+
+---
+
+## CR-21 — 🟡 Test points on the strobe drive chain, away from +12 V
+
+### Why
+
+The clamped strobe pulse (U5 Q, net `Net-(U5A-Q)`) has **no test point**. Its only exposed
+copper is U5 pin 5 (0.35 mm pad, 0.5 mm pitch) and **R61**, an 0805 0 Ω link that sits in U8's
+decoupling: R61 pad 2 is **0.58 mm** from GND (R62.1) and **0.75 mm** from +12 V (C54.1, 4.7 µF);
+pad 1 is 0.68 mm from GND (R65.1) and 1.15 mm from +12 V. On **2026-10-05 a hand-held probe on
+R61 sparked on board 2** (see `PROGRESS.md` §6). A slip from R61 onto C54.1 puts 12 V on U5's
+3.3 V output. The Q10 gate (after U8, up to 12.6 V) has the same problem, at R64. This is the
+same class of finding as CR-17 (no test point on the comparator node).
+
+### The change
+
+Add test points, each with **≥ 1.5 mm clearance to any other exposed copper** and a nearby GND
+point for a probe ground:
+
+- **TP on `Net-(U5A-Q)`** (U5 Q, 3.3 V logic) — the U5 clamp measurement.
+- **TP on `Net-(Q10-G)`** (Q10 gate, 0–12 V) — U8 drive level and edges.
+- Optionally **TP on `Strobe_Pulse`**, which today is probed at R57.
+- **A GND test point within ~5 mm of TP3 and TP4** (added 2026-10-08, data below), and move
+  **TP3 away from C56's +12 V pad** (0.59 mm today). The board's only GND test point, TP1, is
+  **72 mm** from TP3 with the LM5157 boost between them. Grounding the scope there put ±70–85 mV
+  of boost bursts on TP3 (`PROGRESS.md` §6 2026-10-07); on TP4 that reads as ±0.6 A of apparent
+  strobe current. Today the workaround is soldered leads on R66's GND pad
+  (`BENCH_P6_STROBE.md` 6c, "Leads to solder").
+
+### Firmware impact
+
+None.
+
+### Verify
+
+Each test point is reachable with a 10× scope probe and a ground spring without touching
+another pad. 6a.1 can be run with only clip leads on test points.

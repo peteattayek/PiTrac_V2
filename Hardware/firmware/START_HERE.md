@@ -222,9 +222,11 @@ it turns the board into its own oscilloscope.
 You've finished **Phase 0**. Next is **Phase 0.5**, the first time the board sees
 real power — and the first time anything can actually go wrong.
 
-Open **`BENCH.md`** and work through Phase 0.5. It needs your bench supply,
-current-limited, and you go up in stages: 0.3 A first to confirm only the low
-power domain draws, then 2 A to bring up the 36 V boost.
+Open **`BENCH.md`** and work through Phase 0.5. It needs your bench supply **set to
+5.20 V** (the design value; below ~5.05 V the firmware refuses to latch, because it
+cannot tell the supply from USB power) and current-limited, and you go up in stages:
+0.3 A first to confirm only the low power domain draws, then 2 A to bring up the
+36 V boost.
 
 Record every measurement in the table in **`PROGRESS.md` §6** as you take it.
 Several later decisions depend on those numbers.
@@ -307,16 +309,11 @@ up once you're iterating; the buttons get old around the twentieth cycle.
 | `ARCHITECTURE.md` | What runs on PIO/PWM/DMA vs the CPU |
 | `SETUP.md` | Toolchain detail and the manual install path |
 
-**Current status (2026-09-28): phases 0 through 2 are complete and closed. Phase 3 §3.1–3.6
-are complete on board 3** — including §3.6b (Q8 measured at **×7.43, FAILS**) and §3.6 Check 2
-(`scan carrier` flatness, **PASS**). **§3.7's first real ball waveform passed**
-(3.102 V peak, ~22.7 ms half-height width); full timing comparison remains open.
-A **stale-`on` shutdown/restart bug** was exposed and fixed: 20 host tests pass, and the fix
-is flashed with **BENCH.md Test 6 PASS** (owner-reported 2026-09-28). See `PROGRESS.md`
-§10 rather than repeating the completed pilot.
-✅ **Phase 5 mic bring-up is complete** (2026-08-31): front end
-validated, `capture trig` added. See `PROGRESS.md` §10 for the resume block — it is always more
-current than this line.
+**Current status lives in `PROGRESS.md` §0 and the top block of §10** — not here, so this file
+does not go stale. As of 2026-10-06 **strobe 6a/6b have passed on board 1**, and the 6c/6d
+live-current firmware is written (2026-10-07 build) and the TP3 loop stability check passed
+(2026-10-08); the next work is 6c on board 1 — see `PROGRESS.md` §10. The results index for Phase 3 is
+in `PROGRESS.md` §5. Older history is in `PROGRESS_ARCHIVE.md`.
 
 🔵 **Bringing up a newly assembled board? Use `BRINGUP_NEW_BOARD.md`, not this document.**
 This one teaches the toolchain from nothing; that one is the ordered per-board driver, and

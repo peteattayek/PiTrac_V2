@@ -24,13 +24,18 @@ directions — redoing settled physics, or trusting a constant that is actually 
 **Everything in this document is per-board.** If a step here is ever found to be design-level,
 it belongs in a `BENCH*.md` section and should be deleted from here.
 
+**Each section is the condensed per-board run** — board state, commands, pass criteria, what to
+record. The reasoning, history and troubleshooting live in the canonical `BENCH*.md` section
+named at the top of each section, and are not repeated here. If the two ever disagree on a
+command or a pass criterion, the BENCH section is right and this file gets fixed.
+
 ### Already settled — do NOT redo these on a new board
 
 | | established |
 |---|---|
 | GPIO33 polarity: **TRACK is LOW** | TMUX1219 truth table + 4 independent bench confirmations |
 | **Carrier = 104.1667 kHz, fixed for every board** | design decision 2026-08-28, `PROGRESS.md` §8 |
-| PWM slice collisions, PIO `GPIOBASE` allocation | `ARCHITECTURE.md` A2/A7 |
+| PWM slice collisions, PIO `GPIOBASE` allocation | [`ARCHITECTURE.md`](ARCHITECTURE.md) A2/A7 — A7 fixed in firmware 2026-10-02 (GPIO12 ready LED is SIO on/off) |
 | Q1 mechanism (U9 clamp ≈ K·R·C), Q2 (no duty limit to 250 kHz) | Phase 2c / 2d |
 | Ambient rejection ≈ **48 dB**; the lock-in premise | Phase 3.3, board 2 |
 | The "bursty noise" was **beam return off the room**, not a fault | Phase 3.3, board 2 |
@@ -54,6 +59,28 @@ it belongs in a `BENCH*.md` section and should be deleted from here.
 | CR-15 baffle acceptance | optics and operator discipline | 8 |
 | **`cal demod` + `cal model`** | chain delay differs 340–600 ns board to board | 9 |
 | **Threshold DAC vref + comparator offset** | LM393 Vos is ±15 mV per part | 10 |
+
+### Fast path: strobe dry tests only (added 2026-10-05)
+
+To run `BENCH_P6_STROBE.md` **6a/6b** on a new board — e.g. to compare its strobe chain with
+another board's — you need the sections that protect the board and prove its power, not the
+optical ones:
+
+| § | Needed for 6a/6b? | Why |
+|---|---|---|
+| 0 TIA variant | no — record it if convenient | optical only |
+| **1** PSU 5.20 V, current limit, flash, `id`, UID | **yes** | |
+| **2** Dead-board rail smoke test (J2) | **yes** | finds shorts before the firmware closes the latch, and measures **VIR 36 V and TP2 +12 V** — U8's supply |
+| **3** E9 `pins` | **yes** (one command) | GPIO24 latching high would make the firmware think a Pi is present |
+| **4** ADC +5 V scale | **yes** | the latch guard decides whether `on` latches on USB; `adc5vcal` + `cfg save` if off |
+| **5** Tests 1 and 2 | **yes** | USB refusal, and a real latch: +5 V, VIR, TP2, `BENCH_RUNNING` |
+| 5 Tests 3–5 | before any Pi, not before 6a | reset fail-safe and supply-pull protect a Pi on J8 |
+| 6–10 beam, detect, CR-15, cal, threshold | no | the beam stays off through all of Phase 6 |
+
+Then go straight to `BENCH_P6_STROBE.md` 6a **Step −1** (unpowered: R61 pad 1 → GND ≈ 1 kΩ)
+and Step 0 — Step 0's `strobe` status also covers the A7 and
+GPIO27 readback from §6. **A board brought up this way is strobe-only:** mark its sign-off column
+"fast path — §6–§10 not done" and finish them before it is used for any optical or Pi work.
 
 ---
 
@@ -83,7 +110,10 @@ than assuming.
 
 ## 1. Before anything is energised
 
-- [ ] 🔴 **SET THE PSU CURRENT LIMIT TO 2 A BEFORE ANYTHING ELSE.** See the box below.
+- [ ] 🔴 **SET THE BENCH SUPPLY TO 5.20 V AND ITS CURRENT LIMIT TO 2 A BEFORE ANYTHING
+      ELSE.** Set both now with the output off and the leads not on J1 — this section runs on
+      USB only, and the supply first goes on in §2. Check both with a DMM/the PSU display. See
+      the two boxes below.
 - [ ] USB-C to **J6** only. **No bench supply. No Pi. J2 jumper OFF.**
 - [ ] Firmware flashed (`SETUP.md`). A blank RP2354 enumerates as `RPI-RP2` on its own —
       the SW1/SW2 dance is only needed once there is an image to interrupt.
@@ -98,6 +128,24 @@ id
 - [ ] Note the **UID** — write it in the sign-off table at the bottom.
 
 ---
+
+> ### 🔴 PSU voltage — 5.20 V, every session
+>
+> The design supply is a Meanwell LRS-75-5 **set to 5.2 V**, and the firmware is built around
+> that number. Set the bench supply to **5.20 V** — not 5.0 V.
+>
+> - **Below ~5.05 V the board will not power up.** `V5_MIN_FOR_LATCH` (`src/board.h`) is
+>   **5.05 V**: the midpoint between USB-only power (**4.85 V** through D8) and the 5.2 V design
+>   supply. It is how the firmware tells a real supply from USB. A 5.0 V supply sits on the USB
+>   side, so `on` is refused and `adc5v` reports the latch **INHIBITED**. Nothing is damaged;
+>   it just will not latch.
+> - **While latched, `V5_MIN_SUSTAINED` = 4.90 V** (debounced 500 ms) drops the latch with
+>   `FAULT_SUPPLY_LOST`. A supply set low, or long thin leads that sag under load, will trip it.
+> - **Every expected reading in this document assumes 5.2 V** — e.g. TP6/TP7/TP9/TP10 =
+>   +5VA / 2 ≈ **2.59 V**, and `adc5v` ≈ **5.20 V** in §4.
+>
+> Measure at **J1** with a DMM, not only on the PSU display: the §4 trim (`adc5vcal`) is made
+> against the DMM reading at J1.
 
 > ### 🔴 PSU current limit — 2 A, and check it every session
 >
@@ -124,8 +172,10 @@ id
 latch is open and nothing is energised until you ask — that is exactly the window this test
 lives in.
 
-- [ ] Fit the **J2 jumper**, apply the bench supply, and confirm the rails come up without
-      the firmware being involved: **+5 V**, **VIR 36 V**, **TP2 +12 V**, **+5VA**, **TP6 +2V5**.
+- [ ] Fit the **J2 jumper**, apply the bench supply (**5.20 V, 2 A limit, into J1**), and
+      confirm the rails come up without
+      the firmware being involved: **+5 V**, **VIR 36 V** (J3 pin 1 → GND; not across J3, whose
+      pin 2 is `VIR_RTN`), **TP2 +12 V**, **+5VA**, **TP6 +2V5**.
 - [ ] Current draw sane, nothing warm, nothing smells.
 - [ ] **Scope the LM5157 SW node.** Decide the R11/C9 snubber (DNP by default — fit only if it
       rings), **and record the switching frequency**.
@@ -180,7 +230,7 @@ sample-and-hold settling through the 50 kΩ R46/R47 divider (`PROGRESS.md` Q9). 
 chip to chip.** The compile-time scale is 1.063; board 1 trimmed to 1.0627, but that is one
 sample.
 
-With the **bench supply connected**:
+With the **bench supply connected at 5.20 V** (DMM at J1):
 
 ```
 adc5v
@@ -210,7 +260,12 @@ cfg save
 
 ## 5. Latch guard and supply monitor (Phase 1)
 
-Both of these exist because of live bench finds. Do not take them on trust from board 1.
+Canonical procedure and rationale: `BENCH.md` Phase 1, tests 1–5, and Test 6 for the `on`
+guard. Both checks here exist because of live bench finds. Do not take them on trust from
+board 1.
+
+⚠ **`on` is accepted only from `STANDBY`** and is never queued for later: read `stat` first,
+and if the board is already running, skip `on`. A shutdown also cancels a pending start.
 
 **Test 1 — refuses to latch on USB.** Drop J1 power, keep USB connected, press the button or
 type `on`.
@@ -218,7 +273,7 @@ type `on`.
 - [ ] Red LED fast-blink; `stat` shows `FAULT` / `USB_POWER_ONLY`; **+5 V stays 0 V at J8.2**;
       VIR stays 0 V.
 
-**Test 2 — latches on real power.** Restore the PSU, `fault clear`, then `on`.
+**Test 2 — latches on real power.** Restore the PSU (**5.20 V**), `fault clear`, then `on`.
 
 - [ ] +5 V up within 250 ms; VIR reaches 36 V; TP2 = 12 V; `stat` = `BENCH_RUNNING`.
 
@@ -243,19 +298,18 @@ four only check the guard at the *moment* of latching.
 ## 6. Beam sanity (abbreviated Phase 2)
 
 You do not need the full carrier characterisation again — phase lock, Q1 and Q2 are design
-properties. You do need to know **this** board's assembly is sound.
-
-```
-beam
-```
-
-- [ ] Hardware readback: both slices **ENABLED**, funcsel = **4 (PWM)** on GPIO31/39,
-      **pad ISO = 0** on both.
+properties (`BENCH_P2_BEAM.md`). You do need to know **this** board's assembly is sound.
 
 ```
 beam duty 2
 beam on
+beam
 ```
+
+- [ ] Hardware readback, **after `beam on`** (it is checked against the current beam state):
+      both slices **ENABLED ok**, funcsel = **4 (PWM)** on GPIO31/39, **pad ISO = 0** on both,
+      `ctr(car)` **counting**. With the beam off the same command correctly reports `off ok`
+      and SIO (5) — that is not a fault.
 
 - [ ] Carrier visible at **TP5**, period 9.6 µs.
 - [ ] Ramp gently — `beam ramp 25 500` — and **watch the temperature the whole way**.
@@ -271,6 +325,21 @@ paste and airflow. **25 % is the sustainable operating point** (~87.5 °C on boa
 ```
 beam off
 ```
+
+**Strobe idle state and the A7 fix** — read-only, nothing fires (J3 LED bank disconnected):
+
+```
+strobe
+```
+
+- [ ] `A7       : GPIO12 ready LED on SIO (on/off); slice 6 belongs to the gate DAC`
+- [ ] `GPIO27   : SIO output, driven 0, pad 0  -> U5 pulse limiter armed`
+- [ ] `gate DAC : level 0 of 1024 (0.00 %)` … `GPIO28 PWM`, and `engine   : idle` … `GPIO25 SIO, pad 0`
+- [ ] `panel rdy 100` / `panel rdy 0` switches the ready LED fully on/off — no dimming in
+      between, by design (`panel rdy auto` hands it back).
+
+The strobe dry tests themselves (6a/6b, including this board's U5 clamp) are
+`BENCH_P6_STROBE.md`, not bring-up.
 
 ---
 
@@ -347,10 +416,10 @@ misread. See `PROGRESS.md` §6.
 
 ## 8. CR-15 — the baffle acceptance test
 
-**The question this section used to ask is now answered.** Both boards saturated within one
-duty step of each other (board 1 at ~3 %, board 2 at ~2 %), which established CR-15 as a
-**design** property rather than an assembly fault; and better baffling plus keeping hands out
-of the beam then removed it entirely. **The coupling was optical.**
+Canonical procedure: `BENCH_P3_DETECT.md` §3.3. CR-15 itself is settled at design level — two
+boards saturated within one duty step before baffling, and better baffling removed it, so **the
+coupling was optical** (record: `PROGRESS_ARCHIVE.md` → "Results moved from BENCH_P3_DETECT.md",
+§3.3).
 
 So this is no longer a comparison between boards — **it is an acceptance test for *this*
 board's baffling**, and it must be re-run on every build because the baffle is mechanical.
@@ -620,14 +689,16 @@ cfg save
 
 ## 11. Hand-off
 
-The board is now bring-up complete and its calibration is persisted. **`cfg` should read back
-the carrier, the phase, the phase model, `hpf sel`, `adc5v` scale and `cal duty`.**
+**Base bring-up is complete** — power, beam, detect chain and calibration — and the calibration
+is persisted. **`cfg` should read back the carrier, the phase, the phase model, `hpf sel`,
+`adc5v` scale and `cal duty`.** Not covered here: the strobe dry tests (6a/6b in
+`BENCH_P6_STROBE.md`), which measure this board's U5 clamp before any strobe work on it.
 
-**Next: `BENCH_P3_DETECT.md` §3.6b**, then §3.6's two checks, then §3.7.
+**Next: `BENCH_P3_DETECT.md` §3.7** — the only per-board part of Phase 3 left. §3.6b and §3.6
+are **design verification** and were done once, on board 3 (2026-08-31: §3.6b a design
+finding, CR-02; §3.6 Check 2 PASS); repeat them only if this board misbehaves.
 
-Nothing in Phase 3 beyond this point is per-board except **§3.7** (`detect path`, transits and
-the `cal gain` decision). §3.6b and §3.6 are **design verification** — do them once, on one
-board, unless a later board misbehaves.
+§3.7's per-board parts are `detect path`, the transits and the `cal gain` decision.
 
 - [ ] **`detect path <mm>`** — nothing reports velocity until the beam path width is set. It is
       a §3.7 measurement, not a bring-up one.
@@ -636,19 +707,8 @@ board, unless a later board misbehaves.
 cold→plateau while current moves +1.7 % and power +0.6 %, so every *electrical* reading says
 nothing is happening. `cal demod` only warns; `scan carrier` refuses below 5 minutes.
 
-✅ **Reference values to compare against, board 2 (stock 470 kΩ TIA, 2026-08-24):**
-
-| | board 2 |
-|---|---|
-| **chain delay** at 104 kHz | **~570–590 ns** (`cal demod` prints it directly) |
-| delay drift, 80 → 200 kHz | **small — do not expect a repeatable figure.** Two runs gave −3.5 % and −0.05 % |
-| `pure_delay` verdict | **PURE DELAY**, by a wide margin both times (0.78° and 0.01° against a 5° bar) |
-| `demod_phase_ticks` at 104166 Hz | **1343–1350** across four runs (7 ticks = 1.75°) |
-| model residual | **0.07–0.08°** |
-
-⚠ **Compare the DELAY between boards, never `phase_ticks`.** The tick count carries a
-geometric term — `phase_ticks = t_chain_ticks − (duty/2)·(TOP+1)` — so it changes with duty
-and carrier even on an identical board. The delay is the part that describes the hardware.
+✅ **Reference values to compare against:** the board 2 / board 3 table in §9 Step 3. Compare
+the **chain delay**, never `phase_ticks` (§9 Step 3 says why).
 
 ⚠ **`pure_delay` is the expected verdict, not a warning sign.** An earlier revision of this
 line said to distrust it; that was wrong and it had been written into the firmware test.
@@ -660,6 +720,7 @@ line said to distrust it; that was wrong and it had been written into the firmwa
 | § | item | board 1 | **board 2** (08-21) | **board 3** (08-28) | next board |
 |---|---|---|---|---|---|
 | 0 | 🔴 **TIA variant — Rf, and Cf incl. WHICH LEG** | stock 470 kΩ / 0.500 pF | stock 470 kΩ / 0.500 pF | **116.0 kΩ / 0.990 pF** (154 k∥R80, 100 pF on one Cf leg) | |
+| 1 | **PSU set to 5.20 V** (DMM at J1) | — | *see §4 row* | *see §4 row* | |
 | 1 | **PSU current limit set to 2 A** | — | ✅ | ✅ | |
 | 1 | Chip UID | `a764f5332ca5ac53` | *not recorded* | `6d6fda754e367a40` | |
 | 1 | Silicon revision | A4 | *not recorded* | *not recorded* | |

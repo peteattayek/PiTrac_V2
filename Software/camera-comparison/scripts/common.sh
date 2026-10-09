@@ -162,7 +162,7 @@ format_values() {
         }'
 }
 load_camera() {
-    local file=$1 key derived expected
+    local file=$1 key derived expected depth
     declare -gA CAM=()
     for key in schema sensor media entity subdev video width height fourcc stride sizeimage \
         exposure_lines estimated_exposure_us requested_exposure_us row_us exposure_offset_us \
@@ -182,10 +182,11 @@ load_camera() {
        ${CAM[subdev]} =~ ^/dev/v4l-subdev[0-9]+$ &&
        ${CAM[video]} =~ ^/dev/video[0-9]+$ ]] || die "Invalid device node in $file"
     if [[ ${CAM[sensor]} == mira220 ]]; then
-        [[ ${CAM[width]} == 1600 && ${CAM[height]} == 1400 && ${CAM[fourcc]} == GREY &&
+        [[ ${CAM[width]} == 1600 && ${CAM[height]} == 1400 &&
+           ( ${CAM[fourcc]} == GREY || ${CAM[fourcc]} == Y12P ) &&
            ${CAM[gain_code]} == 1 && ${CAM[vblank]} == 18 &&
            ${CAM[hblank]} == 1440 && ${CAM[pixel_rate]} == 384000000 ]] ||
-            die "Mira220 configuration is not the supported full-rate mono profile."
+            die "Mira220 configuration is not a supported mono profile."
     else
         [[ ${CAM[width]} == 1456 && ${CAM[height]} == 1088 && ${CAM[fourcc]} == Y10P &&
            ${CAM[gain_code]} == 0 && ${CAM[vblank]} == 30 &&
@@ -194,7 +195,18 @@ load_camera() {
     fi
     (( CAM[stride] <= 65536 && CAM[sizeimage] == CAM[stride] * CAM[height] )) ||
         die "Unsupported padded/planar buffer layout."
-    if [[ ${CAM[sensor]} == mira220 ]]; then expected=1600; else expected=1820; fi
+    case ${CAM[fourcc]} in
+        GREY) expected=1600; depth=8 ;;
+        Y12P) expected=2400; depth=12 ;;
+        Y10P) expected=1820; depth=10 ;;
+    esac
+    if grep -q $'^native_depth\t' "$file"; then
+        CAM[native_depth]=$(value "$file" native_depth) || die "Invalid native depth declaration."
+        [[ ${CAM[native_depth]} == "$depth" ]] || die "Native depth disagrees with the pixel format."
+    else
+        [[ ${CAM[fourcc]} != Y12P ]] || die "12-bit profiles require native_depth 12."
+        CAM[native_depth]=$depth
+    fi
     (( CAM[stride] >= expected && CAM[stride] % 16 == 0 )) || die "Invalid CFE row stride."
     validate_shared_exposure "${CAM[requested_exposure_us]}"
     derived=$(timing "${CAM[sensor]}" "${CAM[requested_exposure_us]}") || die "Invalid exposure request."
@@ -204,6 +216,10 @@ load_camera() {
             'BEGIN {d=actual-expected; exit d < -0.000001 || d > 0.000001}' ||
             die "Configuration $key disagrees with the supported sensor timing model."
     done
+}
+require_recording_profile() {
+    [[ ${CAM[fourcc]} != Y12P ]] ||
+        die "12-bit pupil profiles are preview/stills only. Reconfigure Mira220 with --mira-bit-depth 8 for recording."
 }
 assert_camera_live() {
     local fmt graph entity controls pad code
@@ -215,7 +231,11 @@ assert_camera_live() {
        $(media-ctl -d "${CAM[media]}" -e "$entity") == "${CAM[subdev]}" &&
        $(media-ctl -d "${CAM[media]}" -e rp1-cfe-csi2_ch0) == "${CAM[video]}" ]] ||
         die "Media device identity changed. Reconfigure cameras."
-    if [[ ${CAM[sensor]} == mira220 ]]; then code=Y8_1X8; else code=Y10_1X10; fi
+    case ${CAM[fourcc]} in
+        GREY) code=Y8_1X8 ;;
+        Y12P) code=Y12_1X12 ;;
+        Y10P) code=Y10_1X10 ;;
+    esac
     for pad in "\"$entity\":0" '"csi2":0' '"csi2":4'; do
         fmt=$(media-ctl -d "${CAM[media]}" --get-v4l2 "$pad")
         grep -Fq "fmt:$code/${CAM[width]}x${CAM[height]} " <<< "$fmt" ||

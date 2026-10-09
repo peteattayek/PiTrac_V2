@@ -308,8 +308,9 @@ digital outputs on this board. The firmware rejects them.
 
 Read `stat` first. **Only if STANDBY**, send `on` and wait for rail-ready BENCH_RUNNING;
 skip `on` if already running. **11:11:51 and older builds** retain that redundant request
-and can restart after shutdown; the **15:21:18 fix** refuses it. Reflash and complete
-BENCH.md Test 6 before resuming optics. With the beam OFF and rail ready:
+and can restart after shutdown; the **15:21:18 fix** refuses it, and every later image keeps
+that behaviour (flashed on board 3, BENCH.md Test 6 PASS 2026-09-28 — Test 6 is the canonical
+procedure if a new image needs re-checking). With the beam OFF and rail ready:
 
 ```
 adcmode idle
@@ -359,37 +360,14 @@ the fault: TP7 off alone → servo or bias; TP9 ≠ TP10 → an LPF stage.
 
 ## 3.3 Beam ON, no target
 
-> ### ✅ CLEARED 2026-08-19 — was the CR-15 block, now passes to 25 %
+> ### ✅ Cleared 2026-08-19 — CR-15 mitigated by baffling: linear to 25 % duty (board 2)
 >
-> **This section blocked Phase 3 for two days and no longer does.** The TIA saturated on beam
-> coupling above ~3 % on board 1 and ~2 % on board 2 — two independent boards within one duty
-> step, which established it as a **design** property. **The coupling was optical**, and better
-> baffling plus keeping hands out of the beam removed it:
->
-> | duty | board 2, baffled | swing | |
-> |---|---|---|---|
-> | 2 % | 3084 … 3253 | 136 mV | linear |
-> | 12 % | 1891 … 3418 | 1231 mV | linear |
-> | **25 %** | **2076 … 3606** | **1233 mV** | **linear — operating point** |
->
-> Worst case (overhead lights on, photodiode aimed at them): min 1993 / max 3573, still no
-> saturation, and within 5 % of the dark result at 12 % and 25 %.
->
-> ⚠ **The mitigation is mechanical and depends on operator discipline**, so `NEXT_BOARD_REV.md`
-> **CR-15 stays open at 🟡** — the board fix is still wanted. Re-run the sweep on every build;
-> it is now the baffle acceptance test (`BRINGUP_NEW_BOARD.md` §8).
->
-> ⚠ **CR-16 now binds tighter than CR-15.** At 25 % there is **0.39 V of margin to the ADC's
-> 3.3 V ceiling** against 1.67 V to the op-amp rail. The 5 V analog chain, not the TIA, is what
-> limits usable signal from here on.
->
-> ⚠ **Two confounds cost a bench session each — do not repeat them.** A hand in front of the
-> board reflects 850 nm into D12 and moved a control reading 339 → 19 codes. And most black
-> plastics are near-transparent at 850 nm, so an untested "opaque" baffle proves nothing.
->
-> 🔴 **Before running any optical test here, read `PROGRESS.md` §11.** A foil-over-D12 test
-> shorted 36 V into the TIA summing node and destroyed U11B. D12's cathode is at VIR through
-> R77 — nothing conductive goes near it without knowing what it must not touch.
+> Full result and duty table: [`PROGRESS_ARCHIVE.md`](PROGRESS_ARCHIVE.md) "Results moved from BENCH_P3_DETECT.md", §3.3. **Still live:**
+> **CR-15 stays 🟡** — the mitigation is mechanical and operator-dependent, so re-run this sweep
+> as the baffle acceptance test (`BRINGUP_NEW_BOARD.md` §8). **CR-16 binds first:** at 25 % there
+> is only ~0.39 V of margin to the ADC's 3.3 V ceiling. A hand in front of the board, or an
+> untested "opaque" black plastic (often transparent at 850 nm), will fool this test.
+> 🔴 **Nothing conductive near D12** — its cathode is at VIR, 36 V, through R77 (`PROGRESS.md` §11).
 
 
 ```
@@ -452,16 +430,10 @@ fakes a large offset.
 directly at the overhead lights. That is closer to the intended operating environment than a
 shaded bench.
 
-#### ✅ Result, board 2, 2026-08-21 — rejection confirmed
+#### ✅ Result (board 2, 2026-08-21): ≈ 250× (≈ 48 dB) rejection of 120 Hz ambient
 
-| | 120 Hz at ADC5 |
-|---|---|
-| beam **off** (no lock-in), lights on | **162 mV p-p** |
-| beam **on**, lights off | 0.12 mV |
-| beam **on**, lights on | **0.32 mV** |
-
-**≈ 250×, about 48 dB.** The central premise of the synchronous-detection design is now
-measured rather than assumed. **Quiet-baseline σ at ADC5 is 0.55–0.65 mV.**
+162 mV p-p with no lock-in → 0.32 mV with the beam running, lights on. Quiet-baseline σ at
+ADC5: **0.55–0.65 mV**. Full table: [`PROGRESS_ARCHIVE.md`](PROGRESS_ARCHIVE.md) "Results moved from BENCH_P3_DETECT.md", §3.3.
 
 > ### 🔴 The rejection is frequency-selective, and that is easy to forget
 >
@@ -472,24 +444,11 @@ measured rather than assumed. **Quiet-baseline σ at ADC5 is 0.55–0.65 mV.**
 >
 > Board 2 showed exactly this shape and it turned out **not** to be the lighting.
 
-#### ✅ RESOLVED 2026-08-21 — the "bursty noise" was the beam returning off the room
+#### ✅ Resolved (board 2, 2026-08-21): the "bursty noise" was the beam returning off the room
 
-Covering **D11's output aperture** so no light leaves the board, everything else identical:
-
-| | D11 open | **D11 covered** |
-|---|---|---|
-| σ (three captures) | 6.49 / 10.37 / 14.03 mV | **2.62 / 3.39 / 2.91 mV** |
-| peak | 56 / 66 / 77 codes | **28 / 29 / 33 codes** |
-| excess kurtosis | −0.3 / −0.3 / +3.0 | **+0.1 / +0.5 / +0.1** |
-| reproducible? | no, 2× spread | **yes, 30 %** |
-
-**Stop the light leaving and the bursts stop.** The lock-in was passing genuine
-carrier-modulated light returning off the room — the detector working correctly, not a fault.
-
-🔵 **The kurtosis was the tell.** Impulsive *noise* has **positive** excess kurtosis (heavy
-tails). Two captures ran at **−0.3** — a flattened, near-bimodal distribution, which is the
-signature of **a modulated signal filling the range**. Compute the fourth moment before
-calling something noise.
+Covering D11's aperture removed it (σ 6.5–14 mV → 2.6–3.4 mV). **Method worth keeping:**
+compute the excess kurtosis before calling something noise — impulsive noise is positive, a
+modulated signal filling the range is ≤ 0. Full data: [`PROGRESS_ARCHIVE.md`](PROGRESS_ARCHIVE.md) "Results moved from BENCH_P3_DETECT.md", §3.3.
 
 > ### 🔴 σ_noise is not a constant, and §3.6 depends on it
 >
@@ -669,74 +628,18 @@ ADC5. Faster, but easy to rail — the ×14.5 stage clips at ΔTP9 ≈ 228 mV.
 **Sanity check either way:** the response should fall to ~0 at +90° from the peak
 (quadrature null). If it does not, you are not seeing the real lock-in response.
 
-> ### 🔴 The first run, 2026-08-21, saturated — and the guards let it through
+> ### ✅ §3.4 results — board 2: `demod_phase_ticks` **1348** at 104166 Hz (2026-08-24); board 3: **1311** (saved, slot A seq 5)
 >
-> **84 % of the 64-point sweep sat at ±4086 codes** (full scale 4095). The response was a
-> **square wave, not a cosine**: fitted amplitude **5128 codes, above full scale**, which is
-> impossible for a real signal and is exactly what a square gives (fundamental = 4A/π = 1.27A).
->
-> **Why the purity check missed it — worth understanding, not just fixing.**
-> `h2_ratio` scored **0.012** against a 0.25 bar and passed. **Symmetric clipping produces only
-> ODD harmonics** — an ideal square wave has h2/h1 = **0 exactly**. The even-harmonic test was
-> looking in the one place where clipping is guaranteed to leave no trace. Measured
-> **h3/h1 = 0.306** against a square's 0.333.
->
-> And the **quadrature null reported −4086 where ~0 was required, printed it, and the phase
-> committed anyway** — `valid` never referenced it.
->
-> ✅ Both fixed in firmware: `h3_ratio`, `sat_frac` (limit 10 %), an amplitude sanity check,
-> and the null now enforced at 15 % of amplitude and anchored to the *fitted* peak rather than
-> the grid argmax, which is degenerate when the top is flat.
->
-> ⚠ **Two of those numbers were themselves superseded on 2026-08-24.** `h3_ratio`'s limit was
-> a fixed **0.15**, which turned out to be *below* what a clean signal gives at any duty under
-> 20 % — it is now `h3_expected(duty) + 0.05`. And the amplitude check compared the fitted
-> **fundamental** against full scale, when a trapezoid's fundamental is 1.146× its own peak;
-> it now checks the recovered peak. See the RESOLVED block at the top of §3.4.
->
-> 🔴 **If it says the signal is too big, reduce the LIGHT, not the gain.** U12B is already at
-> its **minimum** 14.5 — R98 is DNP and fitting it only *raises* gain. In order of preference:
-> **move the reflector further away**, use a **grey card rather than white**, or add an **ND
-> filter over D12**.
->
-> ✅ **Clipping preserves zero crossings**, so a saturated sweep can still give the right phase
-> — the 8/21 run's 66 ticks was confirmed by its own crossings (427 / 1147 vs 426 / 1146
-> predicted) and by the independent `cal model` (65.4 ticks at 104166 Hz). **Treat that as a
-> lucky escape and re-measure**, because the amplitude, the null and the SNR are all worthless
-> from a clipped sweep even when the phase survives.
-
-> ### ✅ RESOLVED 2026-08-24 — 1348 ticks at 104166 Hz, and three guards were wrong
->
-> **`demod_phase_ticks = 1348`**, from a clean sweep: peak 2030 codes (50 % of full scale),
-> sat 0 %, quad null 0.4, h3 0.119. Confirmed by the saturated run (1347), an offline fit of
-> the rejected model sweeps (1355), and `cal model` itself (1353) — four numbers inside 8 ticks.
-> **The 8/21 value of 66 ticks is superseded.**
->
-> Three things had to be fixed first, and all three are worth knowing before you re-run this.
->
-> **1. `cal model` left the carrier at 200 kHz.** It swept 80→200 kHz and never restored the
-> frequency, so every `cal demod` afterwards silently calibrated 200 kHz and committed the
-> answer. Two bench runs were lost to it. ✅ Fixed, and `cal demod` now prints its frequency.
-> ⚠ **The tell is in the sweep listing:** phases step by (TOP+1)/64, so steps of 11/23/35 mean
-> a 750-tick period = 200 kHz; 22/45/67 means 1440 = 104 kHz. **Read the step size.**
->
-> **2. The response is a TRAPEZOID, not a cosine, and h2 cannot see the optical path.**
-> A 50 % square demodulator emits **only odd harmonics** of the phase sweep, so h2 ≡ 0 for any
-> optical input — reconstructing the sweep from a 50 MS/s TP7 capture gives 0.0000. It was
-> gating `cal model` at 0.26–0.38 and rejecting all five points, and what it actually tracked
-> was sweep rate: **0.124–0.148 at 400 ms/point, 0.261–0.381 at 300 ms/point, and unchanged by
-> a 2× amplitude change.** ✅ h2 is now a printed diagnostic only, and `cal model` sweeps at the
-> same 64 points / 8 cycles as `cal demod` (~128 s for five points).
->
-> **3. 🔴 The h3 bar rejected clean signals below ~20 % duty.** A clean trapezoid has intrinsic
-> `h3/h1 = |sinc(3D)/(3 sinc(D))|` — **0.111 at 25 % duty (exactly 1/9), 0.180 at 20 %, 0.291 at
-> 10 %** — against a fixed bar of 0.15. So the advice "reduce the light" combined with the
-> obvious way to do it (drop the duty) walked straight into a false failure. ✅ The bar is now
-> `h3_expected(duty) + 0.05`, and the fitted amplitude is divided by the trapezoid form factor
-> `4·sinc(D)/π` (1.146 at 25 %) before being compared to full scale.
->
-> ⚠ **Below ~15 % duty h3 tells you nothing** — a clean response and a clipped one both give
-> ≈0.333. `sat_frac` is the guard there. The CLI says so itself when duty < 15 %.
+> The saturated first run (2026-08-21) and the run that resolved it — three guards that were
+> wrong: `cal model` left the carrier at 200 kHz, h2 cannot see the optical path, and a fixed h3
+> bar rejected clean signals below ~20 % duty — are in [`PROGRESS_ARCHIVE.md`](PROGRESS_ARCHIVE.md) "Results moved from BENCH_P3_DETECT.md", §3.4. All three are fixed in
+> firmware. **Still live:**
+> - **If the CLI says the signal is too big, reduce the LIGHT, not the gain** — U12B is already
+>   at its minimum 14.5 (R98 is DNP; fitting it only raises gain).
+> - **Read the sweep step size:** phases step by (TOP+1)/64, so 22/45/67 means a 1440-tick
+>   period = 104 kHz, and 11/23/35 means 200 kHz.
+> - **Below ~15 % duty h3 tells you nothing** (clean and clipped both give ≈ 0.333); `sat_frac`
+>   is the guard, and the CLI says so.
 >
 > ### 🔴 You do not need a reflector, and the reflector is not what saturates you
 >
@@ -774,8 +677,8 @@ Record `demod_phase_ticks` in `PROGRESS.md` §6.
 
 **Power-command guard (2026-09-18):** first read `stat`. Send `on` **only if
 STANDBY**; if already RUNNING/BENCH_RUNNING, skip it. Builds through **11:11:51** retain
-an `on` sent while running and may re-latch later; **15:21:18** fixes this with an
-explicit refusal. Reflash and complete BENCH.md Test 6 before further optical work.
+an `on` sent while running and may re-latch later; **15:21:18** and later refuse it
+(flashed on board 3; BENCH.md Test 6 PASS 2026-09-28).
 After shutdown, verify **STANDBY / latch 0** rather than trusting "requested shutdown".
 
 ```
@@ -969,17 +872,9 @@ detector 300 ticks off its peak, and nothing downstream will tell you.
 | TP8 nominal **vs** ADC5 at flip, **high point** | agree to **a few %** | this is the one that tests the *scale*; the low point cannot, because it is swamped by offsets |
 | `ADC5 movement across the sweep` | see the crosstalk note below — **the low sweep cannot measure this** | |
 
-> ### 🔵 Board 2, 2026-08-25 — what the low point actually gave
->
-> `FLIP at duty 0.08 % = 0.0026 V at TP8`, with `ADC5 there: code 15 = 0.0121 V`. The two
-> disagree by **9.5 mV**.
->
-> **That is a pass, and it is why the high point exists.** The flip landed between DAC level 0
-> and level 1, so the threshold resolution there is the DAC's whole **3.2 mV** step; add the
-> LM393's input offset (typ. a few mV, **max ±15 mV**) and 9.5 mV is comfortably inside what
-> this measurement can resolve. **The low point tests the offset and proves both paths respond.
-> It cannot test the scale** — for that you need a signal large enough that a 10 mV offset is
-> negligible, which is the whole point of step 3.
+> 🔵 **A ~10 mV low-point disagreement is a pass.** At the low flip the DAC's 3.2 mV step and
+> the LM393 offset (≤ ±15 mV) dominate: the low point tests the offset and proves both paths
+> respond; only the high point tests the scale. Board 2's example (9.5 mV): [`PROGRESS_ARCHIVE.md`](PROGRESS_ARCHIVE.md) "Results moved from BENCH_P3_DETECT.md", §3.5.
 
 **The agreement between the two voltages is the whole point.** TP8's number comes from the DAC
 duty and an assumed 3.3 V reference; ADC5's comes from the ADC. They are independent paths, and
@@ -1056,59 +951,17 @@ where `vref` is the DAC's **effective** reference (the compiled value is a nomin
 `Vos` is the offset between the comparator's decision point and what ADC5 reads — dominated by
 the LM393's input offset voltage.
 
-> ### ✅ Boards 2 and 3 — §3.5 COMPLETE
+> ### ✅ §3.5 complete on boards 2 and 3
 >
 > | | board 2 (stock 470 kΩ) | board 3 (116 kΩ) |
 > |---|---|---|
-> | low flip | 0.23 %, TP8 7.7 mV, ADC5 18.5 mV | 0.23 %, TP8 7.7 mV, **ADC5 12.9 mV** |
-> | high flip | 62.50 %, TP8 2062.5 mV, ADC5 2053.3 mV | 53.12 %, TP8 1753.1 mV, **ADC5 1735.0 mV** |
-> | **DAC vref** | **3.268 V** | **3.256 V** |
-> | **comparator Vos** | **+11.0 mV** | **+5.4 mV** |
-> | crosstalk, beam off | 1.6 mV | **3.2 mV** |
-> | `beam phase` used for the high point | 1000 → 2645 codes | **1035 → 2225 codes** |
+> | DAC vref | 3.268 V | **3.256 V** |
+> | comparator Vos | +11.0 mV | **+5.4 mV** |
+> | crosstalk, beam off | 1.6 mV | **3.2 mV** — at the bar, 2× board 2 |
 >
-> 🔵 **`vref` agrees to 0.36 % across two boards**, and both sit between the compiled 3.300 V
-> and the 3.246 V measured on board 2's +3V3 rail — a consistent picture, and good evidence the
-> two-point method measures what it claims to.
->
-> ⚠ **`Vos` is a per-part LM393 parameter** and is expected to differ; ±15 mV is the datasheet
-> limit and both boards are inside it.
->
-> ⚠ **Board 3's beam-off crosstalk is 3.2 mV — right at the bar and 2× board 2's.** Not a
-> problem against a working threshold of hundreds of mV, but worth watching. It will not scale
-> with Rf: GPIO44 couples in **after** the ×14.5, so this is a board/layout difference and not
-> a consequence of the TIA rework.
->
-> ### ✅ Board 2, 2026-08-25 — the original two-point run
->
-> | | duty | TP8 nominal | ADC5 at flip |
-> |---|---|---|---|
-> | low point | 0.23 % | 7.7 mV | 18.5 mV |
-> | high point (`beam phase 1000`, ADC5 held at 2645) | 62.50 % | 2062.5 mV | 2053.3 mV |
->
-> Solving both:
->
-> | | |
-> |---|---|
-> | **DAC effective reference** | **3.268 V** (compiled 3.300; measured +3V3 was 3.246) |
-> | **Comparator offset Vos** | **+11.0 mV** — inside the LM393's ±15 mV spec |
-> | model vs each point | **exact to 0.1 mV at both** |
-> | GPIO44 crosstalk, beam off | **1.6 mV** ✅ |
->
-> 🔵 **Both paths agree once those two terms are accounted for**, across a **110×** range of
-> level. That is the cross-calibration this section exists to produce, and it is a stronger
-> result than either point alone: the low point is dominated by `Vos`, the high point by `vref`.
->
-> ⚠ **Every printed threshold voltage therefore reads ~1 % high.** Apply it if you want with
-> `threshold vref 3.268` — **RAM only, lost on reset.** It is deliberately not in the config
-> record: 1 % on a threshold that gets tuned empirically in §3.7 does not justify another field
-> in a fixed-size record (see `cal_duty` in `config_store.h` for why that record cannot simply
-> grow). If absolute threshold accuracy ever matters, this is the number to persist, next to
-> `adc5v_scale`.
->
-> ⚠ **The 0.23 % low-point duty carries the sweep's 0.078 % granularity**, which is the
-> dominant uncertainty: `vref` lands in **3.266–3.270 V** across that band. `Vos` is good to
-> about ±2 mV.
+> Flip points and the original two-point run: [`PROGRESS_ARCHIVE.md`](PROGRESS_ARCHIVE.md) "Results moved from BENCH_P3_DETECT.md", §3.5. **Still live:** every printed
+> threshold voltage reads ~1 % high — `threshold vref 3.256` corrects it on board 3, RAM only;
+> `Vos` is a per-part LM393 parameter and is expected to differ between boards.
 
 ### Record
 
@@ -1313,36 +1166,13 @@ and the error is in the safe direction, which is the worst kind.
 **The TRACK-vs-HOLD difference is the Q8 effect isolated** -- same stimulus, same optical
 conditions, only the baseline freeze changes.
 
-### 🔴 RESULT -- board 3, 2026-08-31: **FAILS.** Q8 is real and at the predicted size.
+### 🔴 Result — board 3, 2026-08-31: FAILS — a design finding (Q8, `NEXT_BOARD_REV.md` CR-02)
 
-| | TRACK | HOLD (armed) |
-|---|---|---|
-| coupling, rising rail | **x3.84 peak** | **x7.43** |
-| does it persist? | **no** -- decays, tau ~ 0.75 s | **yes, permanently** |
-| settled | back to baseline in 3.4 s | +75.0 mV rail -> **+556.9 mV** |
-
-✅ **The ×7.25 analysis was right to 2.5 %**, and ✅ **TRACK works exactly as designed** -- so the
-exposure is the armed window and nothing else.
-
-🔴 **The pass criterion is not close.** "Under 20 % of the §3.5 threshold" would need a
-threshold above **2.8 V** -- 85 % of the DAC's 3.268 V full scale. In practice:
-
-| threshold at the comparator input | rail step that fires it |
-|---|---|
-| 100 mV | **13 mV** |
-| 300 mV | **39 mV** |
-| 1.00 V | **132 mV** |
-
-> ### 🔴 And a rail SAG blinds the detector outright.
->
-> The coupling is **positive** -- rail up, comparator input up -- so a **falling** rail drives
-> U12B into its negative rail, which is ground. **Measured: it clamps 21 mV below quiescent and
-> then stops**, through a further 120 mV of droop that ×7.43 says should have moved it 870 mV.
-> **While the rail is down, a ball cannot move the comparator input at all.**
->
-> ⚠ **This is a Phase 6 problem, because strobe bursts sag the rail deliberately.** The sag
-> blinds; the **recovery** is the false-trigger edge. The 500 ms supply-monitor debounce was
-> sized for the sag — nothing yet covers the recovery.
+HOLD (armed) coupling **×7.43**: a +75.0 mV rail step → **+556.9 mV** at the comparator input,
+and it stays. TRACK peaks at ×3.84 and decays (τ ≈ 0.75 s). At a **300 mV** threshold a
+**39 mV** rail step fires the detector. A rail **sag** clamps U12B 21 mV below quiescent and
+**blinds the detector** — a Phase 6 concern, because strobe bursts sag the rail on purpose and
+the recovery is the false-trigger edge. Full tables: [`PROGRESS_ARCHIVE.md`](PROGRESS_ARCHIVE.md) "Results moved from BENCH_P3_DETECT.md", §3.6b.
 
 ### If it fails
 
@@ -1458,26 +1288,11 @@ boost can drift **−9.6 % or +7.1 %** before anything reaches the LPF.
 > cannot separate them. 🔵 **Settle it with the scope on L1 pad 1** -- seconds of work, and it
 > decides whether the −2.3 % margin is real.
 >
-> ### ✅ RESOLVED EMPIRICALLY 2026-08-31 -- the margin is moot, the coupling is too weak.
+> ### ✅ Resolved empirically 2026-08-31 (board 3): the margin is moot
 >
-> The `scan carrier 95000 115000 9` sweep **inadvertently ran the worst case.** At the top three
-> points the 7th harmonic of the carrier lands **inside** the measured 762.9-833.1 kHz switcher
-> band -- not near it, *inside* it:
->
-> | f_c | 7 x f_c | vs switcher band | sigma_noise |
-> |---|---|---|---|
-> | 110.0 kHz | **770.0 kHz** | 🔴 inside | **4.57** -- the LOWEST of the nine |
-> | 112.5 kHz | **787.5 kHz** | 🔴 inside | 4.73 |
-> | 115.0 kHz | **805.0 kHz** | 🔴 inside | 4.71 |
-> | 104.1667 (operating) | 729.2 kHz | 33.8 kHz clear | -- |
->
-> ✅ **Nothing happened.** sigma_noise across all nine rows was **4.57-5.08, a 10.8 % spread with
-> no outlier**, and the three rows sitting directly on the switcher were among the quietest.
->
-> 🔵 **So the 0.173 mV of switcher ripple on +5 V does not reach the detector**, and the
-> −2.3 % drift margin above is a paper number rather than an operational risk. Keep the analysis
-> -- it is still the right way to reason about a *larger* interferer, and Phase 6 will load the
-> boost far harder than an idle bench -- but **do not treat −2.3 % as a blocker.**
+> Three `scan carrier` points put the carrier's 7th harmonic **inside** the 762.9–833.1 kHz
+> switcher band and σ_noise stayed flat (4.57–5.08). The −2.3 % margin is a paper number, not a
+> blocker; keep the reasoning for larger interferers (Phase 6 loads the boost harder). Data: [`PROGRESS_ARCHIVE.md`](PROGRESS_ARCHIVE.md) "Results moved from BENCH_P3_DETECT.md", §3.6.
 
 🔵 **Note what this does *not* let you do.** Odd harmonics are `2·f_c` = **208 kHz** apart, so
 *any* carrier near 100 kHz has one within ±104 kHz of the boost. **You cannot design the
@@ -1570,24 +1385,10 @@ the run and `signal` climbs monotonically with *elapsed time* regardless of freq
 3 all nine rows came out pre-sorted (546.0 → 574.4), which is 1-in-363,000 by chance. **The SNR
 ranking is a clock, not a spectrum.**
 
-### ✅ RESULT — board 3, 2026-08-31: **PASS**, and it tested the worst case by accident
+### ✅ Result — board 3, 2026-08-31: Check 2 PASS
 
-| | |
-|---|---|
-| σ_noise across 95–115 kHz | **4.57 – 5.08**, mean 4.74 — **10.8 % spread, no outlier** |
-| `beam_noise_ratio` | 2.86 – 3.41, flat |
-| verdict | ✅ **nothing folds into the passband anywhere in the band** |
-
-🔵 **Better than a pass — the sweep ran the collision head-on without meaning to.** At the top
-three points the 7th harmonic lands *inside* the measured 762.9–833.1 kHz switcher band:
-
-| f_c | 7 × f_c | | σ_noise |
-|---|---|---|---|
-| **110.0 kHz** | **770.0 kHz** | 🔴 inside the switcher band | **4.57 — the LOWEST of the nine** |
-| 112.5 kHz | 787.5 kHz | 🔴 inside | 4.73 |
-| 115.0 kHz | 805.0 kHz | 🔴 inside | 4.71 |
-
-✅ **Nothing happened**, so the switcher's 0.173 mV of rail ripple does not reach the detector.
+σ_noise **4.57–5.08** across 95–115 kHz (10.8 % spread, no outlier), including three points whose
+7th harmonic sits inside the switcher band. Full table: [`PROGRESS_ARCHIVE.md`](PROGRESS_ARCHIVE.md) "Results moved from BENCH_P3_DETECT.md", §3.6.
 
 ⚠ **Run it warm** (the command refuses below 5 minutes) and **with the phase model fitted**, or
 every point is measured at a different phase error and the comparison is meaningless.
@@ -1619,6 +1420,14 @@ frequency"** — there is no longer such a thing.
 ---
 
 ## 3.7 Ball transit — use a ramp, not your hand
+
+> ### Status — board 3 (results are in `PROGRESS.md`; this section is the procedure)
+>
+> | step | status |
+> |---|---|
+> | detect control-path smoke test | ✅ PASS 2026-09-18 — arm/disarm only; edge timing not yet proven |
+> | first pilot ball (Step 1d) | ✅ 2026-09-18 — **3.102 V peak, ~22.7 ms FWHM**, no clipping, **0.198 V** ADC headroom; no-ball HOLD control NO TRIGGER |
+> | 20-pass set, comparator timing, `cal gain` (Steps 3–7) | ⏸ **pending** — refinement needs ~59.8 ms of history at this pulse width vs the 32.768 ms ring (Step 2); acquisition to be decided first |
 
 ### Board state
 
@@ -1865,11 +1674,11 @@ background, HPF HOLD immediately before release, and steady beam/rail/load. Use 
 with a sufficiently long record, or a **single-channel ADC5 triggered capture at 100 ksps**.
 The existing 16384-sample capture buffer then holds **163.84 ms**, versus only **32.768 ms**
 at its 500 ksps default; 25 % pre-trigger gives **40.96 ms before / 122.88 ms after**.
-No new capture firmware is needed. **The first pilot is now complete** (2026-09-18):
+No new capture firmware is needed. **The first pilot is complete** (2026-09-18):
 **3.102 V peak, ~22.7 ms FWHM**, no observed clipping, but only **0.198 V ADC headroom**.
-The 10 s no-ball HOLD control also passed. See PROGRESS §6/§10 before repeating:
-an independent **stale-`on` power-request bug** was exposed during shutdown. Its fix
-passes **20 host tests**; **reflash the 15:21:18 image and run BENCH.md Test 6** next.
+The 10 s no-ball HOLD control also passed. It also exposed an independent **stale-`on`
+power-request bug**, since fixed, flashed and passed BENCH.md Test 6 (2026-09-28); the
+current host suite is 32 tests. See PROGRESS §6 before repeating.
 The standard ring is too short for this pulse at half-height
 threshold; **do not advance directly to the normal 20-pass statistics**.
 Capture-trigger thresholds are **ADC codes relative to baseline**,
@@ -1877,8 +1686,9 @@ not TP8 volts or the comparator threshold. At nominal 3.3 V full scale, one code
 **0.806 mV**. Select the actual trigger from the baseline, not an unexplained default.
 
 Keep the comparator timer **disarmed** during this separate capture: it temporarily
-replaces the normal ADC ring. The current CLI says **"Make the sound"** even for channel 5;
-for this optical test that means release the ball, **not clap**. Save the entire raw
+replaces the normal ADC ring. For channel 5 the CLI prints **"Trigger the event now (roll the
+ball)"** (builds before 2026-10-05 said "Make the sound" for every channel): release the ball,
+**do not clap**. Save the entire raw
 capture header/data and any timeout/overrun message. After capture, use `hpf track` and
 allow **at least 5 s** with no ball before another attempt; ADC capture restores idle mode.
 
@@ -1948,8 +1758,8 @@ Keep the supply setting, loads, lights and operator position steady, especially 
    ```
 
    After the `armed: ch5...` message, wait about **1 s** for prehistory, then release
-   **one ball without pushing**, preferably within the next few seconds. The CLI's
-   "Make the sound" is stale mic-oriented wording: **do not clap**. Keep hands out of view,
+   **one ball without pushing**, preferably within the next few seconds (the CLI says
+   "roll the ball"; older builds said "Make the sound" — **do not clap**). Keep hands out of view,
    and do not send another command until `# end` and the prompt, or a timeout/abort.
 
    **Expected capture shape:**
@@ -2209,6 +2019,10 @@ a core spent polling.
    ```
    The ring holds **32.8 ms per channel** (A1), so the whole bump is already there for any
    transit down to ~1.4 m/s — no extra acquisition, and nothing to arm in advance.
+   ⚠ **Not true for board 3's current optics (measured 2026-09-18):** the pilot pulse was
+   **~22.7 ms FWHM**, and refinement at that width needs **~59.8 ms** of history — the
+   measured pulse is far wider than this estimate assumed. See §3.7 Step 2; the
+   acquisition window is an open item.
 
 > **Implement steps 1–2 as a PIO state machine, not a GPIO ISR** (`ARCHITECTURE.md` A2).
 > One SM that waits for the rising edge, counts at 1 MHz to the falling edge, and pushes
