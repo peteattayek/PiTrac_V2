@@ -102,7 +102,7 @@ procedures are in the `BENCH_*.md` files and the results in `PROGRESS.md`.
 | 3 | Photodiode chain and calibration | 🟡 §3.1–3.6 done on board 3, and the first real ball waveform was captured (3.102 V peak, ~22.7 ms wide). Still open: comparator edge timing, the 20-pass repeatability set, and the R98 gain decision |
 | 4 | Trigger-source experiment (comparator vs. ADC refinement) | 🟡 firmware written; the bench run is blocked by the acquisition window ([§12.1](#121-firmware-features)) |
 | 5 | Microphone | 🟡 analog front end validated. No onset/veto firmware, and no real ball impact captured yet (CR-18) |
-| 6 | High-current strobe | 🟡 **6a/6b dry tests PASS on board 1 (2026-10-06)** — U5 clamp 135 µs, PIO timing, schedule, A7, interlock, gate DAC. **6c/6d live-current firmware written 2026-10-07** (`strobe live on confirm`: staircase, 70 % ceiling, ADC0 readback per firing, overcurrent / stuck-on faults, pacing, watchdog, `strobe cal`); host-tested (78/78). **No live pulse fired yet** |
+| 6 | High-current strobe | 🟡 **6a/6b dry tests PASS on board 1 (2026-10-06)** — U5 clamp 135 µs, PIO timing, schedule, A7, interlock, gate DAC. **6c/6d live-current firmware written 2026-10-07** (`strobe live on confirm`: staircase, 70 % ceiling, ADC0 readback per firing, overcurrent / stuck-on faults, pacing, watchdog, `strobe cal`); host-tested (78/78). 6c on board 1 up to 24 %, after a gate-drive rework (CR-23); **6d PASS 2026-10-15** |
 | 7 | Cameras | ❌ **no firmware**; J4 needs a 1.8 V level translator first (CR-09) |
 | 8 | Real Pi integration | 🟡 the power/shutdown handshake is proven against a simulated Pi. The UART protocol and halt telemetry are not written, and no real Pi has been seated |
 
@@ -119,9 +119,11 @@ procedures are in the `BENCH_*.md` files and the results in `PROGRESS.md`.
 1. ✅ [`BENCH_P6_STROBE.md`](Hardware/firmware/BENCH_P6_STROBE.md) **6a and 6b passed on
    board 1 (2026-10-06)** with the 2026-10-05 build, on the logic analyser, DMM and scope (Q10's
    gate: ≈ 12 V, clean edges).
-2. **6c/6d on board 1** with the 2026-10-07 build. The gate loop's stability check (TP3 at a
-   static setpoint) passed on 2026-10-08. Next is the 6c procedure — first live pulse at gate
-   0, 3 % staircase with ADC0 against TP4, 6d at ~2 A, `strobe cal 9`, bursts.
+2. **6c/6d on board 1**, on the 2026-10-12 build. The gate loop's stability check passed on
+   2026-10-08 and 6c Steps 1–2 on 2026-10-12. Step 3 found cold J3 joints and a gate-drive
+   overshoot, fixed on board 1 by a rework (CR-23, verified 2026-10-15). **6d passed at 24 %
+   (0.70 A) on 2026-10-15.** Next: the ADC0 readback fix, then the staircase above 24 %,
+   `strobe cal 9`, bursts.
 3. Optical acquisition-window work ([§12.1](#121-firmware-features)), the §3.7 20-pass
    comparison and Phase 4 remain open; they do not block strobe testing.
 
@@ -926,7 +928,7 @@ long "why" comment that is worth reading.
 | `service.[ch]` | Watchdog | `pitrac_service()` (now also runs `strobe_live_service()`), `pitrac_yield_ms()`, the abort latch, fault detection by latch generation, conditional watchdog (1 s) | ✅ 8 host tests |
 | `shot.[ch]` | ADC BURST transition (by contract) | Firing sequencer: IDLE → ARMED → TRIGGERED → ANALYSING → CAM_WAIT → FIRING → LOGGING, plus ABORT | 🟡 **skeleton.** Stepped every loop, but the middle states are pass-throughs and **nothing calls `shot_arm()` yet** (`detect arm` arms only the PIO timer) |
 | `cli.[ch]` | USB CDC | 29 table-driven commands ([Appendix A](#appendix-a-cli-command-reference)), guarded `reset`/`bootsel`, and an allowlist while live strobe mode is armed. It was a 1,064-line if/else chain until 2026-08-28 | ✅ |
-| `strobe.[ch]` | GPIO25 (PIO0 SM0, DMA), GPIO28 (PWM 6A), ADC0 (live readback) | Dry (6a/6b): single pulses, uniform bursts, the U5 clamp test, the gate DAC, `strobe_safe_off()`, status with hardware readback. **Live (6c/6d)**: arm/disarm with watchdog ownership, ADC0 BURST readback around every firing, verdicts that latch `STROBE_OVERCURRENT` / `STROBE_CLAMP` and end live mode, hold checks and idle timeout from `pitrac_service()`, `strobe cal`. GPIO25 is SIO low except during an admitted burst | 🟡 dry: **6a/6b PASS on board 1 (2026-10-06)**; live: written 2026-10-07, **not yet fired** |
+| `strobe.[ch]` | GPIO25 (PIO0 SM0, DMA), GPIO28 (PWM 6A), ADC0 (live readback) | Dry (6a/6b): single pulses, uniform bursts, the U5 clamp test, the gate DAC, `strobe_safe_off()`, status with hardware readback. **Live (6c/6d)**: arm/disarm with watchdog ownership, ADC0 BURST readback around every firing, verdicts that latch `STROBE_OVERCURRENT` / `STROBE_CLAMP` and end live mode, hold checks and idle timeout from `pitrac_service()`, `strobe cal`. GPIO25 is SIO low except during an admitted burst | 🟡 dry: **6a/6b PASS on board 1 (2026-10-06)**; live: written 2026-10-07; 6c up to 24 % and **6d PASS** on board 1 (2026-10-15) |
 | `strobe_plan.[ch]` | none (pure) | §15 schedule, charge interlock, PIO word encoding, and both admission policies: **dry** (pulses only at gate 0 and ≥ 20 ms after it was lowered; gate raised only while no pulse can start) and **live** (arm from gate 0; staircase ≤ 31 levels above the highest measured level; 70 % ceiling; watchdog, beam, detector, ADC, interval and budget). Compiled into the host tests | ✅ 16 host tests |
 | `strobe_live.[ch]` | none (pure) | 6c math: the ADC0 record of a firing (baseline, half-peak runs, edge-excluded plateaus, verdicts), the rolling charge budget, interval and idle timeout, the baseline/pulse split, `strobe cal` steps and interpolation | ✅ 33 host tests |
 | `strobe_burst.pio` | GPIO25 (PIO0 SM0) | Phase 6 burst engine. It consumes DMA-fed `width, gap, …, 0` words (µs at 1 MHz), raises IRQ0 at the end, and deliberately does **not** enforce a width limit, because U5 does that in hardware | ✅ loaded by `strobe.c` since 2026-10-02; overhead constants confirmed on the LA in 6a.2 (board 1, 2026-10-06) |
@@ -1365,8 +1367,8 @@ there is one.
 - **Phase 6 (strobe):**
   - 6a: the U5 clamp, PIO overhead and schedule math, all dry — ✅ board 1;
   - 6b: the gate DAC — ✅ board 1 (TP3 loop stability ✅ 2026-10-08);
-  - 6c: the LED bank ramp — firmware ready 2026-10-06;
-  - 6d: the clamp with current — run inside 6c at ~2 A.
+  - 6c: the LED bank ramp — in progress on board 1 (up to 24 %);
+  - 6d: the clamp with current — ✅ board 1, 2026-10-15 (0.70 A).
 - **Phase 7 (cameras):** 7a loopback, 7b delayed simulation, 7c real cameras.
 - **Housekeeping:**
   - Fix the scope ground: the §3.6b captures show a shared-ground artifact.

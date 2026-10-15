@@ -7,6 +7,8 @@
 #include "strobe_live.h"
 #include "strobe_plan.h"
 #include "board.h"
+#include "adc_ring_math.h"
+#include "adc_engine.h"     // ADC_RING_SAMPLES; declarations only, nothing called
 
 #include <math.h>
 #include <stdint.h>
@@ -374,6 +376,303 @@ static bool baseline_split(void) {
     return true;
 }
 
+// --- 2026-10-12: the BURST ring started late -------------------------------
+//
+// Board 1, 6c Step 2, gate 0: the freeze copied 208 samples sized by the clock
+// (~440 us since the switch) while the DMA had written 122. The 86 oldest were
+// the IDLE ring's leftovers -- ch5 10, ch7 2055, ch1 3038, ch2 7, repeating --
+// whose mean, 1277.5 codes, was judged a 7.6 A baseline: STROBE_CLAMP latched
+// with no current flowing (TP4 flat on the scope and the Saleae, Q9 cold).
+
+// Fill buf with what `strobe wave` returned that day.
+static void fill_2026_10_12(void) {
+    static const uint16_t idle_rr[4] = { 10u, 2055u, 3038u, 7u };
+    for (size_t i = 0; i < 86u; i++) buf[i] = idle_rr[i % 4u];
+    for (size_t i = 86u; i < 208u; i++) buf[i] = 10u;
+}
+
+static bool ring_copy_avail(void) {
+    // That day: the clock allowed 218 raw slots, the DMA had written 122.
+    CHECK(adc_ring_copy_avail(218u, 122u, 1u) == 122u);
+    // A ring that started on time: the clock is the tighter bound.
+    CHECK(adc_ring_copy_avail(218u, 220u, 1u) == 218u);
+    // Whole round-robin groups only.
+    CHECK(adc_ring_copy_avail(1000u, 10u, 4u) == 2u);
+    CHECK(adc_ring_copy_avail(1000u, 3u, 4u) == 0u);
+    CHECK(adc_ring_copy_avail(1000u, 0u, 1u) == 0u);
+    CHECK(adc_ring_copy_avail(1000u, 10u, 0u) == 0u);
+
+    // Walk back exactly as adc_engine.c does -- from the channel's newest slot,
+    // which can wrap to the END of the ring when the channel has not been written
+    // yet -- and check every copied slot was written in this mode (index < w).
+    const unsigned nchs[3] = { 1u, 2u, 4u };
+    for (size_t a = 0; a < 3u; a++) {
+        unsigned nch = nchs[a];
+        for (size_t w = 0; w <= 64u; w++) {
+            for (unsigned slot = 0; slot < nch; slot++) {
+                size_t i = (w + ADC_RING_SAMPLES - 1u) & (ADC_RING_SAMPLES - 1u);
+                bool found = false;
+                for (unsigned k = 0; k < nch; k++) {
+                    if ((i % nch) == slot) { found = true; break; }
+                    i = (i + ADC_RING_SAMPLES - 1u) & (ADC_RING_SAMPLES - 1u);
+                }
+                CHECK(found);
+                size_t avail = adc_ring_copy_avail(UINT64_MAX, w, nch);
+                for (size_t k = 0; k < avail; k++) {
+                    CHECK(i < w);
+                    i = (i + ADC_RING_SAMPLES - nch) & (ADC_RING_SAMPLES - 1u);
+                }
+            }
+        }
+    }
+    return true;
+}
+
+static bool baseline_by_index(void) {
+    // A healthy firing: 205 samples ending at write index 300, the enable read at
+    // index 175, so the record starts at 95 and 80 samples precede the enable.
+    CHECK(strobe_live_baseline_by_index(205u, 175u, 300u) == 78u);
+    // A record reaching back before the mode began (the old clock-sized copy).
+    CHECK(strobe_live_baseline_by_index(208u, 2u, 122u) == 0u);
+    // The fixed copy that day: 122 samples, the enable at about index 2.
+    CHECK(strobe_live_baseline_by_index(122u, 2u, 122u) == 0u);
+    // Inconsistent or empty. One sample more than was written must not wrap the
+    // unsigned start index into a small positive baseline.
+    CHECK(strobe_live_baseline_by_index(123u, 5u, 122u) == 0u);
+    CHECK(strobe_live_baseline_by_index(100u, 301u, 300u) == 0u);
+    CHECK(strobe_live_baseline_by_index(100u, 202u, 300u) == 0u);   // first = 200
+    CHECK(strobe_live_baseline_by_index(100u, 203u, 300u) == 1u);
+    return true;
+}
+
+static bool baseline_checked(void) {
+    const uint64_t t_en = 10000000u;
+    // Covered: clock 76, DMA 78 -> 76.
+    CHECK(strobe_live_baseline_checked(205u, t_en, t_en + 250u, 175u, 300u, true) == 76u);
+    // Covered, DMA smaller (the ring started just before the enable): 3 -> 3.
+    CHECK(strobe_live_baseline_checked(205u, t_en, t_en + 250u, 100u, 300u, true) == 3u);
+    // Not covered -> 0 whatever the splits say.
+    CHECK(strobe_live_baseline_checked(205u, t_en, t_en + 250u, 175u, 300u, false) == 0u);
+    // Clock 0 -> 0.
+    CHECK(strobe_live_baseline_checked(205u, t_en, t_en, 175u, 300u, true) == 0u);
+    return true;
+}
+
+// Coverage, rounds 2 and 3 of the independent review (2026-10-12). Each snapshot
+// brackets its landing between two SysTick readings b cycles apart; span_lo is the
+// cycles between the brackets' earlier readings. 300 cycles per sample (150 MHz /
+// 500 ksps). A typical window, enable -> post, is 125 samples.
+#define CPS 300u
+// The longest live record, in cycles, fits SysTick's 24 bits with room to spare.
+_Static_assert((uint64_t)STROBE_LIVE_WAVE_MAX_SAMPLES * CPS < 0x01000000u,
+               "a live window overflows SysTick");
+// The widest acceptance window is narrower than one sample period, so a missing
+// or extra sample can never fall inside it...
+_Static_assert(2u * STROBE_LIVE_SNAP_BRACKET_MAX + 2u * STROBE_LIVE_DMA_SPREAD_CYCLES < CPS,
+               "coverage window can hide a sample");
+// ...and it is never wider than round 2's +-60 cycles.
+_Static_assert(STROBE_LIVE_SNAP_BRACKET_MAX + STROBE_LIVE_DMA_SPREAD_CYCLES <= 60u,
+               "coverage window widened");
+
+// What the two snapshots would read when the landings are `periods` ADC periods
+// plus `delta` (DMA latency difference) apart, each landing `x` cycles after its
+// bracket's earlier reading (0 <= x <= b).
+static uint32_t span_for(uint32_t periods, int32_t delta, uint32_t x1, uint32_t x2) {
+    return (uint32_t)((int64_t)periods * CPS + delta - (int64_t)x2 + (int64_t)x1);
+}
+
+static bool coverage(void) {
+    // Exact, centred.
+    CHECK(strobe_live_coverage_ok(span_for(125u, 0, 10u, 10u), 20u, 20u, 125u, CPS));
+
+    // Exhaustive over where each landing sits in its bracket, the bracket widths
+    // and the DMA spread: an honest count is ALWAYS covered, and one sample
+    // missing or extra NEVER is.
+    static const uint32_t bs[] = { 0u, 1u, 20u, STROBE_LIVE_SNAP_BRACKET_MAX };
+    static const int32_t  ds[] = { -(int32_t)STROBE_LIVE_DMA_SPREAD_CYCLES, 0,
+                                   (int32_t)STROBE_LIVE_DMA_SPREAD_CYCLES };
+    const uint32_t P = 125u;
+    for (size_t i = 0; i < 4u; i++) {
+        for (size_t j = 0; j < 4u; j++) {
+            for (uint32_t x1 = 0; x1 <= bs[i]; x1++) {
+                for (uint32_t x2 = 0; x2 <= bs[j]; x2++) {
+                    for (size_t k = 0; k < 3u; k++) {
+                        CHECK(strobe_live_coverage_ok(span_for(P, ds[k], x1, x2),
+                                                      bs[i], bs[j], P, CPS));       // honest
+                        CHECK(!strobe_live_coverage_ok(span_for(P + 1u, ds[k], x1, x2),
+                                                       bs[i], bs[j], P, CPS));      // one missing
+                        CHECK(!strobe_live_coverage_ok(span_for(P - 1u, ds[k], x1, x2),
+                                                       bs[i], bs[j], P, CPS));      // one extra
+                    }
+                }
+            }
+        }
+    }
+
+    // The window's edges: brackets 40/40 -> +-(40 + 20) = +-60 about the centre.
+    CHECK(strobe_live_coverage_ok(125u * CPS + 60u, 40u, 40u, 125u, CPS));
+    CHECK(strobe_live_coverage_ok(125u * CPS - 60u, 40u, 40u, 125u, CPS));
+    CHECK(!strobe_live_coverage_ok(125u * CPS + 61u, 40u, 40u, 125u, CPS));
+    CHECK(!strobe_live_coverage_ok(125u * CPS - 61u, 40u, 40u, 125u, CPS));
+    // Asymmetric brackets move the centre: b1 0, b2 40 -> centre span + 20, +-40.
+    CHECK(strobe_live_coverage_ok(125u * CPS - 60u, 0u, 40u, 125u, CPS));
+    CHECK(!strobe_live_coverage_ok(125u * CPS - 61u, 0u, 40u, 125u, CPS));
+    CHECK(strobe_live_coverage_ok(125u * CPS + 20u, 0u, 40u, 125u, CPS));
+    CHECK(!strobe_live_coverage_ok(125u * CPS + 21u, 0u, 40u, 125u, CPS));
+
+    // A bracket one cycle too wide is refused, even when the count is honest.
+    CHECK(!strobe_live_coverage_ok(125u * CPS, STROBE_LIVE_SNAP_BRACKET_MAX + 1u, 20u, 125u, CPS));
+    CHECK(!strobe_live_coverage_ok(125u * CPS, 20u, STROBE_LIVE_SNAP_BRACKET_MAX + 1u, 125u, CPS));
+    // A clock so slow that the window spans a sample period is refused.
+    CHECK(!strobe_live_coverage_ok(125u * 80u, 20u, 20u, 125u, 80u));
+    CHECK(strobe_live_coverage_ok(125u * 81u, 0u, 0u, 125u, 81u));
+    // Nothing written; one instant; no exact clock ratio.
+    CHECK(!strobe_live_coverage_ok(125u * CPS, 20u, 20u, 0u, CPS));
+    CHECK(!strobe_live_coverage_ok(0u, 0u, 0u, 0u, CPS));
+    CHECK(!strobe_live_coverage_ok(125u * CPS, 20u, 20u, 125u, 0u));
+    // The round-1 +-4 hole is gone.
+    CHECK(!strobe_live_coverage_ok(125u * CPS, 20u, 20u, 121u, CPS));
+    // The longest live window (~30.4 ms): honest covered, one short not.
+    CHECK(strobe_live_coverage_ok(span_for(15200u, 0, 5u, 5u), 10u, 10u, 15200u, CPS));
+    CHECK(!strobe_live_coverage_ok(span_for(15201u, 0, 5u, 5u), 10u, 10u, 15200u, CPS));
+    // SysTick counts DOWN, 24 bits.
+    CHECK(adc_systick_elapsed(1000u, 400u) == 600u);
+    CHECK(adc_systick_elapsed(10u, 0x00FFFFF0u) == 26u);                // across the wrap
+    return true;
+}
+
+// Round 3's reproduction: one conversion missing (126 periods, 125 samples), and
+// the first snapshot's timestamp 310 cycles late, the second's 10. Read as one
+// timestamp each, they cancel exactly: 126 x 300 + 10 - 310 = 125 x 300. With
+// bracketing, the 310-cycle delay is INSIDE the first snapshot's bracket -- it
+// cannot be hidden -- and a 320-cycle bracket is refused.
+static bool snapshot_latency_cancel(void) {
+    // The cancellation itself, on round 2's single-timestamp arithmetic.
+    const uint32_t round2_span = 126u * CPS + 10u - 310u;
+    CHECK(round2_span == 125u * CPS);
+    // Bracketed: the first landing sits 310 cycles before its bracket closes, so
+    // that bracket is at least 310 wide -- refused.
+    CHECK(!strobe_live_coverage_ok(span_for(126u, 0, 0u, 0u), 320u, 20u, 125u, CPS));
+    // With narrow, honest brackets the missing sample shows as 300 cycles out.
+    CHECK(!strobe_live_coverage_ok(span_for(126u, 0, 10u, 10u), 20u, 20u, 125u, CPS));
+    CHECK(strobe_live_coverage_ok(span_for(126u, 0, 10u, 10u), 20u, 20u, 126u, CPS));
+    return true;
+}
+
+// Round 1's reproduction: the ring passed its readiness wait, then acquisition
+// STOPPED at the enable. The copy still finds 205 older samples at 10 codes; the
+// clock split alone judged them "within limits, no current", which would have
+// advanced the staircase on a firing nobody saw. Between the snapshots: no
+// samples, 125 periods of cycles.
+static bool acquisition_stopped(void) {
+    strobe_live_meas_t m;
+    const uint64_t t_en = 10000000u, t_stop = t_en + 250u;
+    fill(205, 10);
+    CHECK(strobe_live_baseline_samples(205u, t_en, t_stop) == 76u);    // the clock alone
+    strobe_live_measure(buf, 205u, 76u, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_OK);                             // what that would do
+    bool covered = strobe_live_coverage_ok(span_for(125u, 0, 10u, 10u), 20u, 20u, 0u, CPS);
+    CHECK(!covered);
+    size_t pre = strobe_live_baseline_checked(205u, t_en, t_stop, 500u, 500u, covered);
+    CHECK(pre == 0u);
+    strobe_live_measure(buf, 205u, pre, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_NO_DATA);
+    return true;
+}
+
+// Round 2's reproductions: a 6 us pause (3 samples) passed round 1's +-4.
+// (a) It spans a whole 5 us pulse: the record holds no pulse at all.
+static bool short_gap_pulse(void) {
+    strobe_live_meas_t m;
+    const uint64_t t_en = 10000000u, t_stop = t_en + 250u;
+    fill(205, 10);                                   // the pulse fell in the gap
+    strobe_live_measure(buf, 205u, 76u, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_OK);
+    CHECK(!m.detected);                              // "no current" -- unobserved
+    bool covered = strobe_live_coverage_ok(span_for(125u, 0, 10u, 10u), 20u, 20u, 122u, CPS);
+    CHECK(!covered);
+    strobe_live_measure(buf, 205u,
+        strobe_live_baseline_checked(205u, t_en, t_stop, 175u, 297u, covered), 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_NO_DATA);
+    return true;
+}
+
+// (b) It falls inside 206 us of current: the run reads 200 us, which is not over
+// STROBE_LIVE_MAX_ON_US, so a clamp violation reads "within limits".
+static bool short_gap_stuck(void) {
+    strobe_live_meas_t m;
+    const uint64_t t_en = 10000000u, t_stop = t_en + 450u;
+    fill(225, 10);
+    put_pulse(80, 100, 1.0f, 10);                    // 103 samples of current, 3 lost
+    strobe_live_measure(buf, 225u, 76u, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_OK);
+    CHECK(m.max_width_us == STROBE_LIVE_MAX_ON_US);  // 200 us: the limit, not over it
+    bool covered = strobe_live_coverage_ok(span_for(225u, 0, 10u, 10u), 20u, 20u, 222u, CPS);
+    CHECK(!covered);
+    strobe_live_measure(buf, 225u,
+        strobe_live_baseline_checked(225u, t_en, t_stop, 175u, 397u, covered), 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_NO_DATA);
+    return true;
+}
+
+static bool short_baseline(void) {
+    strobe_live_meas_t m;
+    fill(300, 3);
+    put_pulse(150, 10, 2.0f, 3);
+    strobe_live_measure(buf, 300, STROBE_LIVE_PRE_MIN_SAMPLES - 1u, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_NO_DATA);
+    strobe_live_measure(buf, 300, STROBE_LIVE_PRE_MIN_SAMPLES, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_OK);
+    CHECK(m.detected);
+    return true;
+}
+
+// The record itself, through every path. What it did that day, then what the
+// fixed code makes of the same ring.
+static bool replay_2026_10_12(void) {
+    strobe_live_meas_t m;
+    fill_2026_10_12();
+
+    // Then: the clock-only split put 76 leftover samples in the baseline.
+    strobe_live_measure(buf, 208u, 76u, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_STUCK_ON);
+    CHECK(m.baseline_code > 1270.0f && m.baseline_code < 1285.0f);
+
+    // Now, the same 208-sample copy: the DMA count refuses it (it reaches back
+    // past the mode's start) even with coverage granted, so the record is NO
+    // DATA, never a verdict.
+    const uint64_t t_en = 10000000u, t_stop = t_en + 241u;
+    size_t pre = strobe_live_baseline_checked(208u, t_en, t_stop, 2u, 122u, true);
+    CHECK(pre == 0u);
+    strobe_live_measure(buf, 208u, pre, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_NO_DATA);
+
+    // And the copy the fixed freeze makes -- only the 122 samples written.
+    CHECK(adc_ring_copy_avail(218u, 122u, 1u) == 122u);
+    pre = strobe_live_baseline_checked(122u, t_en, t_stop, 2u, 122u, true);
+    CHECK(pre < STROBE_LIVE_PRE_MIN_SAMPLES);
+    strobe_live_measure(buf + 86u, 122u, pre, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_NO_DATA);
+
+    // With the ring waited for (100 samples before the enable): a clean,
+    // judged record at ~10 codes and no current.
+    for (size_t i = 0; i < 300u; i++) buf[i] = 10u;
+    pre = strobe_live_baseline_checked(205u, t_en, t_en + 250u, 175u, 300u,
+                                       strobe_live_coverage_ok(span_for(125u, 0, 10u, 10u), 20u, 20u, 125u, CPS));
+    CHECK(pre >= STROBE_LIVE_PRE_MIN_SAMPLES);
+    strobe_live_measure(buf, 205u, pre, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_OK);
+    CHECK(!m.detected);
+    return true;
+}
+
+// The live window design leaves enough baseline to judge, with the ring waited for.
+_Static_assert(STROBE_LIVE_PRE_MIN_SAMPLES + 10u <= (STROBE_LIVE_PRE_US - 40u) / STROBE_LIVE_SAMPLE_US,
+               "PRE_MIN leaves no margin in the 160 us window");
+_Static_assert(STROBE_LIVE_RING_READY_SAMPLES * STROBE_LIVE_SAMPLE_US >= STROBE_LIVE_PRE_US - 40u,
+               "the ring wait does not cover the baseline window");
+_Static_assert(STROBE_LIVE_RING_TIMEOUT_US > STROBE_LIVE_PRE_US, "ring timeout shorter than PRE");
+
 // --- Pacing -----------------------------------------------------------------
 
 static bool budget_window(void) {
@@ -586,6 +885,9 @@ int main(int argc, char **argv) {
         TEST(clamp_width_limit), TEST(overcurrent_plateau), TEST(overcurrent_peak),
         TEST(stuck_outranks_overcurrent), TEST(noisy), TEST(no_data), TEST(verdict_texts),
         TEST(baseline_split),
+        TEST(ring_copy_avail), TEST(baseline_by_index), TEST(baseline_checked),
+        TEST(coverage), TEST(snapshot_latency_cancel), TEST(acquisition_stopped), TEST(short_gap_pulse), TEST(short_gap_stuck),
+        TEST(short_baseline), TEST(replay_2026_10_12),
         TEST(budget_window), TEST(budget_wrap), TEST(budget_full_table),
         TEST(budget_rejects_bad), TEST(budget_bookings), TEST(interval), TEST(idle_timeout),
         TEST(cal_next_steps), TEST(cal_steps_cannot_overshoot), TEST(cal_solve_interp),

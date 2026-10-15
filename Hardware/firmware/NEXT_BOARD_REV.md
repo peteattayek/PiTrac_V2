@@ -37,6 +37,9 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 | **CR-19** | TIA feedback: 120 kΩ resistor and 1.5 pF capacitor | Requested 2026-09-30 | Feedback component values / BOM | Requested TIA feedback values are not incorporated |
 | **CR-20** | Reduce the on-board green LED brightness | Requested 2026-09-30 | LED current-setting component | Green indicator remains too bright |
 | **CR-21** | Test points on the strobe drive chain (U5 Q, Q10 gate), and a GND test point by TP3/TP4 | 🟡 Med — **a probe sparked at R61, 2026-10-05**; the only GND TP is 72 mm from TP3 (2026-10-07) | 3–4 test points | The clamped pulse can only be probed at R61, 0.58–1.15 mm from +12 V and GND pads; a TP1 ground picks up ±80 mV of boost |
+| **CR-22** | Thermal relief on pads in copper pours | 🟡 Med — **both J3 joints were cold on board 1, 2026-10-13** | Zone settings + a DRC pass | Hand-soldered joints on pours stay suspect; on J3 the strobe ran open-circuit for a bench day |
+| **CR-23** | Q9's gate floats up for microseconds at each turn-on (the gate drive pulls down only after a dead-band delay), so every pulse overshoots | 🔴 **High — measured 2026-10-13: 3.3 A peak on a 0.72 A setting** | Rework: 1 µF at Q9's gate. Next board: + R_iso, − U7 (net cheaper) | The first ~10 µs of every strobe pulse is wrong (overshoot, then sag); at 9 A the overshoot could reach tens of amps |
+| **CR-24** | Test-point plan for the next board (consolidates CR-17, CR-21, CR-23's test points) | 🟡 Med — every bench phase has probed component pads; a probe sparked at R61 (board 2); TP2/TP3 sit 1.9/0.6 mm from 36 V/12 V copper | Layout only (test points cost no parts) | Soldered leads and pad-probing on every new board; the same spark and pickup risks |
 
 *CR-10 was never assigned.*
 
@@ -1351,7 +1354,8 @@ central to the board's purpose.
 ### The change
 
 **One test point on `Net-(U12B-OUT2)`.** Same 1.0 mm THT pad as TP1-TP10, placed near TP8 so
-the two comparator inputs can be probed together with a two-channel scope.
+the two comparator inputs can be probed together with a two-channel scope. (Placement and pad
+rules: CR-24.)
 
 That single addition makes the detection decision directly observable: signal, threshold, and
 the margin between them, live.
@@ -1434,7 +1438,7 @@ same class of finding as CR-17 (no test point on the comparator node).
 ### The change
 
 Add test points, each with **≥ 1.5 mm clearance to any other exposed copper** and a nearby GND
-point for a probe ground:
+point for a probe ground (the consolidated plan for the whole board is CR-24):
 
 - **TP on `Net-(U5A-Q)`** (U5 Q, 3.3 V logic) — the U5 clamp measurement.
 - **TP on `Net-(Q10-G)`** (Q10 gate, 0–12 V) — U8 drive level and edges.
@@ -1454,3 +1458,468 @@ None.
 
 Each test point is reachable with a 10× scope probe and a ground spring without touching
 another pad. 6a.1 can be run with only clip leads on test points.
+
+---
+
+## CR-22 — 🟡 Thermal relief on pads in copper pours
+
+### Why
+
+Every copper pour on this layout connects to its pads **solid** (zone pad connection "yes"),
+including the inner GND (In1) and +5V (In2) planes. A solid connection to a large pour sinks
+the iron's heat, so a hand-soldered joint can look acceptable and still not wet the pin.
+
+On **board 1, 2026-10-13, both J3 pins were cold** (`PROGRESS.md` §6):
+- C26 read 36 V while the J3 screw read 7 V.
+- Two 6c staircases ran with the LED bank open-circuit.
+
+The owner reports that the pours make these joints hard to solder. `BRINGUP_NEW_BOARD.md` §1
+now inspects them on every board.
+
+### The change
+
+- **Thermal relief for through-hole pads** in every pour (zone properties → pad connections →
+  thermal reliefs, or per footprint).
+  - Size the spokes for the current: J3 carries the ~9 A strobe pulses (2 strings × 4.5 A), and
+    J1 the board's input current.
+  - The fill's default spoke (0.508 mm) is a thermal-pad default, not a current rating.
+- **SMD power pads that are reflowed may stay solid** where the heat path matters: Q9's tab,
+  the LM5157 and U3 exposed pads. Note that on the assembly drawing, so nobody hand-solders them
+  without preheat.
+- Do it with **CR-06** (larger terminals for the +5 V input and the strobe output): both touch
+  J1 and J3.
+
+### Firmware impact
+
+None.
+
+### Verify
+
+- The zone fill shows spokes on every through-hole pad in a pour.
+- A hand-soldered J3 wets through to the far side with an ordinary iron.
+- The §1 joint inspection passes on the first board built.
+
+---
+
+## CR-23 — 🔴 Q9's gate floats up for microseconds at each turn-on, so every pulse overshoots
+
+### Why
+
+Measured on board 1, 2026-10-13 (`PROGRESS.md` §6), with single 20 µs pulses and the Saleae on
+TP4:
+
+| gate | TP3 | turn-on peak | sag | settled |
+|---|---|---|---|---|
+| 21 % | 2.08 V | 0.34 A at 0.5–1 µs | 0.04 A at 7–9 µs | 0.10 A from ~9 µs |
+| 24 % | 2.38 V | **3.3 A for ~2.5 µs** | 0.34 A at 7–8 µs | 0.72 A from ~9 µs |
+
+- TP3 (AC-coupled, 200 mV/div) rises by **more than 0.7 V** at turn-on and holds ~2 µs. It falls
+  ~0.2 V below its setpoint by ~7 µs, then snaps back, mirroring the current.
+- A 50 µs pulse showed one recovery, then steady current. This is a transient, not an
+  oscillation.
+
+**Mechanism** (consistent with every capture; not yet simulated):
+- Q9 is a source follower. The 0.135 Ω sense resistor (plus Q10) is meant to limit its current:
+  I ≈ (V_TP3 − Vgs)/R. That works only while the gate is held as the source rises.
+- U7 (MMDT2227, an unbiased complementary follower inside the LM358 loop; feedback from TP3)
+  holds the gate against downward moves, because the NPN conducts. It does not hold it against
+  upward ones: the PNP is off across a ±V_BE dead band, and only the LM358 (0.3–0.5 V/µs) can
+  bring it in.
+  - U7 **can** pull down. The problem is the **transition** into pulling down: U7's dead band,
+    plus the LM358's own output-stage crossover when its load current reverses direction.
+  - TI documents microsecond-scale recovery for the LM358 in that case, and notes that older
+    simulation models omit it (Astra's review, 2026-10-13).
+- At turn-on the source rises with the current (3.3 A × ~0.16 Ω ≈ 0.5 V). Q9's ~1.7 nF Cgs
+  carries the gate up with it, so Vgs barely falls, and the current runs to Q9's transfer-curve
+  value at the full setpoint Vgs.
+- After ~2–3 µs the LM358 brings the PNP in and pulls TP3 down. It overshoots low (the sag), and
+  the NPN re-engages at ~8–9 µs.
+- The ~+3 V TP3 kick after turn-off is the same one-sidedness.
+
+**Consequences:**
+- §15's 5–20 µs strobe pulses sit inside the transient.
+- At the 9 A setting (TP3 ≈ 4.5–6 V) the turn-on current would be limited only by Q9 at that
+  Vgs and by the LED strings, ballast and wiring: plausibly tens of amps for microseconds.
+- The firmware's 13 A peak check acts after the pulse, and U5 limits width, not amplitude.
+- Board 1's 6c Step 3 stopped at gate 24 % for this.
+
+### No rework hook on the board
+
+- Every part in the gate drive is fitted. There is **no DNP footprint and no 0 Ω link** between
+  the LM358 and Q9's gate.
+  - The only 0 Ω on the strobe sheet is R61, in the pulse path (U5 Q → U8).
+  - The board's DNP options (C9, R11, R98) are elsewhere.
+- U6B, the LM358's second half, is unused but tied off in copper (+ to GND, − to its output).
+- Usable points:
+  - Q9's gate lead and its 2.2 × 1.2 mm pad;
+  - R63 (0402, 47 Ω);
+  - R66's GND pad, where the G1/G2 leads already are;
+  - TP3, but it is the follower output, on the **loop side** of R63.
+- Neighbours to respect:
+  - **R67 sits 0.65 mm from Q9's gate pad.** Its pads are GND and `PWR_LowSideD`, and a bridge
+    across R67 bypasses Q10 and the sense resistors.
+  - Three VIR (36 V) vias are ~1.8 mm below-left of the gate pad.
+
+### Options considered
+
+| Option | Fixes the root cause? | Parts (JLC) | Risk | Verdict |
+|---|---|---|---|---|
+| **A. Gate-hold capacitor** at Q9's gate, behind R63 | **Yes**: divides every charge the gate receives by ~500 | +1 MLCC (1 µF 0805 X7R, C28323, already on the BOM) | Loop stability (modelled below); setpoint changes slow from µs to ~0.1 ms (firmware already waits 20 ms) | **Recommended**, for the rework and the next board |
+| B. Class-AB bias for U7 | Partly: removes the dead band | +2–4 basic parts; impossible on board 1 (U7's two bases are one copper node) | Bias current must fit the ~5 mA +12 V shunt (CR-07); the gate can still move at edges | Not needed with A |
+| C. Passive gate pull-down | Only at a few mA (to sink the bootstrap charge in < 1 µs) | +1 resistor | The +12 V rail has ~5 mA in total (R15 4K7 from VIR) | Rejected |
+| D. Faster op-amp, same footprint | No: it shortens the dead-band crossing, but the gate still floats | Extended part | A capacitive load inside a faster loop | Rejected |
+| E. Current-mode loop (feedback from TP4) | Changes the problem | Fast op-amp (extended), compensation | **Windup**: with Q10 open between pulses the loop saturates, and the gate starts each pulse at the rail | Rejected |
+| F. Firmware only | No | — | The gate is a DC node; firmware cannot act within a pulse | Rejected (the readback fix is still needed) |
+| G. Cascode MOSFET above Q9 (gate at a fixed DC) | No: it stops the drain swing coupling into Q9's gate (Miller), but the dominant push is the **source** rising with current. At turn-on the drain swing actually pulls the gate the other way. | +1 power MOSFET (D-PAK) and a bias network | Its own gate would need holding too | Rejected for this problem (it would share Q9's dissipation, a separate topic) |
+| H. Discrete transistor amplifier replacing U6A/U7 | Only with >5-10 MHz loop bandwidth around a 1.7 nF gate and class-A/AB bias | Several transistors and resistors | Stability; bias current against the ~5 mA +12 V budget; Vbe drift on DC accuracy | Rejected: the gate's correct value is DC, so this is a charge-storage problem, not a gain or speed problem |
+
+### What U7 is for, and why it can go
+
+- U7 is a unity-gain current booster between the LM358 and Q9's gate. Its NPN pushes up from
+  +12 V and its PNP pulls down to GND. The loop's feedback from TP3 corrects its ~0.6 V drop at
+  DC.
+- The design note calls it "a complementary emitter-follower inside the loop". The usual reasons
+  for such a stage are more gate current than the op-amp gives, and keeping the op-amp from
+  driving ~1.7 nF directly.
+- **But this gate never needs to move fast.** The setpoint is filtered by the 2.62 ms DAC ladder
+  and changes only between bursts.
+- And with no bias, only one of its transistors conducts at a time, with a ~1.2 V dead zone
+  between them. That dead zone is what lets the gate float during the pulse edge.
+- With C_hold, the capacitor supplies every fast charge, and U7 has nothing left to do.
+  - Removing it saves an extended part, removes the dead zone, and lets the gate reach a true
+    0 V (U7's PNP leaves ~0.6 V).
+  - The risk is the LM358's unspecified output resistance. Hence R_iso >= 100 Ohm, the
+    "fit exactly one" footprints, and the board-1 stage-2 test before committing.
+  - Keeping U7 is also fine (modelled 76-86 deg with C_hold): a cost and simplicity choice, not
+    a safety one.
+
+### Why option A works
+
+With C_hold from the gate to the sense-resistor ground, any charge pushed into the gate moves it
+by ΔQ / C_hold instead of ΔQ / ~1.8 nF. That covers the bootstrap through Cgs as the source rises,
+the Miller charge through Cgd as the drain moves, Q10's edge, and L·di/dt pumping.
+
+Residual errors at 9 A, with ~0.6 µF effective (X7R at bias). 1 mV on the gate is ≈ 4 mA at 9 A,
+with gm ≈ 10 S and 0.16 Ω of source resistance.
+
+| Mechanism | Charge | Gate moves | Current error at 9 A |
+|---|---|---|---|
+| Source rises with current (1.44 V × 1.5 nF) | 2.2 nC | ~4 mV | ~15 mA |
+| Source idle level (~3 V) collapses at turn-on | ~4.5 nC | ~8 mV **down**; recovers through R63 (τ ≈ 30–50 µs) | ~30 mA |
+| Drain swing (~8 V × ~0.2 nF) | ~1.6 nC | ~3 mV | ~10 mA |
+| L·di/dt pumping | a few nC | ~5 mV | ~20 mA |
+
+- The total is ≲ 20 mV, about 1 % at 9 A. **These are predictions, not a demonstrated worst
+  case.** (Astra's review, 2026-10-13.)
+  - The budget covers charge coupled through the MOSFET only. The driver can also charge C_hold
+    through R63 while TP3 is disturbed: 0.7 V at TP3 for 3 µs would move 0.6 µF by ~71 mV.
+  - With the gate held, TP3 should no longer swing like that, but this must be measured, not
+    assumed.
+  - Signs differ by row: the source rising pushes the gate up, its collapse pulls it down.
+- Measured today: **≥ 0.7 V** at 24 %. U7's PNP only clamps the gate at about +1.15 V (its dead
+  band).
+- The fix does not depend on which injection path dominates.
+
+**Effect on pulse edges: none.** (Owner's question, 2026-10-13.)
+- Q10 makes the edges. Q9's gate only sets the pulse height, and it is meant to sit still at a
+  DC level between bursts. C_hold just makes it sit still.
+- **Rise:** Q10 switches in ~50 ns. With Q9's gate held, Q9 is briefly over-driven at turn-on
+  (its source starts at its idle level), so the current climbs as fast as the LED loop allows,
+  di/dt ≈ headroom / L. At 9 A, ~10 V of headroom over ~0.3-1 µH of loop gives an estimated
+  0.3-0.9 µs. Twisted, short leads lower L.
+- **Fall:** when Q10 opens, the bank current freewheels through D10 against the LEDs' own
+  forward voltage, so it falls in ~0.1-0.3 µs. Q9's gate is not involved.
+- **What it does change:** the flat top. Today it carries the 3.3 A spike and the sag to ~9 µs;
+  with C_hold it should be flat from the end of the rise. Pulse-to-pulse repeatability in bursts
+  improves too, since each pulse moves the gate a few mV and it recovers in ~50 µs.
+- **The only thing it slows is a setpoint change:** from µs to ~50-100 µs. The firmware changes
+  the gate only between bursts, and waits 20 ms.
+- **Minor:** Q10 now also discharges Q9's source node through Cgs at turn-on (~3 V × 1.5 nF ≈
+  4.5 nC). That is a ~0.1 A blip lasting tens of ns, invisible to ADC0.
+
+### Loop stability (small-signal model — predictions only)
+
+A linear model. **It omits U7's dead band and the LM358's output-stage crossover, which is the
+behaviour being fixed.** Its numbers rank the options; only the bench decides.
+
+**Model (assumptions, not measurements):**
+- LM358: GBW 0.7–1.1 MHz, with a second pole set for ~60° unity-gain margin.
+- U7's NPN: r_e = 26 mV / (V_TP3 / 30 kΩ).
+- Load: the 30 kΩ divider ∥ (R63 + C_hold + ~1.7 nF of gate).
+- Feedback: β = 1/3.
+
+| Capacitor | Where | Phase margin over TP3 = 1–9 V |
+|---|---|---|
+| none (as built) | — | 31–69° (lowest at low TP3); consistent with 6b's pass |
+| 100 nF | Q9 gate (behind R63) | 39–77° |
+| 470 nF | Q9 gate | 65–84° |
+| **1 µF** | **Q9 gate** | **76–86°** |
+| 2.2 µF | Q9 gate | 83–87° |
+| 1 µF | **TP3, with no R63 in between** | **1–4°: it would oscillate** |
+
+- **Predicted:** bigger is better, as long as R63 sits between the loop and the capacitor. The
+  R63·C zero then falls below the loop crossover.
+- **Never fit it at TP3.**
+- A 1X probe on TP3 (~130 pF) changes nothing.
+
+### Board-1 rework (a bench test of option A)
+
+- **Part:** 1 µF X7R 0805, ≥ 25 V. C24's part (Samsung CL21B105KBFNNNE, 50 V) is ideal.
+  470 nF–2.2 µF X7R is **predicted** to work (unverified); do not go below 470 nF, and do not
+  use Y5V.
+- **Board state:** unpowered (PSU and USB off), VIR < 1 V at C26.
+- **Keep U6, U7 and every resistor unchanged** for this first experiment.
+- **Gate end:** a short 30 AWG wire soldered to the top of Q9's **gate lead** (the D-PAK lead
+  nearest TP3 and R63), close to the body and away from R67.
+- **Ground end:** the capacitor's other terminal soldered to **R66's GND pad** (the pad with
+  G1/G2, farther from Q10). Wire ≤ 20 mm.
+- **Do not use R67's pads**, and keep clear of the VIR vias below-left of the gate pad.
+- **DMM before power:**
+  - Q9 gate → G1 reads like a capacitor (low, then climbing), not a short.
+  - R67, pad to pad, still reads ≈ 56 kΩ.
+  - Q9 gate → Q9 source does not read ~0.
+- **Verification (revised after Astra's review):**
+  1. **Dry, J3 disconnected:** 6b's TP3 stability check, plus **command settling**. With DC
+     coupling on the **gate node** (the capacitor junction), record:
+     - its response to a setpoint step;
+     - its decay after `strobe gate 0`: the voltage at 20 ms, and the time to < 0.1 V.
+  2. **Loaded:** 6c Step 2, then re-climb from gate 3 in 3 % steps.
+     - **Gate each step on the measured peak current:** stop at a peak > 2x the settled level,
+       or > 2 A.
+     - 24 % is **not** a pre-cleared level; the modified circuit's transient is unknown.
+     - 24 % stays the ceiling until the readback fix.
+  - **Probes** (attach with the board unpowered; short grounds on the R66 GND pad):
+    - first the **gate node and TP4** together;
+    - then **TP3 and the gate node** together;
+    - DC coupling for absolute gate voltage and shutdown.
+  - **Instruments:** the Saleae Logic Pro 8 analog channel and the TDS on 1X probes are both
+    only ~5–6 MHz. For anything faster (the edge spike), use a compensated 10X probe after
+    PROBE CHECK, or the MSO54B.
+  - **Pass, judged on the gate node and TP4:**
+    - the gate holds steady through the pulse;
+    - no turn-on overshoot;
+    - the current settles within ≤ 2 µs;
+    - the 10-90 % rise is no slower than before;
+    - no HF oscillation.
+  - **The edge spike is investigated, not excluded.** Compare it with the pre-rework captures.
+  - **TP3 is secondary:** R63 deliberately lets TP3 and the gate behave differently.
+- **Optional second stage, only after stage 1 is understood** (tests the next-board circuit):
+  - Remove U7, and bridge a base pad to an emitter pad with **0 Ω** (pads 2 and 1 are adjacent;
+    do not touch pad 3, GND, or pad 6, +12 V).
+  - TP3 then *is* the op-amp output. R60 senses before R63, and R63 acts as R_iso (47 Ω,
+    against the proposed 100 Ω). That is the next-board circuit.
+  - **Correction:** I first wrote 100 Ω here. That would put R60's sense point after the new
+    resistor, which is a different circuit (Astra's review).
+  - Recheck the zero-command decay: without U7, the LM358 sinks only ~50 µA near 0 V.
+
+### Recommended change for the next board
+
+1. **C_hold:** 1 µF X7R 0805 (C28323, already on the BOM) from Q9's gate to the sense-resistor
+   ground, ≤ 3 mm from the gate pin, with its own via to the R65/R66 GND copper.
+2. **R_iso = 100 Ω** (basic 0402) between the driver and C_hold, taking over R63's role. Add a
+   **0 Ω gate-stopper footprint** between C_hold and Q9's gate; fit 2.2–4.7 Ω only if HF
+   oscillation appears.
+3. **Drop U7** (MMDT2227, an extended part). Drive R_iso from the LM358's output, and take the
+   R60/R59 feedback from the op-amp side of R_iso.
+   - **Why R60 senses before R_iso:**
+     - Sensing after it would put the 1 µF directly at the feedback point, with nothing to
+       isolate it. That is the same failure as fitting the capacitor at TP3: predicted to
+       oscillate.
+     - No DC current flows through R_iso (the gate and C_hold draw none), so the gate still
+       sits at exactly the regulated voltage.
+     - The two nodes differ only for microseconds during a pulse, and holding the gate through
+       those microseconds is C_hold's job.
+   - Modelled phase margin: 78–87° for an LM358 output resistance of 100 Ω–3 kΩ, with R_iso
+     100–220 Ω. A prediction; the LM358's crossover is not in the model.
+   - Fallbacks, in order: keep U7, then a faster op-amp. A true current-feedback loop stays an
+     option, but it needs deliberate handling of the interval when Q10 is off.
+   - **Fit-one footprints:** U7's footprint is DNP, and a 0 Ω from its base net to its emitter
+     net is **fitted** by default. To fall back, fit U7 and remove the 0 Ω.
+4. A DNP footprint for a compensation capacitor across R60 (op-amp output → inverting input).
+5. **Test points** (the full plan for the board is CR-24):
+   - **Keep TP3 on the feedback node** (the op-amp output, before R_iso). Its meaning, 3 × the DAC
+     voltage, stays the same, so the firmware's "TP3 ... V" messages and every bench procedure
+     stay valid.
+   - **Add a new test point on the held gate node** (after R_iso, at C_hold). That is the node
+     that sets the current, and the one the acceptance checks use.
+   - Add a GND test point within ~5 mm of both, and keep TP3 away from +12 V pads (CR-21; today
+     it is 0.59 mm from C56).
+   - Topology:
+     ```
+     LM358 out -> [U7 DNP | 0R fitted] -> TP3 (R60 feedback taps here) -> R_iso 100R
+         -> gate node (C_hold 1 uF to sense GND; new gate TP) -> R_stop 0R -> Q9 gate
+     ```
+6. **LED-bank leads:** a tightly twisted pair, as short as practical. On 2026-10-13, twisting
+   cut the turn-on edge spike from 72 to 35 mV and the turn-off lobe from −74 to −22 mV
+   (`PROGRESS.md` §6). Specify it in the harness drawing alongside CR-06.
+
+**Net BOM against today's board:**
+- −1 extended part (MMDT2227, C41375117).
+- +1 placement of C28323, already on the BOM.
+- R63's value changes from 47 Ω to 100 Ω: one new basic line.
+- +2 0 Ω placements (R_stop and the U7 bypass). Reuse R61's 0805 0 Ω line (C17477) if the
+  footprints allow.
+- All basic parts, so no new setup fee, and the extended-part fee is saved.
+
+**Trade-off accepted:** the settled current still depends on Q9's Vgs, which drifts with
+temperature. The firmware's per-pulse readback and `strobe cal` correct for that. Only a
+current-mode loop would remove it, and that brings option E's problems.
+
+### Firmware impact
+
+- The readback fix (`PROGRESS.md` §9, "Half-peak threshold") is still required. It is
+  independent of this change.
+- **`DAC_SETTLE_MS` (20 ms, sized for the 2.62 ms ladder):**
+  - With C_hold behind R63, the gate follows the setpoint with an extra ~50 µs (rework) to
+    ~100 µs (R_iso 100 Ω), well inside 20 ms.
+  - On zeroing, U7's PNP (or the op-amp) pulls the gate to ~0.6 V within ~0.3 ms. The last
+    ~0.6 V then decays through R59 + R60 (30 kΩ × 1 µF ≈ 30 ms).
+  - **Predicted, not established:** the final tail starts only once the DAC ladder has fallen
+    (~3–7 ms after the command, depending on the starting level). So at 20 ms the gate may still
+    be ~0.3–0.4 V.
+  - Q9's V_GS(th) minimum (1.0 V) is a test point at 250 µA, not an on/off boundary.
+  - **Measure the gate voltage and the resulting current after commanding zero** before the
+    dry-pulse interlock's "decayed to zero" model is re-derived and reviewed. Recheck if U7 is
+    removed.
+  - **Measured on board 1, 2026-10-15** (1 µF 50 V X5R, C_eff ~0.5-0.8 µF; U7 fitted; from 30 %):
+    - the gate tracks TP3 within ±3 mV;
+    - < 1.0 V at 2.8 ms, **0.35 V at 20 ms**, < 0.1 V at ~69 ms.
+    - The current at that gate voltage is still to be confirmed on TP4.
+- **Board-1 stage 1 verified, 2026-10-15** (`PROGRESS.md` §6):
+  - at 24 %, 0.690-0.712 A from 0.1 µs (before: 3.3 A for ~2.5 µs);
+  - a ~20 ns rise;
+  - the gate node moves +2 to +6 mV;
+  - TP3's kicks are gone;
+  - the residual ~1 MHz on TP4 is boost pickup (present with Q10 off).
+- Large setpoint steps draw C_hold's charge from the +12 V shunt rail (C54, C24 and the rest).
+  - A 5 V step costs ~5 µC, a ~1 V sag that recovers in ~1 ms.
+  - Live-mode steps are ≤ 0.3 V.
+- Dropping U7 does not change the DAC-to-gate relation.
+- Re-run `strobe cal` after any change.
+
+### Verify
+
+- Saleae and scope on TP4, at ~1 A and at the 9 A setting: the current is within ±5 % of its
+  settled value from ≤ 1–2 µs after the edge (6c Step 3's pass criterion).
+- The held gate node moves < ~20–50 mV at turn-on (TP3 is secondary).
+- 6b's TP3 stability check passes: no oscillation at static setpoints, no ringing at pulse edges,
+  and no HF oscillation at full bandwidth.
+
+---
+
+## CR-24 — 🟡 Test-point plan for the next board
+
+This consolidates the test-point items of CR-17, CR-21 and CR-23, and adds what the bench
+phases have needed since. Those CRs keep their reasons; the placement plan lives here.
+
+### Why
+
+Every bench phase so far has had to probe component pads or solder leads where a test point
+should have been:
+
+| Where we probed instead | For | Problem | Source |
+|---|---|---|---|
+| R33 / R57 | GPIO25 `Strobe_Pulse`: the scope EXT trigger and LA timing in every Phase 6 session | a soldered lead; R57's GND pad is 0.38 mm from its signal pad | `BENCH_P6_STROBE.md` 6a |
+| R61 pad 1 | U5 Q, the clamped pulse | **a probe sparked on board 2 (2026-10-05)**; the pads are 0.58–1.15 mm from +12 V and GND | CR-21 |
+| R64 pad 2 | Q10 gate, 0–12 V | a soldered lead; Q10's gate pin is 0.53 mm from its drain | 6a |
+| R66's GND pad (the G1/G2 leads) | a probe ground near TP3/TP4 | the only GND test point, TP1, is 72 mm away; grounding there put ±70–85 mV of boost pickup on TP3 | `PROGRESS.md` §6 2026-10-07; `HANDOFF.md` §8 |
+| Q9's gate lead | the held gate (CR-23) | no access at all | CR-23 |
+| R102 pad 2 | the comparator + input, the detection decision node | no test point at all | CR-17; `BENCH_P3_DETECT.md` §3.6 |
+| D11 pad 1, with TP5 | beam LED current, differential across R73+R74 | a two-probe differential on component pads | `BENCH_P2_BEAM.md` 2b |
+| J5 pins 4/6 | a probe ground for the beam area | no local GND | `BENCH_P2_BEAM.md` |
+| J3 pin 1 screw, C26 | VIR (36 V) | the screw is the only safe point, and both J3 joints were cold on board 1 (2026-10-13) | `BRINGUP_NEW_BOARD.md` §2; CR-22 |
+| J8.2, J8.1, J8.37 | the latched +5 V rail, the Pi's 3V3, the shutdown handshake | covered once a Pi is fitted | `BENCH.md` Phase 1; `BENCH_P8_PI.md` |
+| J4.3, J4.7, J4.8 | the camera trigger and strobe lines | covered once cameras are fitted | `BENCH_P5_P7_MIC_CAMERA.md` Phase 7 |
+| R11 pad 1 (empty) | the LM5157 SW node | **fine as it is**: the empty snubber pad is a good probe point | `BENCH_P3_DETECT.md` §3.6 |
+
+And some existing test points sit too close to other nets (edge to edge, from the PCB file):
+
+| TP | Net | Problem |
+|---|---|---|
+| TP2 | +12 V | **1.92 mm from R15's VIR (36 V) pad.** A bridge puts 36 V on the 12 V rail. |
+| TP3 | gate setpoint | **0.59 mm from C56's +12 V pad** |
+| TP9 | LPF output | ≈ 0.4 mm from U12 pin 9, an op-amp input |
+| TP10 | demodulator output | ≈ 0.8 mm from R91 (`Demodulation_PWM`) |
+| TP8 | threshold | ≈ 0.45 mm from a GND via |
+| TP5 | `Strobe_GND` | the **name** invites a scope ground clip on a switched drain (CR-11) |
+
+### Rules for every test point
+
+1. **Pad:** THT, ~1.6 mm pad and ~0.8 mm drill, so it takes a hook clip or a soldered 30 AWG
+   lead. Use **thermal relief** (CR-22).
+2. **Clearance:**
+   - ≥ 1.5 mm edge to edge to any other exposed copper;
+   - ≥ 3 mm from VIR, +12 V and +5 V copper, unless the test point is that rail.
+3. **A GND test point within ~5 mm of every analog or fast test point.** Ideally use
+   signal/GND pairs 2.54–5 mm apart, so a probe's ground spring reaches.
+4. **Named nets.** No `Net-(U7-E1)`-style auto-names.
+5. **Silkscreen** the TP number, net name and nominal voltage, e.g. `TP3 GATE_SET 0-10V`.
+6. **Cluster by function** (strobe, power, detect, beam, camera/Pi), so a two-channel scope sees
+   related nodes together.
+7. **No test point where a probe slip is dangerous** (see "Do not add" below).
+
+### Keep, move, rename: TP1–TP10
+
+**Remove: none.** Every existing test point is used in a procedure: bring-up, 6b/6c, and
+Phases 2–3. The hazards are fixed by moving TP2 and TP3 and renaming TP5's net, not by deleting
+anything.
+
+| TP | Net | Action |
+|---|---|---|
+| TP1 | GND | **Keep**, as the DMM and clip ground. It must not be used as a scope ground for the strobe or detect areas; the new local GND test points replace it there. |
+| TP2 | +12 V | **Keep, and move** it ≥ 3 mm from VIR copper (R15). Add a GND test point beside it. Used in bring-up and 6b. |
+| TP3 | gate setpoint (the op-amp output, before R_iso) | **Keep, and move** it ≥ 1.5 mm from +12 V (C56). Rename the net `GATE_SET`. Its meaning (3 × the DAC) is unchanged. CR-21, CR-23. |
+| TP4 | `CurrentSense_ADC` | **Keep.** Add the sense-return pair (below). |
+| TP5 | `Strobe_GND` (Q11 drain, the beam LED's low side) | **Keep, and rename** the net (`BEAM_LED_K`, CR-11) and its silkscreen. Add a GND test point nearby: today the nearest GND copper is ~4.4 mm away, and procedures borrow J5's pins. |
+| TP6 | +2V5 | **Keep.** It shares the detect-area GND test point. |
+| TP7 | `TIA_Out` | **Keep.** |
+| TP8 | `Threshold_DC` | **Keep**, ≥ 1.5 mm from other copper, with the comparator + input test point beside it (CR-17). |
+| TP9 | LPF output (U12C) | **Keep, and move** it ≥ 1.5 mm from U12's pins. Name the net. |
+| TP10 | `Demodulated_Signal` | **Keep, and move** it ≥ 1.5 mm from R91. |
+
+### Add
+
+| Priority | New test point | Net | Why | Source |
+|---|---|---|---|---|
+| **P1** | STROBE_PULSE | `Strobe_Pulse` (GPIO25, between R33 and U5) | the scope EXT trigger and LA timing reference in every Phase 6 session | CR-21 |
+| **P1** | U5_Q | `Net-(U5A-Q)` | the U5 clamp measurement; replaces probing R61 (the board-2 spark) | CR-21 |
+| **P1** | Q10_GATE | `Net-(Q10-G)` (0–12 V) | U8's drive level and edges; replaces R64 pad 2 | CR-21 |
+| **P1** | GATE | Q9's gate node (after R_iso, at C_hold) | the node that sets the current, and the one CR-23's checks use | CR-23 |
+| **P1** | SENSE_RTN | GND at R65/R66's low side | a Kelvin pair with TP4, and the local probe ground for TP3, TP4 and GATE; replaces the R66 solder leads | CR-21 |
+| **P1** | COMP_IN | `Net-(U12B-OUT2)`, the comparator + input | the detection decision node, beside TP8 | CR-17 |
+| **P1** | GND, one per cluster | GND | strobe, detect, beam and power clusters | `HANDOFF.md` §8 |
+| P2 | VIR_MON | VIR **through a 10 kΩ series resistor** (basic 0402/0603) | safe access to 36 V for bring-up and burst droop: a slip cannot short VIR. A 10X probe through 10 kΩ still passes µs-scale droop (~150 ns with ~15 pF). | `BRINGUP_NEW_BOARD.md` §2; 6c Step 5 |
+| P2 | BEAM_LED_A | `Net-(D11-Pad1)` (the top of the ballast pair) | with TP5, the differential beam-LED current (0.54 V/A) | `BENCH_P2_BEAM.md` 2b |
+| P2 | +5V | the latched +5 V rail | the latch and supply-pull tests with a Pi fitted (today J8.2) | `BENCH.md` Phase 1 |
+| P2 | CAM_TRIG, CAM_STROBE_0, CAM_STROBE_1 | `D_Cam_Trigger`, `Cam_Strobe_0/1`, after CR-09's level translation | Phase 7 timing with the cameras fitted (today the J4 pins) | `BENCH_P5_P7_MIC_CAMERA.md` |
+| P3 | +3V3, +5VA, +1V1 | the rails | bring-up rail checks without hunting for pads | `BENCH.md` 0.5 |
+| P3 | COMP_OUT | `D_Comparator` | pairs with COMP_IN and TP8 for comparator timing | Phase 3 |
+| P3 | 5V_IN_ADC | the R46/R47 junction (ADC1) | `adc5vcal` and CR-03 checks, by DMM | `BRINGUP_NEW_BOARD.md` §4 |
+| P3 | RPI5_SHUTDOWN | the J8.37 net | the Pi handshake with a Pi fitted | `BENCH_P8_PI.md` |
+
+### Do not add
+
+- **No test point on `PWR_LowSideD`** (Q9's source and Q10's drain). A probe or clip slipping to
+  GND there bypasses Q10, U5's clamp and the sense resistors; this is the R67 hazard. Diagnose
+  that node from TP4 and the GATE test point.
+- **No bare test point on VIR.** Use VIR_MON through its series resistor, and the J3 screw for a
+  DMM.
+- **No test point on the LM5157 SW node.** Keep using R11's empty snubber pad, with a 10X probe
+  and a short ground spring.
+
+### Firmware and docs impact
+
+- **Firmware:** none, except that messages naming test points (`strobe gate` prints "TP3 …")
+  should use the new net names.
+- **Docs to rewrite for the new test points:**
+  - the "Leads to solder" table in `BENCH_P6_STROBE.md`;
+  - the probe tables in `BENCH_P2_BEAM.md`, `BENCH_P3_DETECT.md`, `BENCH_P5_P7_MIC_CAMERA.md`
+    and `BENCH_P8_PI.md`;
+  - `BRINGUP_NEW_BOARD.md` §2.
+
+### Verify
+
+- **DRC:** every test point meets the clearance rules, and every analog or fast test point has a
+  GND test point within 5 mm.
+- **On the first board:** a 10X probe with a ground spring reaches every signal/GND pair, and
+  strobe bring-up (6a–6c) needs no soldered leads.

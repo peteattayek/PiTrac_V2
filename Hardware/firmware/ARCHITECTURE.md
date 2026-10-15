@@ -259,6 +259,49 @@ be the last thing it does before the burst, not the first.**
 > only samples written since BURST started — and the engine returns to IDLE. Arming live mode
 > **requires the detector disarmed**, so there is no ch5/ch7 history to lose. The production
 > ordering rule above still governs `shot.c`'s `SHOT_FIRING` in Phase 7.
+>
+> **2026-10-12 — the BURST ring can start late.** On board 1, ~440 µs after the switch to BURST
+> the ring held only 122 ADC0 samples (≈ 244 µs). `adc_ring_freeze_copy()` sized its copy from
+> elapsed time, so the oldest 86 samples it returned were the IDLE ring's leftovers, and they
+> latched a false `STROBE_CLAMP`. Cause of the late start: not yet known (`adc ringtest`
+> measures it). Now the copy is bounded by the DMA's own write index as well as the clock
+> (`adc_ring_math.h`). The live path waits until the ring has **written** the baseline before
+> firing, and refuses (`NOT FIRED`) if it has not within 5 ms. The baseline split is the smaller
+> of the clock count and the DMA count. The record is judged only if acquisition is proven
+> **gap-free** from the enable through the post window. Two snapshots are taken, from SRAM
+> with interrupts off. Each brackets a DMA landing between two SysTick readings, so it carries
+> its own measured uncertainty; a bracket wider than 40 cycles is rejected. The landings must
+> be samples × 300 cycles apart (2 µs at 150 MHz; one crystal), within the brackets plus a
+> 20-cycle DMA allowance (≤ ±60), so not one sample can be missing.
+>
+> The independent review drove this over three rounds. An ADC stopping or pausing *after* the
+> wait otherwise left records judged "within limits". A ±4-sample allowance hid a 6 µs gap.
+> And a flash-resident snapshot with an *assumed* latency could have cancelled one missing
+> sample with a cache-miss delay. **Any future acquisition check must measure its own timing
+> uncertainty, not assume it.**
+>
+> **Round 6: the proof no longer rests on timing.** The datasheet guarantees that a lost
+> conversion sets the sticky `FCS.OVER` (12.4.3.4), and that the ADC free-runs while
+> `START_MANY` is set. So `adc_ring_freeze_copy()` proves a record complete from flags:
+> - `START_MANY` and `EN` held to the stop, then `READY`;
+> - the FIFO drained by the DMA;
+> - a completed DMA stop with no bus error;
+> - no `OVER` and no `UNDER`.
+>
+> The SysTick snapshots are a cross-check that can only reject. The same flags gate the
+> +5V_IN reader. **Any ring reader that relies on round-robin channel labels must check
+> `FCS.OVER`: an overflow rotates the channel order.** The detect path's
+> `adc_ring_view()`/`history()` do not yet (§9).
+>
+> **Bench, same day: every ring mode ran at HALF its stated rate.** `set_rate()` used DIV = 95
+> for 500 ksps, and the ADC ignores a trigger that lands during a conversion. The datasheet wants
+> DIV = 0 for back to back, or n ≥ 96. Fixed in `Oct 12 2026 14:43:50`. The "late ring start"
+> above was this. IDLE, ARMED and BURST now run at the 125 / 250 / 500 ksps per channel this
+> section states. Ring timing recorded before the fix is 2× compressed (PROGRESS §9). **Any future reader of a freshly switched ring —
+> including Phase 7's `SHOT_FIRING` — must count what the DMA wrote, not what the clock says
+> it should have.** `adc_ring_history()` / `adc_ring_view()` do not bound by the mode start at
+> all. That is harmless while ARMED, because it runs for seconds before a pass, but it is not
+> safe straight after a switch.
 
 ---
 

@@ -57,6 +57,10 @@ typedef enum {
     STROBE_RUN_ABORT_POWER,    // rail went down / strobe_safe_off() ran mid-burst
     STROBE_RUN_ABORT_FAULT,
     STROBE_RUN_ABORT_KEY,
+    STROBE_RUN_NO_ADC,         // live: the ADC0 ring did not record a baseline in time, or was
+                               // not ticking at the enable -- NOT fired
+    STROBE_RUN_NO_FEED,        // the PIO feed's initial fill did not land, or the feed DMA's
+                               // last stop did not complete -- NOT fired (dry or live)
 } strobe_run_t;
 
 typedef struct {
@@ -74,8 +78,11 @@ typedef struct {
     bool               pin_low_after;
     // Live only:
     uint16_t           gate_level;     // the setpoint it fired at
-    float              booked_mc;      // charge booked against the budget (design current)
-    bool               readback_err;   // ADC0 samples carried the FIFO error flag
+    float              booked_mc;      // charge for the budget (design current)...
+    bool               booked;         // ...actually booked: after admission and the ring wait
+    bool               readback_err;   // ADC FIFO overflow (FCS.OVER) or a conversion-error flag
+    uint32_t           ring_first_us;  // BURST switch -> first ADC0 sample written (UINT32_MAX: none)
+    uint32_t           ring_ready_us;  // ... -> STROBE_LIVE_RING_READY_SAMPLES written, or gave up
 } strobe_result_t;
 
 // Validate, check admission, then run one uniform burst on PIO0 SM0, DMA-fed,
@@ -84,8 +91,10 @@ typedef struct {
 //
 // DRY or LIVE by the current mode. Live adds: the live policy, the readback
 // window (STROBE_BURST_SPAN), the 6d rule for a clamp test, ADC0 in BURST
-// around the firing, and the verdict -- which can latch a fault and drop live
-// mode. strobe_live_last_meas() has the measurement.
+// around the firing -- fired only once the ring has provably written
+// STROBE_LIVE_RING_READY_SAMPLES of baseline, else STROBE_RUN_NO_ADC with
+// nothing fired and live mode ended -- and the verdict, which can latch a fault
+// and drop live mode. strobe_live_last() has the measurement.
 strobe_result_t strobe_run(const strobe_burst_t *b, uint32_t max_width_us);
 const char     *strobe_run_text(strobe_run_t r);
 
@@ -120,12 +129,34 @@ void strobe_live_keep_watchdog(void);
 // or the idle timer runs out. Does nothing during a firing.
 void strobe_live_service(void);
 
+// How many times live mode has ended, by ANY route (counted in one place, so
+// the power FSM's teardown is included). The CLI acknowledges each one when it
+// prints a notice, and checks before and after every command, so an exit is
+// announced exactly once. 2026-10-12: an idle timeout went unannounced and the
+// operator's next `strobe pulse` fired dry; the independent review found the
+// first fix could also double-print one and miss a power-FSM teardown.
+uint32_t strobe_live_exit_count(void);
+
 // The measurement of the most recent live firing (valid == false before one).
 typedef struct {
     bool               valid;
     uint16_t           gate_level;
     strobe_burst_t     burst;
-    bool               readback_err;   // samples carried the ADC FIFO error flag
+    bool               readback_err;   // the freeze could not prove the record complete...
+    uint32_t           freeze_flags;   // ...and why: ADC_FREEZE_* (adc_engine.h)
+    uint32_t           ring_first_us;  // see strobe_result_t
+    uint32_t           ring_ready_us;
+    size_t             pre_by_time;    // the two baseline splits; meas.pre_samples is the smaller
+    size_t             pre_by_index;
+    // Coverage: between the bracketed snapshots at the enable and after the post
+    // window, the DMA wrote cov_samples; cov_span_lo is SysTick cycles between
+    // the brackets' earlier readings, cov_b1 / cov_b2 the brackets' widths.
+    size_t             cov_samples;
+    uint32_t           cov_span_lo;
+    uint32_t           cov_b1, cov_b2;
+    uint32_t           cov_cps;        // cycles per sample (300 at 150 MHz)
+    bool               cov_snapshots;  // both taken, same ring generation
+    bool               covered;        // ...and strobe_live_coverage_ok()
     strobe_live_meas_t meas;
 } strobe_live_shot_t;
 

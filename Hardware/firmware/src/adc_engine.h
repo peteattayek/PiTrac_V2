@@ -111,12 +111,118 @@ bool adc_ring_running(void);
 // that the ring still holds the previous mode's interleave, which would decode
 // as a plausible waveform that never happened. So the return can be short.
 //
+// "Written since the current mode started" is bounded twice: by the clock
+// (elapsed x rate, an upper bound) AND by the DMA's own write index (a lower
+// bound). On board 1, 2026-10-12, the BURST ring had written 122 samples where
+// the clock said ~218; the clock alone returned 86 samples of the previous
+// mode's round-robin as ADC0 (adc_ring_math.h).
+//
 // LEAVES THE ENGINE OFF (adc_engine_mode() == ADC_MODE_OFF): the caller restores
-// what it wants with adc_engine_set_mode(). *overran (may be NULL) is set if any
-// copied sample carried the FIFO error flag.
+// what it wants with adc_engine_set_mode(). *overran (may be NULL) is set if the
+// FIFO overflowed in this mode (FCS.OVER) or any copied sample carried its
+// conversion-error flag (bit 15). *written (may be NULL) is the ring's write
+// index at the stop: raw slots written in this mode, the newest copied sample
+// being the last of them.
 // ---------------------------------------------------------------------------
 size_t adc_ring_freeze_copy(unsigned chan, uint64_t since_us, uint16_t *dst, size_t cap,
-                            bool *overran, uint64_t *stop_us);
+                            bool *overran, uint64_t *stop_us, size_t *written);
+
+// WHY A FREEZE'S RECORD IS COMPLETE (review round 6). No conversion is missing
+// from the ring when ALL of these hold, by the datasheet alone, with no timing
+// argument: the ADC converts at regular intervals while CS.START_MANY is set
+// (12.4.3.2) and only this firmware clears it; a conversion that finds the FIFO
+// full is lost AND sets the sticky FCS.OVER (12.4.3.4); a DMA read of an empty
+// FIFO sets FCS.UNDER; a failed bus transfer sets READ/WRITE_ERROR. So:
+//   START_MANY and EN still set at the stop instant, READY after it, the FIFO
+//   drained by the DMA, the DMA stop completed, no READ/WRITE_ERROR, no OVER, no
+//   UNDER, and (the caller's part) the ring not restarted since the window began.
+// Any failure sets a flag below and *overran; adc_ring_freeze_flags() says which.
+#define ADC_FREEZE_NOT_RUNNING  (1u << 0)   // START_MANY or EN was clear at the stop
+#define ADC_FREEZE_NOT_READY    (1u << 1)   // READY did not come back after the stop
+#define ADC_FREEZE_NOT_DRAINED  (1u << 2)   // the FIFO did not empty
+#define ADC_FREEZE_STOP_FAILED  (1u << 3)   // the DMA stop did not complete
+#define ADC_FREEZE_DMA_ERROR    (1u << 4)   // READ_ERROR or WRITE_ERROR on the ring
+#define ADC_FREEZE_FIFO_OVER    (1u << 5)   // conversions were lost
+#define ADC_FREEZE_FIFO_UNDER   (1u << 6)   // a read of an empty FIFO
+#define ADC_FREEZE_CONV_ERROR   (1u << 7)   // a copied sample carries the conversion-error bit
+uint32_t adc_ring_freeze_flags(void);
+
+// The ring's generation: changes whenever the ring is restarted.
+uint32_t adc_ring_generation(void);
+
+// Ring transfers ISSUED since the current mode started, from the DMA's write
+// index: exact until the ring's first wrap (32.8 ms), smaller after it. Issued,
+// not completed (review round 4): the newest few writes may still be in flight,
+// but each issue is one finished conversion. 0 if the ring is not running.
+// Cheap; safe to poll.
+size_t adc_ring_written(void);
+
+// A BRACKETED snapshot of a ring transfer being ISSUED -- the DMA write index
+// advancing, which happens when the transfer enters the address FIFOs, not when
+// its SRAM write completes (review round 4; datasheet 12.6.4). Runs from SRAM (no
+// flash fetch can stall it). Each pass reads SysTick then the write index; when
+// the index changes, one more SysTick reading closes the bracket. The issue then
+// lies between tick_lo and tick_lo - bracket (SysTick counts down) -- a MEASURED
+// uncertainty, a few SRAM instructions wide, and anything that widens it
+// (contention, a stall) shows in `bracket` and is rejected by
+// strobe_live_coverage_ok(). Round 3: the first version ran from flash and
+// assumed its latency.
+//
+// THE CALLER DISABLES INTERRUPTS, and keeps whatever must follow the snapshot
+// -- the strobe's PIO enable -- in the same section. false if the index did not
+// tick within a bounded spin (~tens of us): the ring is not acquiring.
+typedef struct {
+    size_t   w;        // write index just after the issue
+    uint32_t tick_lo;  // SysTick (24-bit, counts DOWN at clk_sys) read before the issue
+    uint32_t bracket;  // cycles from tick_lo to the reading after the issue
+    uint64_t t_us;     // time_us_64(), read after the bracket closed
+    uint32_t gen;      // ring generation: changes whenever the ring is restarted
+} adc_ring_snap_t;
+
+bool adc_ring_snapshot(adc_ring_snap_t *s);
+
+// clk_sys cycles per ADC sample (300 at 150 MHz), or 0 if clk_sys is not an
+// exact multiple of the ADC's 500 ksps -- then no coverage check can pass.
+uint32_t adc_cycles_per_sample(void);
+
+// ---------------------------------------------------------------------------
+// `adc ringtest` -- the IDLE -> BURST switch a live firing makes, observed:
+// poll the write index for ADC_PROBE_WINDOW_US, then back to IDLE. Fires
+// nothing. false (and nothing done) unless the engine is in IDLE.
+// ---------------------------------------------------------------------------
+#define ADC_PROBE_POINTS     8
+#define ADC_PROBE_HEAD       8
+#define ADC_PROBE_WINDOW_US  1000u
+
+typedef struct {
+    bool     ok;          // both snapshots taken, same generation, index forward
+    size_t   samples;     // transfers issued between the two snapshots
+    uint32_t span_lo;     // cycles between the brackets' earlier readings
+    uint32_t b1, b2;      // the two brackets
+    uint32_t cps;         // adc_cycles_per_sample()
+} adc_ring_pair_t;
+
+typedef struct {
+    uint32_t switch_us;                     // adc_engine_set_mode(BURST) took this long
+    uint32_t first_us;                      // switch -> first slot written (UINT32_MAX: none)
+    uint32_t ready_us;                      // switch -> STROBE_LIVE_RING_READY_SAMPLES written
+    uint32_t at_us[ADC_PROBE_POINTS];       // checkpoints after the switch (as read)...
+    size_t   written_at[ADC_PROBE_POINTS];  // ...and the slots written by then (0.5 per us)
+    size_t   written_end;
+    uint32_t window_us;
+    bool     over;                          // FCS.OVER at the end of the window
+    bool     conv_err;                      // a conversion-error flag in head[]
+    uint16_t head[ADC_PROBE_HEAD];          // ring[0..]: the first BURST samples, all ADC0
+    // Then pairs of adc_ring_snapshot()s ADC_PROBE_PAIR_US apart, as a live
+    // firing takes them: the relation the coverage check relies on, without
+    // firing. [0] warm; [1] with the XIP cache invalidated just before the first
+    // snapshot (round 3's cold-fetch condition).
+    adc_ring_pair_t pair[2];
+} adc_ring_probe_t;
+
+#define ADC_PROBE_PAIR_US    250u
+
+bool adc_ring_probe(adc_ring_probe_t *p);
 
 // ---------------------------------------------------------------------------
 // ZERO-COPY RING ACCESS
@@ -180,19 +286,41 @@ float    adc_read_volts(unsigned chan, unsigned n);
 // This is the discriminator that decides whether we are allowed to close the
 // +5V latch: ~2.30-2.35 V at the pin on USB-C power vs ~2.60 V on the Meanwell.
 //
-// NON-DISRUPTIVE since the A1 fix: it averages ch1 samples already sitting in
-// the ring and commands no conversions of its own. The power FSM calls this
-// every 100 ms while latched, which is exactly why it must not touch the ADC.
-//
-// ch1 is NOT in the ARMED round-robin ({5,7}), so while armed this returns the
-// last good value. That is deliberate -- see adc_5vin_age_ms(). The natural
-// state flow re-checks it after every shot, because FIRING drops to BURST and
-// then back to IDLE, and IDLE is {1,2,5,7}.
+// FRESH OR NOTHING (independent review round 5, 2026-10-12). A reading is FRESH
+// only if every sample in it was written by the ring DURING the call: the call
+// waits (~1 ms, bounded at 3 ms) for V5IN_FRESH_SAMPLES new ch1 samples. That
+// proves the ring is alive and excludes anything from before a mode switch. The
+// earlier version averaged whatever was in the ring and stamped it "fresh" -- a
+// stopped ring would have fed the supply monitor stale samples indefinitely.
+//   FRESH        *volts is new; adc_5vin_age_ms() resets.
+//   NOT_SAMPLED  the current mode does not convert ch1 (ARMED {5,7}, BURST {0}).
+//                *volts is the last good value, NOT a reading; the age grows.
+//   STALLED      the mode should convert ch1 but the ring is down or did not
+//                advance: an unexpected failure. *volts as NOT_SAMPLED.
+//   INVALID      samples arrived but cannot be trusted (review round 6): a FIFO
+//                overflow or underflow since the ring started -- an overflow
+//                LOSES conversions and so can rotate the round-robin, putting
+//                another channel in "ch1's" slots -- a DMA bus error on the ring,
+//                or a sample carrying the conversion-error bit (datasheet
+//                12.4.3.4: discard them). After an overflow or DMA error the ring
+//                is restarted to re-establish the channel order. *volts as above.
+// Decisions (the power FSM) must act on the status, never on *volts alone; the
+// FSM treats everything but FRESH and NOT_SAMPLED as SUPPLY_UNREADABLE.
+typedef enum {
+    ADC_5VIN_FRESH = 0,
+    ADC_5VIN_NOT_SAMPLED,
+    ADC_5VIN_STALLED,
+    ADC_5VIN_INVALID,
+} adc_5vin_status_t;
+
+adc_5vin_status_t adc_5vin_read(float *volts);
+
+// DISPLAY ONLY: adc_5vin_read()'s value, fresh when it can be, else the last
+// good one. Pair it with adc_5vin_age_ms(); never base a decision on it.
 float    adc_read_5vin_volts(void);
 
-// Milliseconds since adc_read_5vin_volts() last got a genuinely fresh reading.
-// 0 means fresh. Grows while ARMED or BURST, where ch1 is not being sampled.
-// The CLI shows it so a stale reading is never mistaken for a live one.
+// Milliseconds since the last FRESH reading (UINT32_MAX: none yet). Grows while
+// ch1 is not sampled or the ring is stalled; nothing else refreshes it.
 uint32_t adc_5vin_age_ms(void);
 
 // Trim for the +5V_IN read path. The default is NOT 1.0 -- it is 1.063, because

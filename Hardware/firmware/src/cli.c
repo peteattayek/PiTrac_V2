@@ -135,6 +135,10 @@ static const char *k_help =
     "  pins                       read every signal pin\n"
     "\n"
     "  adc <ch> [n]               oversampled read (ch: 0,1,2,5,7)\n"
+    "  adc ringtest [n]           switch the ring IDLE -> BURST n times (1-20, default\n"
+    "                             3), as a live strobe firing does: time when ADC0\n"
+    "                             samples arrive, and check the coverage relation\n"
+    "                             (samples x cycles/sample = SysTick). Fires nothing.\n"
     "  adc5v                      +5V_IN in volts (divider + cal applied)\n"
     "  adc5vcal <measured_volts>  trim the +5V_IN scale against a DMM\n"
     "  capture <mask> <n> <rate>  block capture -> CSV. mask is a channel bitmask\n"
@@ -252,7 +256,10 @@ static void cmd_id(void) {
     // stayed that way through phases 2, 3 and 4 -- a version string nobody
     // updates is worse than none, because it reads as authoritative.
     printf("fw       : pitrac phases 0-4 + mic capture (block/triggered)\n"
-           "           + strobe 6a/6b dry tests + 6c/6d live current (guarded, ADC0 per firing)\n");
+           "           + strobe 6a/6b dry tests + 6c/6d live current (guarded, ADC0 per firing)\n"
+           "           + ADC0 ring wait + DMA-counted readback, bracketed SRAM coverage (2026-10-12)\n"
+           "           + E5-safe DMA stops, record proven by ADC/DMA flags, fresh + intact 5V_IN\n"
+           "           + ADC at true 500 ksps (DIV 0), synchronised snapshots\n");
     printf("pending  : mic onset/veto, camera handshake, Pi integration\n");
     printf("built    : " __DATE__ " " __TIME__ "\n");
     printf("board    : pitrac_ltb_v1 (RP2354B, 48 GPIO, 2MB internal flash)\n");
@@ -294,9 +301,16 @@ static void cmd_stat(void) {
     printf("state    : %s (%lu ms)\n", power_state_name(power_fsm_state()),
            (unsigned long)power_state_elapsed_ms());
     printf("fault    : %s\n", fault_name(fault_current()));
-    printf("5V_IN    : %.3f V   (latch guard %.2f V, load floor %.2f V, scale %.4f)\n",
-           (double)adc_read_5vin_volts(), (double)V5_MIN_FOR_LATCH,
-           (double)V5_MIN_UNDER_LOAD, (double)adc_get_5vin_scale());
+    float v5 = 0.0f;
+    adc_5vin_status_t s5 = adc_5vin_read(&v5);
+    printf("5V_IN    : %.3f V   %s\n"
+           "           (latch guard %.2f V, load floor %.2f V, scale %.4f)\n",
+           (double)v5,
+           s5 == ADC_5VIN_FRESH       ? "fresh"
+         : s5 == ADC_5VIN_NOT_SAMPLED ? "NOT SAMPLED in this ADC mode -- the last good value"
+         : s5 == ADC_5VIN_INVALID     ? "*** INVALID -- FIFO overflow/underflow, DMA or conversion error; ring restarted; last good value ***"
+                                      : "*** STALLED -- the ring is not advancing; last good value ***",
+           (double)V5_MIN_FOR_LATCH, (double)V5_MIN_UNDER_LOAD, (double)adc_get_5vin_scale());
     printf("latch    : %d   railsready %d\n",
            gpio_get_out_level(PIN_LATCH_CONTROL), power_rails_ready());
     printf("pi       : present %d  3v3 %d  userspace %d  isdown %d\n",
@@ -309,8 +323,9 @@ static void cmd_stat(void) {
                (int)adc_engine_mode(),
                adc_ring_running() ? "RUNNING" : "*** STOPPED ***",
                age == UINT32_MAX ? "never read" : (age == 0 ? "fresh" : "HELD"));
-        // ch1 is not in the ARMED {5,7} or BURST {0} round-robin, so the reading
-        // is held rather than the ADC being stopped to go and fetch one (A1).
+        // ch1 is not in the ARMED {5,7} or BURST {0} round-robin, so the value is
+        // held rather than the ADC being stopped to go and fetch one (A1). Only
+        // a FRESH reading resets the age (adc_5vin_read).
         if (age && age != UINT32_MAX)
             printf("           +5V_IN last sampled %lu ms ago\n", (unsigned long)age);
     }
@@ -600,9 +615,129 @@ static void cmd_gpio_cmd(int argc, char **argv) {
  cmd_gpio(argc, argv); 
 }
 
+// The coverage relation between two bracketed snapshots, as the live check
+// sees it: residual = measured centre - samples x cps; window = (b1 + b2) / 2 +
+// the DMA spread. 32-bit long is enough: a live window is < 5 M cycles.
+static long coverage_residual(size_t n, uint32_t span_lo, uint32_t b1, uint32_t b2,
+                              uint32_t cps) {
+    long twice = 2L * (long)span_lo + (long)b2 - (long)b1 - 2L * (long)n * (long)cps;
+    return twice / 2L;
+}
+
+static void print_coverage(const char *label, bool snaps_ok, size_t n, uint32_t span_lo,
+                           uint32_t b1, uint32_t b2, uint32_t cps) {
+    if (!snaps_ok) {
+        printf("%s: *** NOT COVERED -- snapshot failed (ring not ticking, or restarted) ***\n",
+               label);
+        return;
+    }
+    bool ok = strobe_live_coverage_ok(span_lo, b1, b2, n, cps);
+    printf("%s: %u samples, %lu cycles, brackets %lu/%lu (<= %u), residual %+ld\n"
+           "             vs %u/sample, window +-%lu: %s\n",
+           label, (unsigned)n, (unsigned long)span_lo, (unsigned long)b1, (unsigned long)b2,
+           (unsigned)STROBE_LIVE_SNAP_BRACKET_MAX, coverage_residual(n, span_lo, b1, b2, cps),
+           (unsigned)cps,
+           (unsigned long)((b1 + b2) / 2u + STROBE_LIVE_DMA_SPREAD_CYCLES),
+           ok ? "covered"
+              : (b1 > STROBE_LIVE_SNAP_BRACKET_MAX || b2 > STROBE_LIVE_SNAP_BRACKET_MAX)
+                    ? "*** NOT COVERED -- a snapshot bracket too wide ***"
+                    : "*** NOT COVERED -- samples missing or extra ***");
+}
+
+// `adc ringtest [n]`: the IDLE -> BURST switch a live firing makes, observed.
+// 2026-10-12, board 1: ~440 us after that switch the ring held only 122 ADC0
+// samples. This shows when they really start arriving, and measures the
+// coverage relation (bracketed snapshots, warm and cold XIP cache) without
+// firing. Up to 5 runs print in full; more print a summary.
+static void cmd_adc_ringtest(int argc, char **argv) {
+    uint32_t reps = 3u;
+    if (argc > 2 && !parse_u32_in(argv[2], 1u, 200u, &reps)) {
+        bad_arg("count", argv[2], "1-200"); return;
+    }
+    // `detect arm` leaves the engine in IDLE, so the mode alone does not show it
+    // (independent review 2026-10-12): BURST would destroy the armed detector's
+    // detect and mic history.
+    if (detect_armed()) {
+        printf("REFUSED: the detector is armed. 'detect disarm' first. Nothing was changed.\n");
+        return;
+    }
+    if (adc_engine_mode() != ADC_MODE_IDLE) {
+        printf("REFUSED: the ADC engine is not in IDLE ('adcmode idle' first). Nothing was changed.\n");
+        return;
+    }
+    printf("adc ringtest: IDLE -> BURST (ADC0 alone, 500 ksps = 0.5 samples/us), then\n"
+           "the DMA's write index over %u us. Expect samples from ~0 us and ~%u by\n"
+           "%u us. A live firing waits for %u samples (%u us of baseline).\n",
+           (unsigned)ADC_PROBE_WINDOW_US, (unsigned)(ADC_PROBE_WINDOW_US / 2u),
+           (unsigned)ADC_PROBE_WINDOW_US, (unsigned)STROBE_LIVE_RING_READY_SAMPLES,
+           (unsigned)STROBE_LIVE_PRE_US);
+    const bool full = reps <= 5u;
+    uint32_t n_pairs = 0, n_covered = 0, n_snapfail = 0;
+    uint32_t b_max = 0, first_max = 0, ready_max = 0;
+    long r_min = 0, r_max = 0;
+    bool any_r = false, any_never = false;
+    for (uint32_t k = 0; k < reps; k++) {
+        adc_ring_probe_t p;
+        if (!adc_ring_probe(&p)) { printf("  run %lu: not run (engine not in IDLE)\n",
+                                          (unsigned long)(k + 1u)); return; }
+        if (p.first_us == UINT32_MAX || p.ready_us == UINT32_MAX) any_never = true;
+        else {
+            if (p.first_us > first_max) first_max = p.first_us;
+            if (p.ready_us > ready_max) ready_max = p.ready_us;
+        }
+        for (int c = 0; c < 2; c++) {
+            const adc_ring_pair_t *q = &p.pair[c];
+            n_pairs++;
+            if (!q->ok) { n_snapfail++; continue; }
+            if (strobe_live_coverage_ok(q->span_lo, q->b1, q->b2, q->samples, q->cps)) n_covered++;
+            if (q->b1 > b_max) b_max = q->b1;
+            if (q->b2 > b_max) b_max = q->b2;
+            long r = coverage_residual(q->samples, q->span_lo, q->b1, q->b2, q->cps);
+            if (!any_r || r < r_min) r_min = r;
+            if (!any_r || r > r_max) r_max = r;
+            any_r = true;
+        }
+        if (full) {
+            printf("  run %lu: switch %lu us; first sample ", (unsigned long)(k + 1u),
+                   (unsigned long)p.switch_us);
+            if (p.first_us == UINT32_MAX) printf("NEVER");
+            else                          printf("+%lu us", (unsigned long)p.first_us);
+            printf("; %u written ", (unsigned)STROBE_LIVE_RING_READY_SAMPLES);
+            if (p.ready_us == UINT32_MAX) printf("NEVER");
+            else                          printf("+%lu us", (unsigned long)p.ready_us);
+            printf("; %u by +%lu us%s%s\n", (unsigned)p.written_end, (unsigned long)p.window_us,
+                   p.over ? "; FIFO OVERFLOW" : "", p.conv_err ? "; CONVERSION ERROR FLAG" : "");
+            printf("         written at:");
+            for (size_t j = 0; j < ADC_PROBE_POINTS; j++)
+                printf(" +%lu:%u", (unsigned long)p.at_us[j], (unsigned)p.written_at[j]);
+            printf("\n         first %u samples:", (unsigned)ADC_PROBE_HEAD);
+            for (size_t j = 0; j < ADC_PROBE_HEAD; j++) printf(" %u", p.head[j]);
+            printf("  (TP4 at 0 A reads ~10)\n");
+            for (int c = 0; c < 2; c++) {
+                const adc_ring_pair_t *q = &p.pair[c];
+                print_coverage(c == 0 ? "         pair, warm cache" : "         pair, cold cache",
+                               q->ok, q->samples, q->span_lo, q->b1, q->b2, q->cps);
+            }
+        }
+        pitrac_yield_ms(20);
+    }
+    printf("summary: %lu runs; first sample <= +%lu us, %u written <= +%lu us%s\n",
+           (unsigned long)reps, (unsigned long)first_max, (unsigned)STROBE_LIVE_RING_READY_SAMPLES,
+           (unsigned long)ready_max, any_never ? "; *** NEVER on some run ***" : "");
+    printf("         coverage pairs (%u us apart, warm + cold): %lu of %lu covered, %lu snapshot\n"
+           "         failures; widest bracket %lu cycles (<= %u); residual %+ld .. %+ld cycles\n",
+           (unsigned)ADC_PROBE_PAIR_US, (unsigned long)n_covered, (unsigned long)n_pairs,
+           (unsigned long)n_snapfail, (unsigned long)b_max, (unsigned)STROBE_LIVE_SNAP_BRACKET_MAX,
+           r_min, r_max);
+    printf("         %s\n", n_covered == n_pairs
+           ? "PASS: every pair covered."
+           : "*** FAIL: a live readback in these conditions would be NO USABLE DATA ***");
+}
+
 static void cmd_adc(int argc, char **argv) {
 
-        if (argc < 2) { printf("usage: adc <ch> [n]\n"); return; }
+        if (argc >= 2 && !strcmp(argv[1], "ringtest")) { cmd_adc_ringtest(argc, argv); return; }
+        if (argc < 2) { printf("usage: adc <ch> [n] | adc ringtest [n]\n"); return; }
         uint32_t ch_u, n_u = 64u;
         if (!parse_u32(argv[1], &ch_u)) { bad_arg("channel", argv[1], "0, 1, 2, 5 or 7"); return; }
         if (argc > 2 && !parse_u32_in(argv[2], 1u, 4096u, &n_u)) {
@@ -1571,10 +1706,12 @@ static void print_strobe_result(const strobe_result_t *r) {
         printf(", gap %lu us (period %lu us)", (unsigned long)b->gap_us,
                (unsigned long)(b->width_us + b->gap_us));
     printf(" -- %s\n", strobe_run_text(r->outcome));
+    // Booked only once the firing is admitted and the ring is ready -- r->booked
+    // says whether it was (independent review 2026-10-12).
     if (r->live && r->outcome != STROBE_RUN_INVALID)
-        printf("           at gate level %u (%.2f %%, TP3 nominal %.2f V); %.2f mC booked\n",
+        printf("           at gate level %u (%.2f %%, TP3 nominal %.2f V); %.2f mC %s\n",
                r->gate_level, gate_pct(r->gate_level), gate_tp3_volts(r->gate_level),
-               (double)r->booked_mc);
+               (double)r->booked_mc, r->booked ? "booked" : "NOT booked");
 
     if (r->outcome == STROBE_RUN_INVALID) {
         printf("           %s: width %d-%lu us, gap %d-%d us, 1-%d pulses,\n"
@@ -1592,6 +1729,27 @@ static void print_strobe_result(const strobe_result_t *r) {
         printf("           %s\n", strobe_refusal_text(r->refusal));
         return;
     }
+    if (r->outcome == STROBE_RUN_NO_ADC) {
+        if (r->booked) {
+            printf("           ADC0 ring ready at +%lu us, then NOT ticking at the enable.\n"
+                   "           Nothing fired (the charge was booked first).\n",
+                   (unsigned long)r->ring_ready_us);
+        } else {
+            printf("           ADC0 ring: first sample ");
+            if (r->ring_first_us == UINT32_MAX) printf("NEVER");
+            else                                printf("+%lu us", (unsigned long)r->ring_first_us);
+            printf("; %u samples not written by +%lu us. Nothing fired.\n",
+                   (unsigned)STROBE_LIVE_RING_READY_SAMPLES, (unsigned long)r->ring_ready_us);
+        }
+        printf("           Run 'adc ringtest' and send the output.\n");
+        return;
+    }
+    if (r->outcome == STROBE_RUN_NO_FEED) {
+        printf("           %lu PIO words; nothing was enabled%s. GPIO25 after: %s\n",
+               (unsigned long)r->words, r->booked ? " (the charge was booked first)" : "",
+               r->pin_low_after ? "low, SIO" : "*** HIGH ***");
+        return;
+    }
     printf("           %lu PIO words; IRQ0 %s; enable->IRQ0 polled at %lu us,\n"
            "           nominal %lu us (coarse -- the logic analyser is the timing truth)\n",
            (unsigned long)r->words, r->irq_seen ? "seen" : "NOT seen",
@@ -1606,7 +1764,28 @@ static void print_live_meas(const strobe_live_shot_t *s) {
            "           (%.3f A); threshold %u codes. Verdict: %s%s\n",
            (unsigned)m->n_samples, (unsigned)m->pre_samples, (double)m->baseline_code,
            (double)strobe_code_to_amps(m->baseline_code), m->threshold_code,
-           strobe_verdict_text(m->verdict), s->readback_err ? " (ADC FIFO ERROR FLAG SET)" : "");
+           strobe_verdict_text(m->verdict),
+           s->readback_err ? " (RECORD NOT PROVEN COMPLETE -- see 'record:' below)" : "");
+    if (s->readback_err) {
+        static const char *const k_why[] = {
+            "ADC not free-running at the stop", "READY did not return", "FIFO not drained",
+            "DMA stop did not complete", "DMA bus error", "FIFO OVERFLOW (conversions lost)",
+            "FIFO underflow", "conversion-error sample",
+        };
+        printf("           record:");
+        for (unsigned b = 0; b < 8u; b++)
+            if (s->freeze_flags & (1u << b)) printf(" [%s]", k_why[b]);
+        printf("\n");
+    }
+    printf("           ring: first sample +%lu us, %u ready +%lu us after the switch;\n",
+           (unsigned long)s->ring_first_us, (unsigned)STROBE_LIVE_RING_READY_SAMPLES,
+           (unsigned long)s->ring_ready_us);
+    print_coverage("           enable->post", s->cov_snapshots, s->cov_samples, s->cov_span_lo,
+                   s->cov_b1, s->cov_b2, s->cov_cps);
+    printf("           baseline split by clock %u, by DMA count %u (the smaller is used,\n"
+           "           >= %u needed)\n",
+           (unsigned)s->pre_by_time, (unsigned)s->pre_by_index,
+           (unsigned)STROBE_LIVE_PRE_MIN_SAMPLES);
     if (!m->detected) {
         printf("           no current above the ~%.0f mA detection floor\n",
                1000.0 * (double)strobe_code_to_amps((float)STROBE_LIVE_DETECT_MIN_CODES));
@@ -1688,8 +1867,15 @@ static void live_status(const strobe_info_t *i) {
     }
 }
 
-// Live mode can end inside a command -- a verdict, a fault, the rail. Say so
-// where the operator is looking, not only in `strobe`.
+// strobe_live_exit_count() as of the last notice: an exit is announced once.
+static uint32_t s_live_exit_shown;
+
+// Whatever told the operator live mode ended -- this notice, or a command's
+// own wording (`strobe live off`, `strobe off`) -- acknowledges it.
+static void live_exit_ack(void) { s_live_exit_shown = strobe_live_exit_count(); }
+
+// Live mode can end inside a command -- a verdict, a fault, the rail -- or in
+// the background. Say so where the operator is looking, not only in `strobe`.
 static void print_live_ended(void) {
     strobe_info_t i;
     strobe_info(&i);
@@ -1700,6 +1886,12 @@ static void print_live_ended(void) {
     if (fault_current() != FAULT_NONE)
         printf("    fault %s is latched: keep the record above, then 'fault clear'.\n",
                fault_name(fault_current()));
+    live_exit_ack();
+}
+
+// Called by dispatch() before and after every command.
+static void live_exit_notice(void) {
+    if (strobe_live_exit_count() != s_live_exit_shown) print_live_ended();
 }
 
 static void strobe_status(void) {
@@ -1761,7 +1953,9 @@ static void strobe_fire(const strobe_burst_t *b, uint32_t max_width_us) {
     bool was_live = strobe_live_armed();
     strobe_result_t r = strobe_run(b, max_width_us);
     print_strobe_result(&r);
-    if (r.live && r.outcome != STROBE_RUN_INVALID && r.outcome != STROBE_RUN_REFUSED)
+    // NO_ADC fired nothing: strobe_live_last() is still the PREVIOUS firing.
+    if (r.live && r.outcome != STROBE_RUN_INVALID && r.outcome != STROBE_RUN_REFUSED &&
+        r.outcome != STROBE_RUN_NO_ADC && r.outcome != STROBE_RUN_NO_FEED)
         print_live_meas(strobe_live_last());
     if (was_live && !strobe_live_armed()) print_live_ended();
 }
@@ -1794,7 +1988,8 @@ static void live_checklist(void) {
            "LED-bank current, up to ~9 A from the 36 V VIR rail through Q9 in linear mode.\n"
            "Before 'strobe live on confirm' (BENCH_P6_STROBE.md 6c board state):\n"
            "  - J3 LED bank connected on purpose; PSU 5.20 V, current limit ~3 A\n"
-           "  - scope on TP4 (135 mV/A) and TP3, ground on TP1; FLIR on Q9 and HS1\n"
+           "  - scope on TP4 (135 mV/A) and TP3, grounds on the R66 GND-pad wires\n"
+           "    (not TP1 or TP5); FLIR on Q9 and HS1; 'adc 0' < 10 codes\n"
            "  - nothing conductive near D12 (36 V); no probe tips in fine-pitch areas\n"
            "  - no Pi on J8; beam off; detector disarmed; ADC idle; gate at 0\n"
            "Live mode then:\n"
@@ -1831,6 +2026,7 @@ static void cmd_strobe_live(int argc, char **argv) {
         printf(was ? "live OFF: gate 0, engine stopped, GPIO25 low. Watchdog now %s.\n"
                    : "live mode was not armed. Gate 0, engine stopped anyway. Watchdog %s.\n",
                pitrac_watchdog_enabled() ? "ARMED" : "off");
+        if (was) live_exit_ack();
         return;
     }
     if (!strcmp(argv[2], "on") && argc == 3) {
@@ -1935,6 +2131,7 @@ static void cmd_strobe(int argc, char **argv) {
         printf("strobe off: GPIO25 SIO low, engine stopped, gate DAC 0%s.\n"
                "  Dry pulses stay refused for %u ms while Q9's gate decays.\n",
                was_live ? ", live mode OFF" : "", (unsigned)DAC_SETTLE_MS);
+        if (was_live) live_exit_ack();
         return;
     }
 
@@ -2429,7 +2626,7 @@ static const cli_cmd_t k_cmds[] = {
     { "pins", NULL, cmd_pins_cmd, "read every signal pin" },
     { "capture", NULL, cmd_capture_cmd, "block capture -> CSV; 'capture trig' waits for a sound" },
     { "gpio", NULL, cmd_gpio_cmd, "read / drive a pin" },
-    { "adc", NULL, cmd_adc, "oversampled read" },
+    { "adc", NULL, cmd_adc, "oversampled read; 'adc ringtest' times the BURST switch" },
     { "adc5v", NULL, cmd_adc5v, "+5V_IN in volts" },
     { "adc5vcal", NULL, cmd_adc5vcal, "trim the +5V_IN scale" },
     { "adcmode", NULL, cmd_adcmode, "off|idle|armed|burst" },
@@ -2488,6 +2685,8 @@ static bool allowed_while_live(const char *name) {
     return false;
 }
 
+static void dispatch_command(int argc, char **argv);
+
 static void dispatch(int argc, char **argv) {
     // Clear the abort latch for EVERY command, not just the long ones. A key
     // pressed to stop the previous command must not carry over and kill this
@@ -2495,6 +2694,17 @@ static void dispatch(int argc, char **argv) {
     // fault is already latched is not aborted by that pre-existing fault.
     pitrac_abort_clear();
 
+    // Live mode can end with no command running to say so -- the idle timeout,
+    // a hold condition, the power FSM taking the rail down -- or inside a
+    // command that does not print it. Announce any unacknowledged exit before
+    // this command runs and again after it: on 2026-10-12 an unannounced idle
+    // exit turned the operator's next `strobe pulse` into a dry one.
+    live_exit_notice();
+    dispatch_command(argc, argv);
+    live_exit_notice();
+}
+
+static void dispatch_command(int argc, char **argv) {
     if (argc == 0) return;
     const char *c = argv[0];
 

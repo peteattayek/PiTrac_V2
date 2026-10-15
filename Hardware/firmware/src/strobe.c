@@ -8,7 +8,9 @@
 #include "strobe_plan.h"
 #include "strobe_live.h"
 #include "adc_engine.h"
+#include "adc_ring_math.h"
 #include "beam.h"
+#include "dma_safe.h"
 #include "board.h"
 #include "detect.h"
 #include "pio_alloc.h"
@@ -21,6 +23,7 @@
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
 #include "hardware/pwm.h"
+#include "hardware/sync.h"      // save_and_disable_interrupts(), for the enable snapshot
 #include "pico/stdlib.h"
 
 #include <string.h>
@@ -30,6 +33,12 @@
 #define STROBE_PIO  PIO_BLK_LOW
 #define STROBE_SM   PIO_SM_STROBE
 #define STROBE_IRQ  0u
+
+// The burst program joins its FIFOs for an 8-word TX FIFO (strobe_burst.pio,
+// sm_config_set_fifo_join(PIO_FIFO_JOIN_TX)). The feed's initial fill is at
+// most this many words; 8 x 32-bit DMA writes take well under a microsecond.
+#define STROBE_TX_FIFO_WORDS    8u
+#define STROBE_FEED_TIMEOUT_US  50u
 
 static bool            s_inited;
 static bool            s_busy;
@@ -55,6 +64,7 @@ static strobe_refusal_t   s_live_exit_refusal;
 static uint32_t           s_live_since_ms;
 static uint32_t           s_live_touch_ms;    // last strobe command, for the idle timeout
 static uint16_t           s_live_proven;      // the staircase: highest level fired and judged OK
+static uint32_t           s_live_exits;       // every live exit, counted in live_drop(), for the CLI
 
 // Deliberately NOT reset by arming: `strobe live off` then `on` must not buy a
 // fresh charge budget or skip the firing interval.
@@ -86,10 +96,14 @@ static void pulse_pin_sio_low(void) {
     gpio_set_function(PIN_STROBE_PULSE, GPIO_FUNC_SIO);
 }
 
+// A feed channel whose stop did not complete is never restarted (dma_safe.h):
+// every later firing reports STROBE_RUN_NO_FEED instead.
+static bool s_dma_unsafe;
+
 static void engine_reset(void) {
     pulse_pin_sio_low();
     pio_sm_set_enabled(STROBE_PIO, STROBE_SM, false);
-    if (s_dma >= 0) dma_channel_abort((uint)s_dma);
+    if (s_dma >= 0 && !dma_stop_safely((uint)s_dma).completed) s_dma_unsafe = true;
     pio_sm_clear_fifos(STROBE_PIO, STROBE_SM);
     pio_sm_restart(STROBE_PIO, STROBE_SM);
     pio_interrupt_clear(STROBE_PIO, STROBE_IRQ);
@@ -214,6 +228,7 @@ void strobe_init(void) {
 static void live_drop(strobe_live_exit_t why, strobe_refusal_t r) {
     if (!s_live) return;
     s_live = false;
+    s_live_exits++;
     s_live_exit = why;
     s_live_exit_refusal = r;
     if (s_live_owns_wdog) pitrac_watchdog_enable(false);
@@ -296,8 +311,13 @@ static bool prepare(const strobe_burst_t *b, uint32_t max_width_us, bool live,
 }
 
 // Run an admitted, encoded burst and wait for IRQ0 while servicing the FSM.
-// *t_enable is when the state machine was enabled.
-static void engine_fire(strobe_result_t *r, size_t n_words, uint64_t *t_enable) {
+// *t_enable is when the state machine was enabled. Live passes `snap`: the
+// enable then happens inside the same interrupts-off section as a
+// conversion-aligned adc_ring_snapshot(), the first end of the coverage check,
+// and snap->w is a lower bound on the index of the first sample taken after
+// the enable. If the ring is not ticking, NOTHING is enabled: STROBE_RUN_NO_ADC.
+static void engine_fire(strobe_result_t *r, size_t n_words, uint64_t *t_enable,
+                        adc_ring_snap_t *snap) {
     PIO pio = STROBE_PIO;
     uint sm = STROBE_SM;
     const uint32_t pin_mask = 1u << PIN_STROBE_PULSE;
@@ -305,6 +325,12 @@ static void engine_fire(strobe_result_t *r, size_t n_words, uint64_t *t_enable) 
     // Known state, then the PIO's own output latch low and enabled while the pad
     // is still SIO low. Only then does the pad change hands.
     engine_reset();
+    if (s_dma_unsafe) {
+        r->outcome       = STROBE_RUN_NO_FEED;
+        r->pin_low_after = !gpio_get(PIN_STROBE_PULSE);
+        if (t_enable) *t_enable = 0;
+        return;
+    }
     pio_sm_exec(pio, sm, pio_encode_jmp(s_offset));
     pio_sm_set_pins_with_mask(pio, sm, 0u, pin_mask);
     pio_sm_set_pindirs_with_mask(pio, sm, pin_mask, pin_mask);
@@ -319,8 +345,46 @@ static void engine_fire(strobe_result_t *r, size_t n_words, uint64_t *t_enable) 
     const uint32_t gen = s_run_gen;
     s_busy = true;
     pio_gpio_init(pio, PIN_STROBE_PULSE);
-    uint64_t t0 = time_us_64();
-    pio_sm_set_enabled(pio, sm, true);
+
+    // Let the feed's initial fill land before the first snapshot (independent
+    // review round 5, 2026-10-12): with the state machine still disabled the DMA
+    // issues at most a TX FIFO's worth of words, then waits for DREQ credits, so
+    // once the FIFO holds min(words, depth) the feed has no transfer in flight
+    // and cannot compete with the ADC ring for the DMA arbiter at the snapshot.
+    // The TX FIFO is joined to 8 words (strobe_burst.pio). Nothing is enabled
+    // if it does not fill.
+    {
+        const uint fill = n_words < STROBE_TX_FIFO_WORDS ? (uint)n_words : STROBE_TX_FIFO_WORDS;
+        const uint64_t tf = time_us_64();
+        bool fed = false;
+        while (time_us_64() - tf < STROBE_FEED_TIMEOUT_US) {
+            if (pio_sm_get_tx_fifo_level(pio, sm) >= fill) { fed = true; break; }
+        }
+        if (!fed) {
+            engine_reset();
+            r->outcome       = STROBE_RUN_NO_FEED;
+            r->pin_low_after = !gpio_get(PIN_STROBE_PULSE);
+            if (t_enable) *t_enable = 0;
+            return;
+        }
+    }
+
+    // One section: the conversion-aligned snapshot, then the enable, with no
+    // interrupt in between (it would skew the coverage check's first end).
+    uint32_t irq = save_and_disable_interrupts();
+    bool adc_ok = true;
+    uint64_t t0 = 0;
+    if (snap) { adc_ok = adc_ring_snapshot(snap); t0 = snap->t_us; }
+    else      { t0 = time_us_64(); }
+    if (adc_ok) pio_sm_set_enabled(pio, sm, true);
+    restore_interrupts(irq);
+    if (!adc_ok) {
+        engine_reset();
+        r->outcome       = STROBE_RUN_NO_ADC;
+        r->pin_low_after = !gpio_get(PIN_STROBE_PULSE);
+        if (t_enable) *t_enable = 0;
+        return;
+    }
 
     const uint64_t limit = (uint64_t)r->expected_us + STROBE_TIMEOUT_MARGIN_US;
     r->outcome = STROBE_RUN_TIMEOUT;
@@ -361,7 +425,7 @@ static strobe_result_t run_dry(const strobe_burst_t *b, uint32_t max_width_us) {
         s_last = r;
         return r;
     }
-    engine_fire(&r, n, NULL);
+    engine_fire(&r, n, NULL, NULL);
     s_last = r;
     return r;
 }
@@ -393,42 +457,115 @@ static strobe_result_t run_live(const strobe_burst_t *b, uint32_t max_width_us) 
         return r;
     }
 
-    // Booked before firing, so an aborted firing still counts.
-    strobe_budget_book(&s_budget, now_ms(), r.booked_mc);
     s_live_firing = true;
 
     // ADC0 alone at 500 ksps, with a baseline before the first edge. This
     // destroys the IDLE ring's history, which nothing needs here: live mode
     // requires the detector disarmed.
     adc_engine_set_mode(ADC_MODE_BURST);
-    busy_wait_us(STROBE_LIVE_PRE_US);
+
+    // Then wait until the DMA has ISSUED the baseline's transfers -- by its own
+    // write index, not by the clock; their writes land within cycles, long
+    // before the copy. Board 1, 2026-10-12: a fixed 200 us wait here, and ~440 us
+    // later the ring held only 122 ADC0 samples; the "baseline" was the IDLE
+    // ring's leftovers and latched a false STROBE_CLAMP. Nothing has fired if
+    // this gives up, and live mode ends: a firing must never go without a reading.
+    const uint64_t t_mode = time_us_64();
+    r.ring_first_us = UINT32_MAX;
+    bool ring_ready = false;
+    for (;;) {
+        size_t   w  = adc_ring_written();
+        uint32_t dt = (uint32_t)(time_us_64() - t_mode);
+        if (w > 0u && r.ring_first_us == UINT32_MAX) r.ring_first_us = dt;
+        if (w >= STROBE_LIVE_RING_READY_SAMPLES) { ring_ready = true; r.ring_ready_us = dt; break; }
+        if (dt > STROBE_LIVE_RING_TIMEOUT_US)    { r.ring_ready_us = dt; break; }
+    }
+    if (!ring_ready) {
+        adc_engine_set_mode(ADC_MODE_IDLE);
+        s_live_firing = false;
+        r.outcome = STROBE_RUN_NO_ADC;
+        s_last = r;
+        live_exit(STROBE_LIVE_EXIT_READBACK, STROBE_OK);
+        return r;
+    }
+
+    // Booked before firing, so an aborted firing still counts.
+    strobe_budget_book(&s_budget, now_ms(), r.booked_mc);
+    r.booked = true;
 
     uint64_t t_en = 0;
-    engine_fire(&r, n, &t_en);
+    adc_ring_snap_t s_en, s_post;
+    memset(&s_en, 0, sizeof(s_en));
+    memset(&s_post, 0, sizeof(s_post));
+    engine_fire(&r, n, &t_en, &s_en);
+    if (r.outcome == STROBE_RUN_NO_ADC || r.outcome == STROBE_RUN_NO_FEED) {
+        // The ring stopped ticking between the wait and the enable, or the PIO
+        // feed did not load: nothing was enabled. Booked (it was booked first),
+        // never fired.
+        adc_engine_set_mode(ADC_MODE_IDLE);
+        s_live_firing = false;
+        s_last = r;
+        live_exit(r.outcome == STROBE_RUN_NO_ADC ? STROBE_LIVE_EXIT_READBACK
+                                                  : STROBE_LIVE_EXIT_RUN, STROBE_OK);
+        return r;
+    }
     s_live_last_fire_us = t_en ? t_en : 1u;
 
     busy_wait_us(STROBE_LIVE_POST_US);
 
-    // The window starts (PRE - 40) us before the enable -- 40 us inside the BURST
-    // run, so every sample is ch0 -- and ends at the freeze. The baseline/pulse
-    // split is counted back from the freeze's own stop instant, read with
-    // interrupts off (review 2026-10-07): a clock read here, before the freeze,
-    // could be separated from the stop by an interrupt of any length.
+    // The second end of the coverage check, after the post window.
+    uint32_t irq = save_and_disable_interrupts();
+    bool post_ok = adc_ring_snapshot(&s_post);
+    restore_interrupts(irq);
+
+    // The window starts (PRE - 40) us before the enable -- inside what the ring
+    // has provably written, so every sample is ch0 -- and ends at the freeze,
+    // which copies only what the DMA wrote in this mode. The baseline/pulse split
+    // is the smaller of two: counted back from the freeze's own stop instant,
+    // read with interrupts off (review 2026-10-07: a clock read here could be
+    // separated from the stop by an interrupt of any length), and counted by
+    // the DMA's write index at the enable and at the stop (2026-10-12) -- and 0
+    // unless acquisition is proven gap-free. The PROOF is the freeze's hardware
+    // flags (`err`: no conversion lost, the ADC free-running throughout, the DMA
+    // clean -- adc_engine.h), plus the ring not restarted since the first
+    // snapshot (`same`). The SysTick coverage check is a cross-check that can
+    // only reject (review rounds 1-6: a stopped or briefly paused ADC left records
+    // judged "within limits"; timing alone could not prove the absence of a gap).
     const uint64_t since = t_en - (uint64_t)(STROBE_LIVE_PRE_US - 40u);
     uint64_t t_stop = 0;
+    size_t   w_stop = 0;
     bool err = false;
     size_t got = adc_ring_freeze_copy(ADC_CH_CURRENT, since, s_wave,
-                                      STROBE_LIVE_WAVE_MAX_SAMPLES, &err, &t_stop);
+                                      STROBE_LIVE_WAVE_MAX_SAMPLES, &err, &t_stop, &w_stop);
     adc_engine_set_mode(ADC_MODE_IDLE);
     s_wave_n = got;
     r.readback_err = err;
-    size_t pre = strobe_live_baseline_samples(got, t_en, t_stop);
+
+    const uint32_t cps     = adc_cycles_per_sample();
+    const bool     same    = post_ok && s_post.gen == s_en.gen && s_post.w >= s_en.w;
+    const size_t   samples = same ? s_post.w - s_en.w : 0u;
+    const uint32_t span_lo = same ? adc_systick_elapsed(s_en.tick_lo, s_post.tick_lo) : 0u;
+    const bool     covered = same && strobe_live_coverage_ok(span_lo, s_en.bracket,
+                                                             s_post.bracket, samples, cps);
+    size_t pre = strobe_live_baseline_checked(got, t_en, t_stop, s_en.w, w_stop, covered);
 
     memset(&s_shot, 0, sizeof(s_shot));
-    s_shot.valid        = true;
-    s_shot.gate_level   = r.gate_level;
-    s_shot.burst        = r.burst;
-    s_shot.readback_err = err;
+    s_shot.valid         = true;
+    s_shot.gate_level    = r.gate_level;
+    s_shot.burst         = r.burst;
+    s_shot.readback_err  = err;
+    s_shot.freeze_flags  = adc_ring_freeze_flags();
+    s_shot.ring_first_us = r.ring_first_us;
+    s_shot.ring_ready_us = r.ring_ready_us;
+    s_shot.pre_by_time   = strobe_live_baseline_samples(got, t_en, t_stop);
+    s_shot.pre_by_index  = strobe_live_baseline_by_index(got, s_en.w, w_stop);
+    s_shot.cov_samples   = samples;
+    s_shot.cov_span_lo   = span_lo;
+    s_shot.cov_b1        = s_en.bracket;
+    s_shot.cov_b2        = post_ok ? s_post.bracket : 0u;
+    s_shot.cov_cps       = cps;
+    s_shot.cov_snapshots = same;
+    s_shot.covered       = covered;
     strobe_live_measure(s_wave, got, pre, r.burst.count, &s_shot.meas);
     s_live_firing = false;
     s_last = r;
@@ -466,6 +603,8 @@ const char *strobe_run_text(strobe_run_t r) {
         case STROBE_RUN_ABORT_POWER: return "ABORTED -- rail went down or the strobe was torn down mid-burst";
         case STROBE_RUN_ABORT_FAULT: return "ABORTED -- a fault was raised mid-burst";
         case STROBE_RUN_ABORT_KEY:   return "ABORTED -- key pressed";
+        case STROBE_RUN_NO_ADC:      return "NOT FIRED -- the ADC0 readback did not start";
+        case STROBE_RUN_NO_FEED:     return "NOT FIRED -- the PIO feed did not load, or its DMA could not be safely restarted";
     }
     return "?";
 }
@@ -512,6 +651,8 @@ void strobe_live_service(void) {
     if (strobe_live_idle_expired(now_ms(), s_live_touch_ms))
         live_exit(STROBE_LIVE_EXIT_IDLE, STROBE_OK);
 }
+
+uint32_t strobe_live_exit_count(void) { return s_live_exits; }
 
 const strobe_live_shot_t *strobe_live_last(void) { return &s_shot; }
 

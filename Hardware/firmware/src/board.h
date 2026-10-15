@@ -520,10 +520,14 @@
 
 // THE STAIRCASE RULE. While live, the gate may be raised to at most this many
 // levels above the highest level already FIRED AND MEASURED within limits since
-// live mode was armed. 31 levels = 3.0 % = 0.30 V at TP3 = at most ~1.8 A. So no
-// typed command can jump from a measured current to an unmeasured one more than
-// ~1.8 A higher. Arming starts the staircase again from 0. Typed steps of 3 %
-// (`strobe gate 3`, 6, 9 ... 69, 70) always fit: 3 % rounds to 30 or 31 levels.
+// live mode was armed. 31 levels = 3.0 % = 0.30 V at TP3 = at most ~1.8 A. So, WHILE
+// THE LOAD STAYS CONNECTED, no typed command can jump from a measured current to an
+// unmeasured one more than ~1.8 A higher. A firing that measures ZERO current also
+// counts as "within limits", so with an open load (J3 off, an open string) the
+// staircase climbs with nothing measured (found 2026-10-07; covered procedurally
+// by the 6c Step 3 stop rule, PROGRESS.md section 9). Arming starts the staircase
+// again from 0. Typed steps of 3 % (`strobe gate 3`, 6, 9 ... 69, 70) always fit:
+// 3 % rounds to 30 or 31 levels.
 #define STROBE_LIVE_GATE_STEP_MAX      31u
 
 // Stop current: 1.2 x the 9 A design target (BENCH_P6 6c). A plateau above
@@ -556,6 +560,52 @@
 #define STROBE_LIVE_POST_US             200u
 #define STROBE_LIVE_SPAN_MAX_US       30000u
 #define STROBE_LIVE_WAVE_MAX_SAMPLES  15360u   // 30.72 ms: SPAN_MAX + PRE + POST
+
+// The BURST ring is not trusted to start on time (board 1, 2026-10-12: ADC0 had
+// written 122 samples ~440 us after the switch, and a copy sized by the clock
+// returned the previous mode's leftovers as the baseline). So a live firing
+// waits until the DMA has actually written PRE's worth of ADC0 -- counted from
+// the ring's own write index -- and refuses to fire if that takes longer than
+// RING_TIMEOUT. Nothing has fired at that point.
+#define STROBE_LIVE_RING_READY_SAMPLES  (STROBE_LIVE_PRE_US / STROBE_LIVE_SAMPLE_US)
+#define STROBE_LIVE_RING_TIMEOUT_US    5000u
+
+// A record with less baseline than this is NO USABLE DATA, never a verdict. The
+// window gives ~76 samples (160 us before the enable, less the split's margin).
+#define STROBE_LIVE_PRE_MIN_SAMPLES      50u
+
+// Coverage (independent review, 2026-10-12): was the firing OBSERVED, with not
+// one ADC0 sample missing? Since round 6 the PROOF is the freeze's hardware
+// flags (adc_engine.h, "WHY A FREEZE'S RECORD IS COMPLETE"); the SysTick check
+// below is a cross-check that can only reject.
+//
+// Two snapshots, at the enable and after the post window. Each BRACKETS the
+// instant a ring transfer is ISSUED -- the DMA write index advancing as the
+// transfer enters the address FIFOs, not its SRAM write completing (round 4;
+// datasheet 12.6.4) -- between two SysTick readings (adc_ring_snapshot(), run
+// from SRAM with interrupts off), so it carries its own measured uncertainty
+// instead of an assumed one (round 3: a flash fetch stall between the index
+// read and the timestamp could have cancelled a missing sample). ADC samples
+// are exactly 96 clk_adc = 2 us = 300 clk_sys cycles at 150 MHz, one crystal,
+// so the issues are samples x 300 apart, give or take the spread of the
+// conversion-to-issue latency.
+//
+//   BRACKET_MAX  a snapshot whose bracket is wider is rejected outright: a stall,
+//                contention, anything that was not a few SRAM instructions.
+//   DMA_SPREAD   the bound on how much the conversion-to-ISSUE latency can differ
+//                between the two snapshots: clock-domain crossing (<= 1 cycle),
+//                and arbitration -- removed at the first snapshot by waiting for
+//                the PIO feed's initial fill (strobe.c). DERIVED, not measured;
+//                review round 5 holds the completeness of that derivation (e.g.
+//                ADC-FIFO read service time and DMA queue back-pressure) as an
+//                OPEN item.
+//
+// Accept iff the measured interval, widened by DMA_SPREAD, contains exactly
+// samples x 300: |centre - N x 300| <= (b1 + b2) / 2 + DMA_SPREAD, at most
+// 40/2 + 40/2 + 20 = 60 cycles -- never wider than round 2's +-60. One missing
+// sample is 300 out, and 300 > 2 x 60, so it can never be inside the window.
+#define STROBE_LIVE_SNAP_BRACKET_MAX     40u    // cycles
+#define STROBE_LIVE_DMA_SPREAD_CYCLES    20u
 
 // Pulse detection, in ADC codes (0.806 mV = 6.0 mA at 135 mV/A):
 //   - a pulse is a run of samples more than max(DETECT_MIN, half the peak)

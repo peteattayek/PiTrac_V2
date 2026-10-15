@@ -174,6 +174,12 @@ An adjustable **linear-mode constant-current sink** on the return leg of the ext
 
 **Current setpoint (the "how much"):** `Gate_PWM` (GPIO28) → two-pole RC DAC (R55/C52, R58/C53) → **U6A LM358** non-inverting ×3 amplifier (R60 20K / R59 10K) with the **U7 MMDT2227 complementary emitter-follower inside the loop** → R63 47 Ω → **Q9's gate**. Gate voltage = 3 × V_setpoint, i.e. 0–9.9 V from a 0–3.3 V PWM DAC. Q9 runs in linear mode; source degeneration through Q10's R_DS(on) + the 0.135 Ω sense gives local feedback, but there is **no analog current-servo loop** — absolute current is calibrated in firmware against `CurrentSense_ADC` (GPIO40/ADC0, 135 mV/A through R32 4K7). At the present 2-string × 4.5 A operating point the sink carries **9 A → 1.215 V** at the ADC; 4-string/18 A operation still fits the 3.3 V range.
 
+> ⚠ **Known issue (measured 2026-10-13, board 1).** At each turn-on, Q9's gate floats up for
+> microseconds, so the current overshoots (3.3 A on a 0.72 A setting).
+> - U7, the unbiased follower, only pulls the gate down after the LM358 crosses its dead band.
+> - Fix and next-board design: a 1 µF gate-hold capacitor behind R63, and R_iso with U7 removed.
+>   See CR-23 in `firmware/NEXT_BOARD_REV.md`; the test-point plan is CR-24.
+
 **Pulse gating (the "when"):** `Strobe_Pulse` (GPIO25, R57 pulldown) → **U5 74LVC1G123** one-shot (B and ~CLR both on the trigger; R56 56K / C51 2.2 nF) → MCP1416 (U8, 12 V) → R64 4.7 Ω → **Q10's gate**. The output follows Strobe_Pulse exactly but is hardware-clamped to **≤113 µs**; the falling edge of Strobe_Pulse clears it immediately, so firmware controls width up to the limit. **Q8** (gate = `Pulse_Limit_Disable`, GPIO27) clamps the one-shot's timing node so it can never time out — defeating the watchdog for bench testing only.
 
 Design notes from the schematic on LED-bank limits at 10 A over 1 m of ball travel at 100 m/s: 23 pulses at one-diameter spacing → ≤30.9 µs each; 12 pulses at two-diameter spacing → ≤59.3 µs each.

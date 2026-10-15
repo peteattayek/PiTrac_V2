@@ -8,8 +8,7 @@
 #include <math.h>
 #include <string.h>
 
-// Below this many baseline samples the record cannot be judged.
-#define MEAS_MIN_PRE   8u
+// Below STROBE_LIVE_PRE_MIN_SAMPLES of baseline the record cannot be judged.
 // A run must be at least this long to count as current; a lone sample above the
 // threshold is ADC noise, not a pulse (the shortest pulse, 5 us, is >= 2 samples).
 #define MEAS_MIN_RUN   2u
@@ -59,7 +58,7 @@ void strobe_live_measure(const uint16_t *s, size_t n, size_t pre_n, uint32_t fir
     m->pre_samples = pre_n;
     m->fired       = fired;
     m->verdict     = STROBE_VERDICT_NO_DATA;
-    if (!s || pre_n < MEAS_MIN_PRE || n < pre_n + 4u) return;
+    if (!s || pre_n < STROBE_LIVE_PRE_MIN_SAMPLES || n < pre_n + 4u) return;
 
     double sum = 0.0;
     for (size_t i = 0; i < pre_n; i++) sum += code_at(s, i);
@@ -142,6 +141,45 @@ size_t strobe_live_baseline_samples(size_t got, uint64_t t_en_us, uint64_t t_sto
     uint64_t after = (t_stop_us - t_en_us) / STROBE_LIVE_SAMPLE_US + 2u;
     if ((uint64_t)got <= after + 2u) return 0u;
     return got - (size_t)after - 2u;
+}
+
+// The record is the newest `got` samples, ending at ring write index w_stop, so
+// it starts at w_stop - got. Of those, the ones at indices below w_en were
+// written before the enable; 2 more are given up for the conversion in flight
+// when w_en was read and the DMA's own lag.
+size_t strobe_live_baseline_by_index(size_t got, size_t w_en, size_t w_stop) {
+    if (got > w_stop || w_en > w_stop) return 0u;
+    size_t first = w_stop - got;
+    if (w_en <= first + 2u) return 0u;
+    return w_en - first - 2u;
+}
+
+// The first issue event is somewhere in [0, b1] after its bracket's earlier reading,
+// the second in [span_lo, span_lo + b2]: their separation lies in
+// [span_lo - b1, span_lo + b2], centre span_lo + (b2 - b1) / 2, half-width
+// (b1 + b2) / 2. Widened by the DMA latency spread, it must contain
+// samples x cps. Doubled throughout to stay in integers.
+bool strobe_live_coverage_ok(uint32_t span_lo, uint32_t b1, uint32_t b2, size_t samples,
+                             uint32_t cycles_per_sample) {
+    if (cycles_per_sample == 0u || samples == 0u) return false;
+    if (b1 > STROBE_LIVE_SNAP_BRACKET_MAX || b2 > STROBE_LIVE_SNAP_BRACKET_MAX) return false;
+    // The whole acceptance window must be narrower than one sample period, or
+    // a missing sample could still land inside it.
+    uint64_t twice_half = (uint64_t)b1 + b2 + 2u * (uint64_t)STROBE_LIVE_DMA_SPREAD_CYCLES;
+    if (twice_half >= cycles_per_sample) return false;
+    int64_t twice_centre = 2 * (int64_t)span_lo + (int64_t)b2 - (int64_t)b1;
+    int64_t twice_want   = 2 * (int64_t)samples * (int64_t)cycles_per_sample;
+    int64_t d = twice_centre - twice_want;
+    if (d < 0) d = -d;
+    return (uint64_t)d <= twice_half;
+}
+
+size_t strobe_live_baseline_checked(size_t got, uint64_t t_en_us, uint64_t t_stop_us,
+                                    size_t w_en, size_t w_stop, bool covered) {
+    if (!covered) return 0u;
+    size_t by_time  = strobe_live_baseline_samples(got, t_en_us, t_stop_us);
+    size_t by_index = strobe_live_baseline_by_index(got, w_en, w_stop);
+    return by_time < by_index ? by_time : by_index;
 }
 
 // ---------------------------------------------------------------------------

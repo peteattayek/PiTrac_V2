@@ -79,7 +79,7 @@ block of §10** — this table is a summary as of 2026-10-05.
 | 3 · photodiode chain and calibration | 🟡 §3.1–3.6 done on board 3; first real ball waveform passed; comparator timing and the 20-pass set are open |
 | 4 · trigger-source experiment | 🟡 firmware written, bench not started |
 | 5 · microphone | 🟡 front end validated; no onset-detection or veto firmware yet |
-| 6 · strobe | 🟡 **6a/6b dry tests PASS on board 1 (2026-10-06)** — U5 clamp 135 µs, PIO timing, schedule, A7, interlock, gate DAC. **6c/6d live-current firmware written 2026-10-07** (guarded: staircase, 70 % ceiling, ADC0 readback per firing, overcurrent/stuck-on faults, watchdog); TP3 loop stability PASS 2026-10-08; next is the first live pulses (6c) |
+| 6 · strobe | 🟡 **6a/6b dry tests PASS on board 1 (2026-10-06)** — U5 clamp 135 µs, PIO timing, schedule, A7, interlock, gate DAC. **6c/6d live-current firmware written 2026-10-07** (guarded: staircase, 70 % ceiling, ADC0 readback per firing, overcurrent/stuck-on faults, watchdog); TP3 loop stability PASS 2026-10-08; 6c on board 1 up to 24 % after a gate-drive rework (CR-23); **6d PASS 2026-10-15**; next is the ADC0 readback fix |
 | 7 · cameras | ❌ no firmware yet; blocked on the 1.8 V I/O translator (CR-09) |
 | 8 · Pi integration | 🟡 power and shutdown handshake done; UART protocol not written |
 

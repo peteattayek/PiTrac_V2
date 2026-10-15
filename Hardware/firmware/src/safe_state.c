@@ -22,6 +22,7 @@ static const char *const k_fault_names[FAULT__COUNT] = {
     [FAULT_STROBE_OVERCURRENT]  = "STROBE_OVERCURRENT",
     [FAULT_STROBE_CLAMP]        = "STROBE_CLAMP",
     [FAULT_INTERNAL]            = "INTERNAL",
+    [FAULT_SUPPLY_UNREADABLE]   = "SUPPLY_UNREADABLE",
 };
 
 static void out_low(uint pin) {

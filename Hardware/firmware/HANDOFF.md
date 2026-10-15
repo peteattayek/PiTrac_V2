@@ -128,8 +128,10 @@ $env:PATH = "$env:USERPROFILE\.pico-sdk\ninja\v1.13.2;$env:USERPROFILE\.pico-sdk
 arm-none-eabi-size build\pitrac.elf
 ```
 
-**Host tests** (native, MSVC, separate `tests/build`; 78 cases as of 2026-10-07). Run them
-after any change to `power_fsm.c`, `strobe_plan.c`, `strobe_live.c` or `service.c`:
+**Host tests** (native, MSVC, separate `tests/build`; 102 cases as of 2026-10-12). Run them
+after any change to `power_fsm.c`, `strobe_plan.c`, `strobe_live.c`, `service.c` or
+`adc_ring_math.h`. A newly added test file or case needs a reconfigure
+(`cmake tests -B tests\build`) before the build:
 
 ```powershell
 cd Hardware\firmware
@@ -169,6 +171,11 @@ defaults to **9000 lines**, less than a normal ADC capture. With monitoring stop
 After the capture ends, stop and use **Open the last used log file**. Verify with a short
 `id` log first. Logging only saves subsequent output; increasing scrollback cannot recover
 discarded lines. **Logging Verbosity** controls extension diagnostics, not serial capture.
+🔴 **The file log can reorder output** (2026-10-12): whole chunks of a `strobe` status landed
+after the prompt, with nothing lost, while the on-screen scrollback had the true order. A USB
+CDC stream cannot reorder, so this is the logger. Where order is the evidence (a per-firing
+readback, a `strobe wave` CSV), the **scrollback** is the record: raise its line limit above the
+output's length, then copy it into `captures/`. Keep the file log as a backup.
 Stop monitoring before giving COM11 to the host scope tool.
 
 **Host tool:** `tools/scope.py` (needs `pyserial`, `matplotlib`). Block capture, `--roll` live
@@ -305,12 +312,48 @@ Every one of these produced a confident wrong answer at least once.
 - 🔴 **An interlock that learns from measurements must treat "no signal" as unknown, not as
   safe.** The live staircase raises its limit after any firing judged within limits — including
   one that measured zero current, which is what an open load looks like (found 2026-10-07).
+- 🔴 **A detection threshold set from the record's own peak lets a spike hide the signal.**
+  - The live readback counts samples above half the window's peak.
+  - At gate 24 % (2026-10-13), a 3.3 A turn-on spike put that line at ~1.5 A. The 0.72 A,
+    20 µs pulse under it was printed as "no current", and the staircase raised its limit.
+  - Detect against an absolute floor, and treat a peak far above the settled level as a
+    finding of its own.
+- 🔴 **Measure the rate you think you configured.** Every ADC ring mode ran at *half* its stated
+  rate from the day the ring was written until 2026-10-12. DIV = 95 for "500 ksps" lands each
+  trigger as the previous 96-cycle conversion ends, and the ADC ignores it (datasheet 12.4.3.2:
+  n ≥ 96, or DIV = 0 for back to back).
+  - Nothing checked the real rate. Every ring timestamp used the configured one.
+  - It surfaced as an unexplained "late ring start" and cost a day of review rounds aimed at the
+    wrong mechanism, until `adc ringtest` printed samples against time.
+  - When a measured count disagrees with time × rate, suspect the rate first.
+- 🔴 **A tolerance in a safety check must be derived or measured, never guessed.**
+  - The 2026-10-12 ADC0 coverage check failed independent review three times:
+    - a ±4-sample allowance hid a 6 µs gap;
+    - an "exact" ±60-cycle check assumed its own snapshot latency;
+    - and that check ran from flash, where a cache-miss stall could cancel one missing sample.
+  - Each fix only narrowed the assumption. What closed it (round 6) was resting the proof on
+    a hardware guarantee instead of timing: the datasheet says a lost ADC conversion sets the
+    sticky FCS.OVER, so "no sample missing" is read from flags. The SRAM-bracketed timing
+    check stays as a cross-check that can only reject.
+  - Ask what the check would accept in the worst case, and make the code prove that rather
+    than assume it.
 - **Time the measurement window from the instant the data stopped, not from a clock read
   before it.** An interrupt between the two shifts every derived boundary (the 6c baseline split,
   found by review 2026-10-07): read the clock and stop the ADC with interrupts disabled.
 - **A beam-step droop is not switch leakage.** Measure leakage with `hpf test`.
 - **`+2V5` is literally `+5VA/2`**, so in HOLD a rail step reaches the comparator at **×7.43**
   (Q8 / CR-02). Keep the rail stiff while armed.
+
+**Assembly**
+- 🔴 **A rail can be right at its capacitor and absent at the connector.** On board 1
+  (2026-10-13) both J3 pins were cold joints.
+  - C26 read 36 V; the J3 screw read 7 V.
+  - Two full 6c staircases fired into an open LED bank, and every firing read "no current".
+  - This board's pours connect to pads solid (no thermal relief), so treat every hand-soldered
+    joint on one as suspect.
+  - Measure a supply where the load connects (the screw, not the pad), and inspect pour joints
+    before power (`BRINGUP_NEW_BOARD.md` §1).
+  - Zero current from a stage that should conduct is an open circuit until proven otherwise.
 
 ---
 

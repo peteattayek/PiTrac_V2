@@ -22,6 +22,19 @@ pitrac_host_test(power_fsm_test power_fsm_test.c ../src/power_fsm.c)
 pitrac_host_test(strobe_plan_test strobe_plan_test.c ../src/strobe_plan.c)
 pitrac_host_test(strobe_live_test strobe_live_test.c ../src/strobe_live.c ../src/strobe_plan.c)
 pitrac_host_test(service_test service_test.c ../src/service.c)
+pitrac_host_test(adc_ring_test adc_ring_test.c)
+
+foreach(test IN ITEMS
+    v5in_fresh
+    v5in_rejects_hw_flags
+    v5in_rejects_conv_error
+    v5in_skips_newest_group
+    v5in_phase_rotation
+    v5in_bad_args
+    adc_rate_div
+)
+    add_test(NAME adc.${test} COMMAND adc_ring_test ${test})
+endforeach()
 
 foreach(test IN ITEMS
     redundant_on_shutdown
@@ -45,6 +58,13 @@ foreach(test IN ITEMS
     pi_boot_timeout
     pi_shutdown_timeout
     strobe_teardown
+    supply_unreadable_latch
+    supply_not_sampled_latch
+    supply_unreadable_rail
+    supply_stall_running
+    supply_not_sampled_running
+    supply_invalid_latch
+    supply_invalid_running
 )
     add_test(NAME power.${test} COMMAND power_fsm_test ${test})
 endforeach()
@@ -92,6 +112,16 @@ foreach(test IN ITEMS
     no_data
     verdict_texts
     baseline_split
+    ring_copy_avail
+    baseline_by_index
+    baseline_checked
+    coverage
+    snapshot_latency_cancel
+    acquisition_stopped
+    short_gap_pulse
+    short_gap_stuck
+    short_baseline
+    replay_2026_10_12
     budget_window
     budget_wrap
     budget_full_table

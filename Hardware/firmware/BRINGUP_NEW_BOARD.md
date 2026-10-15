@@ -114,6 +114,8 @@ than assuming.
       ELSE.** Set both now with the output off and the leads not on J1 — this section runs on
       USB only, and the supply first goes on in §2. Check both with a DMM/the PSU display. See
       the two boxes below.
+- [ ] 🔴 **Inspect every joint on a copper pour, unpowered** (the last box in this section). Two
+      cold joints on J3 cost board 1 a bench day in 6c (2026-10-13).
 - [ ] USB-C to **J6** only. **No bench supply. No Pi. J2 jumper OFF.**
 - [ ] Firmware flashed (`SETUP.md`). A blank RP2354 enumerates as `RPI-RP2` on its own —
       the SW1/SW2 dance is only needed once there is an image to interrupt.
@@ -166,6 +168,52 @@ id
 > ⚠ The firmware cannot detect this — **there is no VIR sense and PGOOD is unconnected**
 > (`NEXT_BOARD_REV.md` **CR-08**). This incident is the concrete argument for that change.
 
+> ### 🔴 Cold joints on the copper pours — inspect before power, and again after landing wires
+>
+> **Why this board is prone to them:** every copper pour on this layout connects to its pads
+> **solid, with no thermal relief**. That includes the inner **GND (In1)** and **+5V (In2)**
+> planes, the two largest areas of copper on the board. A pad tied to a pour soaks up the iron's
+> heat, so the solder can look acceptable on top without ever wetting the pin or the barrel.
+> Screw terminals make it worse: tightening the screw and landing heavy wire lever the pins
+> against a marginal joint.
+>
+> **Found on board 1, 2026-10-13:** both **J3** pins (VIR and VIR_RTN) were cold.
+> - Pin 1: C26 read 36 V, but the J3 screw read 7 V (floating).
+> - Two 6c staircases fired into an open LED bank, and every firing read "no current". It cost
+>   a bench day.
+>
+> **Joints to inspect** (pours taken from the PCB file):
+>
+> | Group | Joints | On |
+> |---|---|---|
+> | Strobe current path (~9 A pulses) | **J3 pins 1 and 2**; **Q9's tab** (a 37 mm² pad); D10; R65, R66; L1, D2 (boost); C13, C15 (VIR bulk) | VIR, VIR_RTN, CurrentSense, GND pours |
+> | Power input and latch | **J1, both pins**; J2; Q1, Q3 (pads forced solid) | +VDC pour, GND plane, +5V |
+> | Through-hole pins on the inner planes | J8's GND and +5V pins (2, 4, 6, 9, 14, 20, 25, 30, 34, 39); J4; J5; J6 shell; J7; J9; TP1 | GND (In1), +5V (In2) |
+>
+> **How to check, unpowered:**
+> - **Look at both sides under magnification.**
+>   - A good through-hole joint wets the pad all the way round with a concave fillet, and solder
+>     shows on the far side.
+>   - Dull or grainy solder, a ball sitting on the pin, or a ring of gap round it: reflow it.
+> - **Measure each high-current joint, from the part to nearby copper on the same net.** Each
+>   should read < 1 Ω:
+>   - J3 pin 1 **screw** → C26's VIR pad;
+>   - J3 pin 2 **screw** → Q9's tab;
+>   - each J1 screw → its pour.
+>
+>   A DMM cannot resolve a joint of a few tens of milliohms. This finds open joints; the visual
+>   check is what finds marginal ones.
+> - **Re-check J1 and J3 after the wires are landed and the screws tightened.** That is when a
+>   marginal joint cracks.
+> - Powered, in §2: read VIR **at the J3 screw** and compare it with C26. They must match.
+>
+> **Reworking them:**
+> - Preheat the board.
+> - Use a large chisel tip on a high-power iron, with plenty of flux.
+> - Feed solder from the side opposite the iron, and hold until it shows on the far side.
+>
+> `NEXT_BOARD_REV.md` **CR-22** adds thermal relief to the pours.
+
 ## 2. Dead-board rail smoke test (Phase 0.5)
 
 **Do this before the latch is ever closed.** `safe_state_init()` holds GPIO15 low so the
@@ -174,8 +222,8 @@ lives in.
 
 - [ ] Fit the **J2 jumper**, apply the bench supply (**5.20 V, 2 A limit, into J1**), and
       confirm the rails come up without
-      the firmware being involved: **+5 V**, **VIR 36 V** (J3 pin 1 → GND; not across J3, whose
-      pin 2 is `VIR_RTN`), **TP2 +12 V**, **+5VA**, **TP6 +2V5**.
+      the firmware being involved: **+5 V**, **VIR 36 V** (J3 pin 1's **screw** → GND, and the same at
+      C26; a difference is a cold J3 joint (§1). Not across J3, whose pin 2 is `VIR_RTN`), **TP2 +12 V**, **+5VA**, **TP6 +2V5**.
 - [ ] Current draw sane, nothing warm, nothing smells.
 - [ ] **Scope the LM5157 SW node.** Decide the R11/C9 snubber (DNP by default — fit only if it
       rings), **and record the switching frequency**.
@@ -724,6 +772,7 @@ line said to distrust it; that was wrong and it had been written into the firmwa
 | 1 | **PSU current limit set to 2 A** | — | ✅ | ✅ | |
 | 1 | Chip UID | `a764f5332ca5ac53` | *not recorded* | `6d6fda754e367a40` | |
 | 1 | Silicon revision | A4 | *not recorded* | *not recorded* | |
+| 1 | 🔴 **Pour joints inspected** (§1 box; J1 and J3 re-checked after landing wires) | ❌ **J3 pins 1 and 2 were cold**, found 2026-10-13 and re-soldered | *not recorded* | *not recorded* | |
 | 2 | VIR (J2, no load) | 36.0 V | **36.0 V** ✅ | *not recorded* | |
 | 2 | TP2 +12 V | 12.3 V | *not recorded* | *not recorded* | |
 | 2 | TP6 +2V5 | 2.59 V | *not recorded* | *not recorded* | |

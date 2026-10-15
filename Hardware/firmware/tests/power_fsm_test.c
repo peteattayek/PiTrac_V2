@@ -17,6 +17,7 @@
 static bool pins[48];
 static uint32_t clock_ms;
 static float supply_v;
+static adc_5vin_status_t supply_status;
 static bool beam_on;
 static fault_t fault;
 static unsigned latch_rises;
@@ -48,7 +49,12 @@ void gpio_put(unsigned pin, bool value) {
     pins[pin] = value;
 }
 
-float adc_read_5vin_volts(void) { return supply_v; }
+// The FSM decides on the STATUS (review round 5): a stale or unavailable value
+// is never a reading. supply_v is what *volts carries either way.
+adc_5vin_status_t adc_5vin_read(float *volts) {
+    if (volts) *volts = supply_v;
+    return supply_status;
+}
 bool beam_enable(bool on) { beam_on = on; return true; }
 void detect_hpf_safe_off(void) { gpio_put(PIN_HPF_TOGGLE, HPF_SEL_TRACK); }
 // The real one drives GPIO25 SIO low and zeroes the gate DAC; the FSM must call
@@ -68,6 +74,7 @@ static void reset_fixture(void) {
     pins[PIN_RPI5_SHUTDOWN] = PI_SHUTDOWN_ACTIVE_LOW;
     clock_ms = 0;
     supply_v = 5.20f;
+    supply_status = ADC_5VIN_FRESH;
     beam_on = false;
     fault = FAULT_NONE;
     latch_rises = 0;
@@ -300,6 +307,111 @@ static bool rail_collapse(void) {
     return true;
 }
 
+// --- Supply freshness (independent review round 5, 2026-10-12) ---------------
+// A stalled ring used to hand back stale samples stamped fresh, which would have
+// blinded every check below. Now only a FRESH reading can close the latch or
+// pass the rail check, a STALLED one counts as low, and a NOT_SAMPLED one (a
+// mode without ch1) is never judged at all.
+
+static bool supply_unreadable_latch(void) {
+    supply_status = ADC_5VIN_STALLED;          // supply_v says a healthy 5.20 V
+    power_request_on();
+    step(0);
+    CHECK(power_fsm_state() == PS_FAULT);
+    CHECK(fault == FAULT_SUPPLY_UNREADABLE);
+    CHECK(latch_rises == 0);
+    return true;
+}
+
+static bool supply_not_sampled_latch(void) {
+    supply_status = ADC_5VIN_NOT_SAMPLED;      // the last good value, 5.20 V, is not a reading
+    power_request_on();
+    step(0);
+    CHECK(power_fsm_state() == PS_FAULT);
+    CHECK(fault == FAULT_SUPPLY_UNREADABLE);
+    CHECK(latch_rises == 0);
+    return true;
+}
+
+static bool supply_unreadable_rail(void) {
+    power_request_on();
+    step(0);
+    CHECK(pins[PIN_LATCH_CONTROL]);
+    supply_status = ADC_5VIN_STALLED;          // after the latch, before the rail check
+    step(RAIL_SETTLE_MS);
+    step(1);
+    CHECK(fault == FAULT_SUPPLY_UNREADABLE);
+    CHECK(!pins[PIN_LATCH_CONTROL]);
+    supply_status = ADC_5VIN_FRESH;
+    CHECK(stays_off());
+    return true;
+}
+
+static bool supply_stall_running(void) {
+    CHECK(start_bench());
+    supply_status = ADC_5VIN_STALLED;          // healthy value, dead ring
+    step(V5_MONITOR_INTERVAL_MS);
+    step(V5_LOW_DEBOUNCE_MS - 1);
+    CHECK(pins[PIN_LATCH_CONTROL]);
+    step(V5_MONITOR_INTERVAL_MS);
+    CHECK(fault == FAULT_SUPPLY_UNREADABLE);
+    CHECK(!pins[PIN_LATCH_CONTROL]);
+    supply_status = ADC_5VIN_FRESH;
+    CHECK(stays_off());
+    return true;
+}
+
+// Round 6: samples that arrived but cannot be trusted (an overflow, a DMA or
+// conversion error) are INVALID, and the FSM treats them as unreadable.
+static bool supply_invalid_latch(void) {
+    supply_status = ADC_5VIN_INVALID;          // supply_v says 5.20 V; the samples are void
+    power_request_on();
+    step(0);
+    CHECK(power_fsm_state() == PS_FAULT);
+    CHECK(fault == FAULT_SUPPLY_UNREADABLE);
+    CHECK(latch_rises == 0);
+    return true;
+}
+
+static bool supply_invalid_running(void) {
+    CHECK(start_bench());
+    supply_status = ADC_5VIN_INVALID;
+    step(V5_MONITOR_INTERVAL_MS);
+    step(V5_LOW_DEBOUNCE_MS - 1);
+    CHECK(pins[PIN_LATCH_CONTROL]);
+    step(V5_MONITOR_INTERVAL_MS);
+    CHECK(fault == FAULT_SUPPLY_UNREADABLE);
+    CHECK(!pins[PIN_LATCH_CONTROL]);
+    supply_status = ADC_5VIN_FRESH;
+    CHECK(stays_off());
+    return true;
+}
+
+static bool supply_not_sampled_running(void) {
+    CHECK(start_bench());
+    // ARMED / BURST: ch1 is not converted. A stale LOW value must not be judged
+    // (the old code would have shut down on it)...
+    supply_status = ADC_5VIN_NOT_SAMPLED;
+    supply_v = 4.0f;
+    for (unsigned i = 0; i < 30; i++) {
+        step(V5_MONITOR_INTERVAL_MS);
+        CHECK(pins[PIN_LATCH_CONTROL]);
+        CHECK(fault == FAULT_NONE);
+    }
+    // ...and when sampling resumes low, the debounce starts THEN.
+    supply_status = ADC_5VIN_FRESH;
+    supply_v = 4.85f;
+    step(V5_MONITOR_INTERVAL_MS);
+    step(V5_LOW_DEBOUNCE_MS - 1);
+    CHECK(pins[PIN_LATCH_CONTROL]);
+    step(V5_MONITOR_INTERVAL_MS);
+    CHECK(fault == FAULT_SUPPLY_LOST);
+    CHECK(!pins[PIN_LATCH_CONTROL]);
+    supply_v = 5.20f;
+    CHECK(stays_off());
+    return true;
+}
+
 static bool usb_guard(void) {
     supply_v = 4.85f;
     power_request_on();
@@ -475,7 +587,11 @@ int main(int argc, char **argv) {
         TEST(shutdown_during_pi_boot), TEST(supply_loss), TEST(rail_collapse),
         TEST(usb_guard), TEST(button_cycle), TEST(long_press), TEST(stale_fault_ack),
         TEST(request_on_result), TEST(pi_boot_timeout), TEST(pi_shutdown_timeout),
-        TEST(strobe_teardown)
+        TEST(strobe_teardown),
+        TEST(supply_unreadable_latch), TEST(supply_not_sampled_latch),
+        TEST(supply_unreadable_rail), TEST(supply_stall_running),
+        TEST(supply_not_sampled_running), TEST(supply_invalid_latch),
+        TEST(supply_invalid_running)
 #undef TEST
     };
     if (argc == 2) {

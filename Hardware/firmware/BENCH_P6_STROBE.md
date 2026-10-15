@@ -10,14 +10,41 @@ anything.
 
 ---
 
-> ## FIRMWARE STATUS, 2026-10-09 — 6a/6b dry tests PASS; 6c/6d live-current firmware on board 1, not yet fired
+> ## FIRMWARE STATUS, 2026-10-12 (bench 2026-10-15) — 6a/6b dry tests PASS; readback fix on board 1; 6c Steps 1–2 PASS, Step 3 up to 24 %; 6d PASS
 >
-> **Image for 6c:** Release build **`Oct  7 2026 08:07:33`** (`id` → `built`), **184440 text /
-> 0 data / 122720 bss**, `pitrac.uf2` SHA256 `DE0C6676…2DE80BC2`. **78/78 native host tests pass**
-> (`tests/`, see `BENCH.md` "Host regression tests"). It is the 2026-10-05 image plus the 6c/6d
-> live mode, the "before 6c" backlog items and two fixes from an independent review
-> (`PROGRESS.md` §6 2026-10-07). **Board 1 runs it** (inferred from its 2026-10-07/08 logs; confirm
-> with `id` before 6c Step 1 — `PROGRESS.md` §6 2026-10-09). Any other board: reflash first.
+> 🔴 **Never fire live on the `Oct  7` image** (any board still on it). Its ADC0 readback can
+> return stale IDLE-ring data as the pre-pulse baseline (the copy was sized by elapsed time, not
+> by what the DMA wrote). It latched a false `STROBE_CLAMP` at gate 0 on board 1. A stale *low*
+> baseline would instead pass unseen. `PROGRESS.md` §6 2026-10-12.
+>
+> **Fix image (six review rounds by ChatGPT 6.1 Sol, then a bench fix: the ADC ran at half
+> rate; on board 1 since 2026-10-12, 6c Steps 1–2 PASS):** Release **`Oct 12 2026 14:43:50`**, **194344 text / 0 data / 122796 bss**,
+> `pitrac.uf2` SHA256 `2D3BD0C1…4FB6471D`, **102/102 host tests** (24 new; 25 deliberate
+> mutations, each caught). `id` adds the lines `+ ADC0 ring wait + DMA-counted readback,
+> bracketed SRAM coverage (2026-10-12)`, `+ E5-safe DMA stops, record proven by ADC/DMA flags,
+> fresh + intact 5V_IN` and `+ ADC at true 500 ksps (DIV 0), synchronised snapshots`.
+> It is the `Oct  7` image plus:
+> - a live firing waits until the BURST ring has **written** 100 ADC0 samples, and otherwise
+>   refuses (`NOT FIRED`, live mode ends);
+> - the copy is bounded by the DMA's write index;
+> - the baseline split is the smaller of clock and DMA count, with ≥ 50 samples needed, and
+>   NO DATA unless the record is **proven complete by the ADC/DMA hardware flags**: no FIFO
+>   overflow (the datasheet's only way a conversion is lost) or underflow, the ADC still
+>   free-running at the stop, the DMA drained and stopped cleanly. Bracketed SysTick snapshots
+>   cross-check it and can only reject. A `record:` line names any failure;
+> - `adc ringtest` is refused while the detector is armed;
+> - overrun is taken from `FCS.OVER`;
+> - `adc ringtest`;
+> - a background live-mode exit is announced;
+> - the checklist's ground is corrected.
+>
+> **Board 1 ran `Oct  7 2026 08:07:33`** until 2026-10-12, when it was reflashed with the fix
+> image above.
+>
+> **The `Oct  7` image:** Release `Oct  7 2026 08:07:33`, 184440 text / 0 data / 122720 bss, SHA256
+> `DE0C6676…2DE80BC2`, 78/78 host tests (`tests/`, see `BENCH.md` "Host regression tests"). It is
+> the 2026-10-05 image plus the 6c/6d live mode, the "before 6c" backlog items and two fixes from
+> an independent review (`PROGRESS.md` §6 2026-10-07).
 > **6a and 6b PASS on board 1 (2026-10-06**, LA + DMM + scope, on
 > the 2026-10-05 image; see the exit criteria) — the dry path is unchanged in the new build.
 > ✅ **TP3 loop stability PASS on board 1 (2026-10-08**, MSO54B: AC RMS 3.6–3.8 mV at gates
@@ -34,7 +61,7 @@ anything.
 > | Ramping Gate_PWM | ✅ `strobe gate <pct>` |
 > | Firing with current (6c), ADC0 plateau per shot, watchdog arming | ✅ **written 2026-10-07** — live mode, `strobe live on confirm` (6c below) |
 > | Current LUT | ✅ `strobe cal [A]` — solves the level for 2–9 A, 3 confirmation pulses; RAM only (`cfg` has no field for it yet) |
-> | Clamp verification with current (6d) | ✅ `strobe clamptest <us>` in live mode, only at a level that measured 0.5–2.5 A |
+> | Clamp verification with current (6d) | ✅ `strobe clamptest <us>` in live mode, only at a level that measured 0.5–2.5 A — **PASS on board 1, 2026-10-15: 135 µs at 0.70 A** |
 >
 > **Two modes.** LED-bank current needs Q9's gate (setpoint) **and** Q10's gate (pulse).
 >
@@ -162,15 +189,16 @@ the board still contains 36 V and stored charge. Keep conductive objects clear o
 connect probes only with the rail down, and use true board GND, not TP5 (`Strobe_GND`,
 which is a switched node). Everything proved here is something not debugged at 9 A.
 
-The current build is **`Oct  7 2026 08:07:33`** (2026-10-07: adds 6c/6d live mode; the dry path
-used here is unchanged). Boards 1 and 3 run the earlier `Oct  5 2026 11:13:55`, on which 6a/6b
-passed. On any board, **reflash first** with the current build. Everything below needs it.
+The current build is **`Oct 12 2026 14:43:50`** (2026-10-12: the 6c/6d live mode plus the ADC0
+readback fix; see the status box at the top). 6a/6b passed on board 1 on the earlier
+`Oct  5 2026 11:13:55`, which board 3 still runs. On any board, **reflash first** with the
+current build. Everything below needs it.
 
 ### Board state
 
 | | |
 |---|---|
-| Firmware | `id` → `built    : Oct  7 2026 08:07:33` |
+| Firmware | `id` → `built    : Oct 12 2026 14:43:50` |
 | **J3 (LED bank)** | 🔴 **DISCONNECTED.** This is what makes 6a safe. |
 | PSU | 5.2 V, **limit 3 A** |
 | Rail | **up** for the measurements; **down** while connecting probes |
@@ -246,7 +274,7 @@ strobe pulse 20
 
 **Expect:**
 
-- `id`: `built    : Oct  7 2026 08:07:33`.
+- `id`: `built    : Oct 12 2026 14:43:50`.
 - `pins`: **`PULSE_LIMIT_DIS(27)  0`** and **`STROBE_PULSE(25)  0`**.
   🔴 **If GPIO27 is 1, stop.** Nothing in phases 0–6c has any reason to set it.
 - `strobe` shows:
@@ -672,7 +700,7 @@ boring.** Do not start it at the end of a session.
 > | CLI | only `help id stat pins adc5v fault off forceoff wdog strobe` | everything else that touches the ADC, the beam, the detector, flash or a reset is refused |
 > | Ceiling | gate ≤ **level 717 = 70.0 %** → TP3 ≈ 6.9 V | the design expects 4.5–6 V at 9 A |
 > | **Staircase** | each raise ≤ **31 levels (3.0 %, 0.30 V at TP3, ≤ ~1.8 A)** above the highest level already **fired and measured within limits** | no typed command can jump from a measured current to an unmeasured one **while the load stays connected**; re-arming restarts it from 0. Typed 3 % steps always fit. ⚠ A firing that measures **zero** current also counts as "within limits", so with J3 open the staircase climbs with no load — see the Step 3 stop rule (gap found 2026-10-07) |
-> | Readback | **every** live firing: ADC0 alone at 500 ksps (2 µs/sample), 160 µs of baseline, then the pulse(s), 200 µs after | per-pulse plateau (edge samples dropped), peak, on-time; `strobe wave` dumps the record |
+> | Readback | **every** live firing: ADC0 alone at 500 ksps (2 µs/sample), 160 µs of baseline, then the pulse(s), 200 µs after. **Since the 2026-10-12 fix:** fired only after the ring has *written* 100 samples (else `NOT FIRED`, live ends); copy bounded by the DMA's write count; baseline = smaller of clock and DMA split, ≥ 50 samples, and the record proven complete by ADC/DMA hardware flags (no FIFO overflow/underflow, ADC free-running to the stop, clean DMA), cross-checked by bracketed SysTick snapshots, or `NO USABLE ADC0 DATA` | per-pulse plateau (edge samples dropped), peak, on-time; a `ring:` line with the ring start time and both splits; `strobe wave` dumps the record |
 > | Overcurrent | plateau **> 10.8 A** (1.2 × 9 A) or any sample **> 13.0 A** | latches **`STROBE_OVERCURRENT`**, ends live mode, gate 0 |
 > | Clamp / stuck-on | current **before** the pulse (baseline > 40 codes ≈ 0.24 A), **still on** at the end of the window, or **on > 200 µs** | latches **`STROBE_CLAMP`**, ends live mode, gate 0 |
 > | Pacing | ≥ **100 ms** between firings; ≤ **30 mC per 10 s**, booked before firing at 9 A × the clamp-limited width | refused, not delayed (`strobe cal` waits instead) |
@@ -687,14 +715,14 @@ boring.** Do not start it at the end of a session.
 
 | | |
 |---|---|
-| **Firmware** | the 2026-10-07 6c build — `id` → `fw` line ends `+ 6c/6d live current (guarded, ADC0 per firing)` |
+| **Firmware** | the **2026-10-12 fix build** — `id` → `built : Oct 12 2026 14:43:50` and the `fw` lines end `+ ADC at true 500 ksps (DIV 0), synchronised snapshots`. 🔴 Not the `Oct  7` image (stale-baseline bug, §6 2026-10-12) |
 | **Prerequisites on this board** | 6a and 6b **passed on this board**, and **TP3 at a static setpoint passed** (6b exit criteria: scope or LA analog, gate 0/50/90, no oscillation) — 🔴 not optional: an oscillating gate loop with current flowing is exactly what this step must never meet first |
 | **J3 (LED bank)** | **CONNECTED** — for the first time. Connect it with the **PSU and USB both off** |
 | PSU | **5.20 V, current limit ~3 A.** The pulses come from the VIR bulk caps; the PSU only sees the average |
 | Rail | **up** (`on`) |
 | GPIO27 | **0** (`strobe` → `U5 pulse limiter armed`) |
 | Beam / detector / Pi | **off** / **disarmed** / **not connected** |
-| Probes — attach every one with the board **unpowered** (rule 6) | **TP4** (CurrentSense, **135 mV/A**: 0.27 V at 2 A, 1.215 V at 9 A) on the scope, 10× probe, ground on a **wire soldered to R66's GND pad** (the pad farther from Q10) — that measures straight across the sense resistors. **Not TP1**: it is 72 mm away across the boost and picked up ±70–85 mV of spikes (≈ ±0.6 A apparent on TP4) on 2026-10-07. **TP3** (Q9 gate setpoint) on a second channel, ground on the second R66 wire. All leads: the table below. The LA analog channel (±10 V) is an acceptable substitute on TP4 and TP3 — **never** on TP2 (12.3 V) or Q10's gate |
+| Probes — attach every one with the board **unpowered** (rule 6) | **TP4** (CurrentSense, **135 mV/A**: 0.27 V at 2 A, 1.215 V at 9 A) on the scope: a **1× probe** (TP4 is the 0.135 Ω node, so 1× loading is nil, and there is no compensation to skew a 20 µs plateau; a TDS 1002 P2220 is ~6 MHz at 1×), or 10× only after PROBE CHECK. The channel's Probe menu must match the switch. Ground on a **wire soldered to R66's GND pad** (the pad farther from Q10) — that measures straight across the sense resistors. **Not TP1**: it is 72 mm away across the boost and picked up ±70–85 mV of spikes (≈ ±0.6 A apparent on TP4) on 2026-10-07. **TP3** (Q9 gate setpoint) on a second channel, ground on the second R66 wire. All leads: the table below. The LA analog channel (±10 V) is an acceptable substitute on TP4 and TP3 — **never** on TP2 (12.3 V) or Q10's gate |
 | FLIR | **on and pointed at Q9 and HS1 before the first pulse**, with tape or paint patches on Q9's tab and HS1 (bare metal reads falsely cool) |
 | Nothing conductive near **D12 (36 V)** | |
 
@@ -731,12 +759,17 @@ ground clip sit side by side (the residual loop is the ~14 mm across the board).
 | From → to | Expect | If not |
 |---|---|---|
 | G1 / G2 → TP1 | ≈ 0 Ω | the ground wire is not on the GND pad |
+| J3 pin 1 **screw** → C26's VIR pad | < 1 Ω | a cold J3 pin-1 joint (board 1, 2026-10-13): reflow it (`BRINGUP_NEW_BOARD.md` §1) |
+| J3 pin 2 **screw** → Q9's tab | < 1 Ω | a cold J3 pin-2 or Q9-tab joint (board 1, 2026-10-13) |
 | R61 pad 1 → GND | ≈ 1 kΩ (6a Step −1) | something bridged near R61 / R65 — stop and inspect |
 | S1 (TP3) → G1 | kΩ range (R60 + R59 = 30 kΩ, lower through unpowered ICs) — **not ≈ 0** | TP3 bridged to C56's GND pad |
 | S1 (TP3) → TP2 | **not ≈ 0** | 🔴 TP3 bridged to C56's +12 V pad — fix before power |
 | S2 (TP4) | inspect both sides with magnification: no solder outside the pad | a TP4-to-GND bridge reads ≈ 0.135 Ω, too close to a short for a DMM, and it would **blind the firmware's overcurrent check**, which reads this node |
 
-Not soldered: **VIR** (if needed) by DMM on J3 pin 1's screw; FLIR patches on Q9's tab and HS1
+Not soldered: **VIR** by DMM on J3 pin 1's **screw** → G1. 🔴 **Required before the first live
+pulse:** with the rail up (`on`), it must read **36 V, the same as C26**. On board 1 (2026-10-13)
+the screw read 7 V against 36 V at C26: a cold joint on J3 pin 1. The whole first staircase ran
+with no load, and the gate-0 Step 2 pulse proved nothing about Q9 with VIR applied. FLIR patches on Q9's tab and HS1
 (tape or paint) — do them in the same unpowered session.
 
 **TP4 = 135 mV/A** → 1.215 V at 9 A (0.61 V at 4.5 A single string, 2.43 V at 18 A). That is
@@ -761,8 +794,9 @@ U5 Q as digital timing, ground on an R66 lead.
 **With a TDS 1002 + Saleae Logic Pro 8 (2026-10-07 kit):** the scope's two channels are **CH1 TP4**
 and **CH2 TP3**; take the trigger from the GPIO25 wire on R33 into the scope's **EXT TRIG**
 (3.3 V logic, trigger level ~1.6 V). That keeps both channels for analog and triggers before the
-first edge. The Saleae keeps **GPIO25 (R33) and U5 Q (R61)** as digital timing. Optionally put a
-third Saleae channel, in analog, on **TP4** too: a 12-bit record of every firing to set against
+first edge. The Saleae keeps **GPIO25 (R33) and U5 Q (R61)** as digital timing. Put a
+third Saleae channel, in analog, on **TP4** too — **required with this kit for Step 5**: the
+TDS's 2500-point record over a 21 ms burst is 10 µs per sample, too coarse for a 20 µs plateau: a 12-bit record of every firing to set against
 ADC0 and `strobe wave` — with that channel's ground lead on an R66 ground wire as well, or it sees
 the same boost pickup. Attach everything **unpowered**; every instrument ground goes to the **R66
 GND pad wires** (never TP5), with the ground leads wrapped back along the probe bodies.
@@ -778,6 +812,33 @@ strobe
 |---|---|
 | `id` → the 6c `fw` line and the new `built` stamp | ✅ right image |
 | `strobe` → `strobe   : DRY.` … `GPIO27 … U5 pulse limiter armed`, `A7 … on SIO`, `limits   : … U5 clamp <= 137 us (board 1 measured 135)`, `live     : OFF -- last ended: not armed since boot`, `may arm  : yes …` | ✅ all present; ❌ any `***` line — stop |
+
+**ADC0 at rest, and the BURST ring's start (added 2026-10-12)** — the live interlock judges
+"current before the pulse" from ADC0's absolute level, and reads it from a ring that is switched
+to BURST just before each firing. Prove both first, dry, gate 0:
+
+```
+adc 0 4096
+adc ringtest 5
+adc ringtest 100
+```
+
+**Pass:**
+- `ch0 = ` **< 10 codes** (< 8 mV at the pin, < 60 mA). ❌ Anything higher: stop. GPIO40 is not
+  seeing TP4 (R32 4k7 is the only path).
+- `adc ringtest 5`: `written at` shows **2 µs per sample** (`+400:200`, `+800:400`); 4 µs
+  per sample means the ADC is at half rate (the `13:55:58` image and earlier). Every run's
+  `100 written` time is about 200 µs, well inside the 5000 µs the live path allows, and its `first … samples` are all ~10 codes (ADC0 at 0 A). Both its pairs, `warm
+  cache` and `cold cache`, read **`covered`**: ~125 samples, brackets ≤ 40 cycles, residual
+  inside the printed window.
+- `adc ringtest 100` (summary only): **`PASS: every pair covered.`** Record the widest
+  bracket and the residual range. They are the measured margins the live check relies on.
+- ❌ Any `NOT COVERED` or `FAIL`: stop and send the output. Every live readback in those
+  conditions would be NO USABLE DATA.
+- Send the output either way: the first-sample time is the measurement of the late start seen on
+  board 1 (`PROGRESS.md` §6 2026-10-12).
+- ❌ `NEVER`, or samples like 2055 / 3038 (the IDLE channels): stop. Live firings would all be
+  refused.
 
 Now prove the arming guard and the CLI lock **before** anything can conduct:
 
@@ -816,13 +877,34 @@ last     : LIVE 1 x 20 us -- completed, IRQ0 seen
            ...
 ADC0     : ~200 samples at 500 ksps, 76 before the edge; baseline <10 codes
            (<0.06 A); threshold ... Verdict: within limits
+           ring: first sample +.. us, 100 ready +... us after the switch;
+           enable->post: ~125 samples, ~37500 cycles, brackets ../.. (<= 40), residual +..
+             vs 300/sample, window +-..: covered
+           baseline split by clock ~76, by DMA count ~78 (the smaller is used,
+           >= 50 needed)
            no current above the ~72 mA detection floor
 ```
-**Pass:** verdict `within limits`, `no current above`; **TP4 flat (< 10 mV)** on the scope. TP3 shows
+**Pass:** verdict `within limits`, `no current above`; `covered`; the two splits within a few
+samples of each other; **TP4 flat (< 10 mV)** on the scope; `strobe wave` all ~10 codes, start to end (no
+2055 / 3038 — the IDLE channels). TP3 shows
 only the ±0.3–0.4 V edge coupling already recorded in 6b. ❌ Any current at gate 0 → `strobe live
 off`, `off`, and stop: Q9 is conducting with its gate at 0 V.
 
 ### Step 3 — the staircase: one 20 µs pulse per 3 % step
+
+> 🔴 **Board 1, 2026-10-13: Step 3 STOPPED at gate 24 %.**
+> - The current overshoots at turn-on: **3.3 A for ~2.5 µs on a 0.72 A setting**. The gate drive
+>   lets Q9's gate float up for microseconds at turn-on (`NEXT_BOARD_REV.md` CR-23).
+> - ADC0's half-peak readback reported that pulse as "no current" (`PROGRESS.md` §9).
+> - **Do not resume Step 3 on any board until both are fixed.**
+> - The analysed fix and the board-1 rework (1 µF at Q9's gate, behind R63; never at TP3)
+>   are in `NEXT_BOARD_REV.md` CR-23.
+> - ✅ **Board 1, 2026-10-15:** the rework is fitted and verified. At 24 % the current is flat
+>   at 0.69-0.71 A from 0.1 µs, against a 3.3 A spike before.
+>   - Step 3 resumes on board 1 up to 24 %, and 6d runs there (✅ 6d PASS 2026-10-15, below).
+>   - **Above 24 %** waits for the readback fix. Other boards need the same rework first.
+> - Stop rule until then: stop at any turn-on peak above 2× the settled current, or above
+>   2 A, on the Saleae or the scope. ADC0's summary line cannot be trusted for this.
 
 ```
 strobe gate 3
@@ -845,6 +927,13 @@ Each `strobe pulse 20` prints the plateau and the TP4 voltage to expect for it:
 ~10–20 %, plus the source drop. After that, current rises by **at most ~1.8 A per 3 % step** (the
 guards assume ≤ ~6 A per volt at TP3; less is normal). On-time **20 µs ± 2 µs** (2 µs samples).
 
+**TP3 after each pulse:** Q10's turn-off kicks TP3 for ≈ 5 µs after the pulse ends: −0.3 to
+−0.4 V at gate 0 (6b), and **+0.1–0.2 V once TP3 sits at a setpoint** (board 1, gate 3,
+2026-10-12; `PROGRESS.md` §6). It is harmless while Q10 is off. Note its sign, size and recovery
+time in the table's notes column. **Stop** if it rings, if it has not recovered ~20 µs after the
+pulse, or if a similar upward kick appears at the **start** of the pulse. That last would show as
+a hump over the first ~5 µs of TP4's plateau.
+
 Record every step:
 
 | gate % | TP3 (V) | ADC0 plateau (A) | TP4 plateau (mV) | TP4 → A (÷ 135 mV) | on-time (µs) | notes |
@@ -856,6 +945,9 @@ holds its DC level through the pulse (any dip recovers within the pulse).
 
 🔴 **Stop the ramp at the first step that measures 0.5–2.5 A and run 6d there** (below), then
 come back. The clamp is proven with current at ~2 A before anything higher is fired.
+✅ **Board 1, 2026-10-15:** run at 24 % (0.70 A), the first level inside 0.5–2.5 A — PASS (6d
+below). It is not repeated at ~2 A: U5's clamp acts on Q10's gate drive and does not depend on
+the LED current, and 6d is a one-off.
 
 🔴 **Stop altogether** — `strobe live off`, then think — if: any `*** LIVE MODE ENDED ***`; ADC0
 and TP4 disagree outside the band above; the current **jumps by more than ~2 A** in one 3 % step;
@@ -925,13 +1017,18 @@ strobe wave
 | `strobe sched 10 fire` | 6 × 100 µs at 4267 µs (21.4 ms) — shed from 10 | 5.40 mC |
 
 Each prints every pulse's plateau and a `burst   : min … max … first -> last …` line. `strobe wave`
-dumps the last record (the 10 m/s burst) as `# capture … # end` CSV — keep the log; it is the
-plateau-across-a-burst evidence.
+dumps the last record (the 10 m/s burst) as `# capture … # end` CSV (~11 000 lines) — keep it; it
+is the plateau-across-a-burst evidence. Take it from the **scrollback**, with the line limit raised
+above that first: the Serial Monitor file log can reorder chunks (`HANDOFF.md` §4).
 
 **Pass:** no fault; every plateau within limits; ADC0 and TP4 agree on the first and last pulse;
-**record** the first → last change (the VIR bulk-cap droop — there is no design number yet, which
-is why it is measured here) and Q9's and HS1's temperature after each burst. HS1 must warm with
-Q9: a hot Q9 over a cold heatsink means TIM1 is not coupling.
+**record** the first → last change and Q9's and HS1's temperature after each burst. HS1 must warm
+with Q9: a hot Q9 over a cold heatsink means TIM1 is not coupling.
+
+⚠ **The first → last change is not the VIR droop** (corrected 2026-10-15). Q9 holds the current
+flat until its headroom runs out, so a flat plateau shows only that the margin was not used up,
+not how much was left. VIR itself is measured on the scope, before and during these bursts:
+`PROGRESS.md` §3 Q13.
 
 ### Step 6 — leave
 
@@ -1009,6 +1106,12 @@ last     : LIVE 1 x 1000 us -- completed, IRQ0 seen
 
 **Pass:** ADC0 on-time **≈ the U5 clamp** (135 µs on board 1, ± 2 µs sampling) and **TP4 on the
 scope shows the same width, not 1 ms**; the plateau matches the 20 µs pulse's; no fault.
+
+> ✅ **Board 1, 2026-10-15: PASS** at gate 24 % (`PROGRESS.md` §6).
+> - Firmware, two runs: `0.687 / 0.689 A plateau`, `on 134 us (67 samples)`, `within limits`.
+> - Scope (CSV): U5 Q high **134.98 µs**. TP4's current is **135.0 µs** wide at 0.70 A, with
+>   nothing after it to the end of the window (+360 µs).
+> - The plateau matches the 20 µs pulses' 0.682/0.684 A within 1 %.
 
 🔴 **If TP4 shows ~1 ms, or the firmware prints `*** LIVE MODE ENDED: CURRENT OUTSIDE THE PULSE ***`,
 stop immediately: `off`, power down.** The hardware clamp is not working, and every later step
@@ -1150,9 +1253,13 @@ firing at THIS gate level that measured 0.5-2.5 A`).
 - [x] **6c firmware change** — pulses with a setpoint, under guards; watchdog armed; ADC0 per
       firing — **written 2026-10-07** (LIVE mode: `strobe live on confirm`, staircase, ceiling,
       overcurrent and stuck-on faults, pacing, `strobe cal`, `strobe wave`; 78/78 host tests).
-      **Bench verification is the items below.**
+      **Bench verification is the items below.** **2026-10-12:** the first live pulse found the
+      stale-baseline readback bug; fix image `Oct 12 2026 14:43:50` (102/102), six review rounds and an ADC-rate bench fix,
+      flashed on board 1 2026-10-12.
 - [ ] First live pulses: gate 0 → no current; 3 % staircase with ADC0 and TP4 agreeing (6c Steps 1–3)
-- [ ] **6d: U5 clamps with current** — `strobe clamptest 1000` at ~2 A ends at the clamp on TP4
+- [x] **6d: U5 clamps with current** — `strobe clamptest 1000` at ~2 A ends at the clamp on TP4 —
+      **board 1, 2026-10-15, at 24 % (0.70 A):** U5 Q 134.98 µs, TP4 135.0 µs, ADC0 134 µs; no
+      current after it; no fault (`PROGRESS.md` §6).
 - [ ] Strobe current LUT built (`strobe cal 9` SOLVED, confirmation within 5 %), ADC0 agrees with TP4
 - [ ] Bursts at 9 A: plateau first → last recorded; no fault (6c Step 5)
 - [ ] TP3 steady with no ringing during bursts (6c Step 5). **Baseline at gate 0
@@ -1161,7 +1268,9 @@ firing at THIS gate level that measured 0.5-2.5 A`).
       Cgd → the shared Q9-source / Q10-drain node → Q9's large Cgs → TP3, with U7 (an unbiased
       push-pull follower) sitting in its crossover dead-band at 0 V, inside a slow LM358 loop. At
       a setpoint U7 conducts and should hold TP3 much more stiffly. **Compare against this in 6c,
-      on TP3 and TP4.**
+      on TP3 and TP4.** **6c, board 1, gate 3 (2026-10-12):** the post-pulse kick is
+      **+0.1–0.2 V**, with the same ≈ 5 µs recovery. The conducting NPN stops downward kicks only
+      (`PROGRESS.md` §6).
 - [ ] Q9 and HS1 thermals sane, heatsink demonstrably coupling
 - [ ] `PULSE_LIMIT_DISABLE` still 0, still with no CLI path
 
@@ -1188,7 +1297,9 @@ it and the failure is silent** — `adc_ring_view()` just returns false, the pas
 `ARCHITECTURE.md` **A9**.
 
 **6c's live mode (2026-10-07)** selects BURST around every live firing (160 µs before the edge
-to 200 µs after), freezes the ring, copies ch0 and returns to IDLE. It is a bench path, not
+to 200 µs after), freezes the ring, copies ch0 and returns to IDLE. Since the 2026-10-12 fix it
+first waits until the ring has actually written 100 ADC0 samples, and copies only what the
+DMA wrote (`ARCHITECTURE.md` A9). It is a bench path, not
 the firing sequencer: arming it **requires the detector disarmed**, so there is no detect or
 mic history to lose. Phase 7 wires the strobe into `shot.c`'s `SHOT_FIRING`, which is still
 the only place the production path may select BURST.

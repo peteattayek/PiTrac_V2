@@ -49,6 +49,7 @@ add_executable(pitrac
     src/main.c
     src/safe_state.c
     src/adc_engine.c
+    src/dma_safe.c
     src/power_fsm.c
     src/panel.c
     src/beam.c
@@ -84,6 +85,7 @@ target_link_libraries(pitrac
     hardware_watchdog
     hardware_pio
     hardware_flash
+    hardware_xip_cache   # adc ringtest: exercise the snapshot with a cold XIP cache
     pico_flash
 )
 

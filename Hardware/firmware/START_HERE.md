@@ -310,9 +310,8 @@ up once you're iterating; the buttons get old around the twentieth cycle.
 | `SETUP.md` | Toolchain detail and the manual install path |
 
 **Current status lives in `PROGRESS.md` §0 and the top block of §10** — not here, so this file
-does not go stale. As of 2026-10-06 **strobe 6a/6b have passed on board 1**, and the 6c/6d
-live-current firmware is written (2026-10-07 build) and the TP3 loop stability check passed
-(2026-10-08); the next work is 6c on board 1 — see `PROGRESS.md` §10. The results index for Phase 3 is
+does not go stale. As of 2026-10-15 **strobe 6a/6b and 6d have passed on board 1**, and 6c is
+in progress there (up to 24 %, after a gate-drive rework) — see `PROGRESS.md` §10. The results index for Phase 3 is
 in `PROGRESS.md` §5. Older history is in `PROGRESS_ARCHIVE.md`.
 
 🔵 **Bringing up a newly assembled board? Use `BRINGUP_NEW_BOARD.md`, not this document.**

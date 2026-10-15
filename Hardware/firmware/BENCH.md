@@ -450,17 +450,23 @@ watchdog kick). It does not communicate with the board.
 In CMake Tools, select `Hardware/firmware/tests` as source and `tests/build` as its
 separate build directory, use a **native compiler/generator** (Visual Studio 17 2022
 on this machine), select Release, build, then run CTest through CMake Tools.
-The **21 power tests** cover stale/redundant requests, cancellation/force-off precedence,
+The **28 power tests** cover stale/redundant requests, cancellation/force-off precedence,
 fresh starts, startup shutdown, button paths, fault recovery, supply guards, Pi
 timeout/pulse/hold-off behavior, and that every rail-down route stops the strobe before
-the latch drops. They keep checking for unintended latch rises for **6 s of simulated
+the latch drops, and that only a FRESH +5V_IN reading can close the latch or pass
+the rail check (a STALLED one trips the monitor; a NOT_SAMPLED one is never judged). They keep checking for unintended latch rises for **6 s of simulated
 time** after teardown and reject GPIO27 writes. The **16 strobe tests** cover the schedule
 (`BENCH_P6_STROBE.md` 6a.3) and both admission policies, including an exhaustive sweep of the
-live policy (16 inputs × gate and staircase levels). The **33 live tests** cover the ADC0
+live policy (16 inputs × gate and staircase levels). The **43 live tests** cover the ADC0
 verdicts (overcurrent, stuck-on, clamp width, more current pulses than fired), the
-baseline/pulse split against any freeze delay, the charge budget and the `strobe cal`
-loop against a model of Q9. The **8 service tests** cover aborts on the final yield slice and
-fault detection by generation. **78 in all.**
+baseline/pulse split against any freeze delay, the ring copy bounded by the DMA's own write
+count, the DMA-counted split, and the exact coverage check that not one ADC0 sample went
+missing during the firing (including the independent review's short-gap injections), with a
+replay of board 1's 2026-10-12 record. They also cover the charge budget and the
+`strobe cal` loop against a model of Q9. The **8 service tests** cover aborts on the final yield
+slice and fault detection by generation. The **6 ADC-ring tests** cover the +5V_IN reader's integrity checks (a FIFO
+overflow that rotates the round-robin, conversion-error samples, the in-flight newest group) and the ADC rate rule (DIV 0 at 500 ksps, never 1-95).
+**102 in all.**
 
 **Restore the firmware source directory, its original `build/`, Ninja generator and
 Release variant before building a UF2.** Host-test success is not physical rail proof.

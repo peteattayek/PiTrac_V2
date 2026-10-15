@@ -27,6 +27,7 @@ typedef enum {
     FAULT_STROBE_OVERCURRENT, // live strobe: a plateau over STROBE_LIVE_I_STOP_A
     FAULT_STROBE_CLAMP,       // live strobe: current outside the pulse, or on past the U5 clamp
     FAULT_INTERNAL,
+    FAULT_SUPPLY_UNREADABLE,  // +5V_IN could not be read FRESH when a power decision needed it
     FAULT__COUNT
 } fault_t;
 

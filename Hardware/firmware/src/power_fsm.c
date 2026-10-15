@@ -101,24 +101,40 @@ static bool take_long_press(void)  { bool e = s_evt_long_press;  s_evt_long_pres
 static uint32_t s_t_last_v5check;
 static uint32_t s_t_v5_low_since;
 static bool     s_v5_low;
+static bool     s_v5_unreadable;   // the reading that ended the debounce was not FRESH
 
 static void v5_monitor_reset(void) {
     s_v5_low = false;
+    s_v5_unreadable = false;
     s_t_last_v5check = now_ms();
 }
 
-// True once +5V_IN has been continuously below the threshold for the debounce
-// period. Rate-limited so we are not hammering the ADC from the superloop.
+// True once +5V_IN has been continuously below the threshold -- or continuously
+// UNREADABLE -- for the debounce period. Rate-limited so we are not hammering
+// the ADC from the superloop.
+//
+// Unreadable counts as low (independent review round 5, 2026-10-12): a STALLED
+// ring used to hand back stale samples as if fresh, which would have blinded
+// this monitor. NOT_SAMPLED is different -- the mode deliberately excludes ch1
+// (ARMED while the detector waits, BURST around a strobe firing) -- and leaves
+// the debounce exactly as it was: it neither starts nor clears it, and no old
+// value is ever judged. The gap that leaves while ARMED is a known limitation
+// (PROGRESS.md section 9).
 static bool supply_lost(void) {
     uint32_t t = now_ms();
     if (t - s_t_last_v5check < V5_MONITOR_INTERVAL_MS) return false;
     s_t_last_v5check = t;
 
-    if (adc_read_5vin_volts() < V5_MIN_SUSTAINED) {
+    float v = 0.0f;
+    adc_5vin_status_t s = adc_5vin_read(&v);
+    if (s == ADC_5VIN_NOT_SAMPLED) return false;
+    if (s != ADC_5VIN_FRESH || v < V5_MIN_SUSTAINED) {
+        s_v5_unreadable = (s != ADC_5VIN_FRESH);
         if (!s_v5_low) { s_v5_low = true; s_t_v5_low_since = t; return false; }
         return (t - s_t_v5_low_since) >= V5_LOW_DEBOUNCE_MS;
     }
     s_v5_low = false;   // recovered -- e.g. a strobe burst finished
+    s_v5_unreadable = false;
     return false;
 }
 
@@ -250,7 +266,7 @@ void power_fsm_step(void) {
                 // not on the table -- it would take 15 s of trying to run a Pi 5
                 // through a 1 A diode. Drop the latch now and make the reason
                 // legible instead of letting it brown out mysteriously.
-                fault_raise(FAULT_SUPPLY_LOST);
+                fault_raise(s_v5_unreadable ? FAULT_SUPPLY_UNREADABLE : FAULT_SUPPLY_LOST);
                 enter(PS_FORCE_OFF);
             }
             break;
@@ -269,7 +285,14 @@ void power_fsm_step(void) {
         // sits at ~4.6-4.7 V through D8, which is below the Pi 5's brownout
         // threshold AND below the boost's 4.74 V UVLO. Latching there browns
         // out everything. Firmware-enforced only -- there is no hardware interlock.
-        float v5 = adc_read_5vin_volts();
+        // Only a FRESH reading may close the latch: a stale or unavailable one
+        // proves nothing about the supply now.
+        float v5 = 0.0f;
+        if (adc_5vin_read(&v5) != ADC_5VIN_FRESH) {
+            fault_raise(FAULT_SUPPLY_UNREADABLE);
+            enter(PS_FAULT);
+            break;
+        }
         if (v5 < V5_MIN_FOR_LATCH) {
             fault_raise(FAULT_USB_POWER_ONLY);
             enter(PS_FAULT);
@@ -293,11 +316,18 @@ void power_fsm_step(void) {
         // Deliberately a much lower bar than V5_MIN_FOR_LATCH: the Pi and the
         // boost are drawing now, and a real supply is allowed to sag.
         //
-        // Once only, at the settle boundary. adc_read_avg() is blocking and
-        // tears down any free-running ADC mode (ARCHITECTURE.md A1), so it must
-        // not run on every superloop pass through this state.
+        // Once only, at the settle boundary: adc_5vin_read() waits ~1 ms for
+        // fresh ring samples, which is fine once but not on every superloop pass
+        // through this state. Unreadable is not "probably fine": FORCE_OFF.
         if (!s_rail_checked) {
-            if (adc_read_5vin_volts() < V5_MIN_UNDER_LOAD) {
+            float v5 = 0.0f;
+            adc_5vin_status_t s5 = adc_5vin_read(&v5);
+            if (s5 != ADC_5VIN_FRESH) {
+                fault_raise(FAULT_SUPPLY_UNREADABLE);
+                enter(PS_FORCE_OFF);
+                break;
+            }
+            if (v5 < V5_MIN_UNDER_LOAD) {
                 fault_raise(FAULT_RAIL_COLLAPSE);
                 enter(PS_FORCE_OFF);
                 break;
