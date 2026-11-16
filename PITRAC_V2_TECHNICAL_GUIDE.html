@@ -1,0 +1,2016 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 PiTrac contributors -->
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Next Gen PiTrac &mdash; Architecture, System Wiring &amp; Light-Sheet Trigger Theory Reference</title>
+  <style>
+    :root {
+      --bg: #0b101b;
+      --bg-elev: #11192b;
+      --bg-card: #151f35;
+      --bg-code: #0d1424;
+      --fg: #e6edf7;
+      --fg-muted: #9aa8c2;
+      --border: #263554;
+      --accent: #38bdf8;
+      --accent-2: #a78bfa;
+      --green: #34d399;
+      --amber: #fbbf24;
+      --red: #f87171;
+      --pink: #f472b6;
+      --shadow: 0 10px 28px rgba(0,0,0,0.38);
+    }
+    [data-theme="light"] {
+      --bg: #f6f8fc;
+      --bg-elev: #ffffff;
+      --bg-card: #ffffff;
+      --bg-code: #eef2f9;
+      --fg: #0f172a;
+      --fg-muted: #475569;
+      --border: #cbd5e1;
+      --accent: #0284c7;
+      --accent-2: #6d28d9;
+      --green: #059669;
+      --amber: #d97706;
+      --red: #dc2626;
+      --pink: #db2777;
+      --shadow: 0 6px 20px rgba(15,23,42,0.08);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    [id] { scroll-margin-top: 84px; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.62;
+      font-size: 15.5px;
+    }
+    code, pre, .mono { font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace; }
+    code {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      padding: 0.12em 0.4em;
+      border-radius: 5px;
+      font-size: 0.89em;
+      color: var(--accent);
+    }
+    pre {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      overflow-x: auto;
+      font-size: 0.86em;
+      line-height: 1.5;
+    }
+    pre code { background: none; border: none; padding: 0; color: var(--fg); }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(11, 16, 27, 0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 24px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    [data-theme="light"] .topbar { background: rgba(255, 255, 255, 0.94); }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.03rem; }
+    .brand-badge {
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+      font-size: 0.73rem;
+      font-weight: 800;
+      padding: 3px 9px;
+      border-radius: 999px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .part-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tab-btn {
+      background: transparent;
+      color: var(--fg-muted);
+      border: 1px solid var(--border);
+      padding: 6px 13px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      transition: all 0.15s ease;
+    }
+    .tab-btn:hover, .tab-btn.active {
+      color: var(--fg);
+      border-color: var(--accent);
+      background: rgba(56, 189, 248, 0.13);
+    }
+    .controls { display: flex; align-items: center; gap: 8px; }
+    .icon-btn {
+      background: var(--bg-card);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.83rem;
+      font-weight: 600;
+    }
+    .icon-btn:hover { border-color: var(--accent); }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr);
+      max-width: 1560px;
+      margin: 0 auto;
+    }
+    .sidebar {
+      position: sticky;
+      top: 57px;
+      height: calc(100vh - 57px);
+      overflow-y: auto;
+      padding: 20px 16px 40px 20px;
+      border-right: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+    .sidebar h4 {
+      margin: 18px 0 6px;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+    }
+    .sidebar h4:first-child { margin-top: 0; }
+    .sidebar a {
+      display: block;
+      color: var(--fg-muted);
+      text-decoration: none;
+      padding: 4px 8px;
+      border-radius: 6px;
+      line-height: 1.36;
+    }
+    .sidebar a:hover { color: var(--fg); background: rgba(56, 189, 248, 0.10); }
+
+    .content { padding: 32px 42px 80px; min-width: 0; }
+    .hero {
+      background: linear-gradient(135deg, rgba(56,189,248,0.12), rgba(167,139,250,0.10));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 26px 30px;
+      margin-bottom: 34px;
+      box-shadow: var(--shadow);
+    }
+    .hero h1 { margin: 0 0 10px; font-size: 1.95rem; letter-spacing: -0.02em; }
+    .hero p { margin: 0 0 18px; color: var(--fg-muted); max-width: 960px; }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      gap: 12px;
+    }
+    .kpi {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 12px 14px;
+    }
+    .kpi .val { font-size: 1.24rem; font-weight: 800; color: var(--accent); font-family: "Cascadia Code", Consolas, monospace; }
+    .kpi .lbl { font-size: 0.79rem; color: var(--fg-muted); margin-top: 2px; }
+
+    .doc-part { margin-bottom: 64px; }
+    .doc-part.hidden { display: none; }
+    .part-banner {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 12px;
+      margin: 12px 0 24px;
+    }
+    .part-num {
+      background: var(--accent);
+      color: #06101e;
+      font-weight: 800;
+      font-size: 0.8rem;
+      padding: 4px 11px;
+      border-radius: 7px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      white-space: nowrap;
+    }
+    .part-banner h2 { margin: 0; font-size: 1.62rem; letter-spacing: -0.015em; }
+
+    h3 {
+      margin: 32px 0 12px;
+      font-size: 1.22rem;
+      color: var(--fg);
+      border-left: 4px solid var(--accent);
+      padding-left: 12px;
+    }
+    h4 { margin: 20px 0 8px; font-size: 1.02rem; color: var(--fg); }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(295px, 1fr));
+      gap: 16px;
+      margin: 16px 0;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 17px 19px;
+      box-shadow: var(--shadow);
+    }
+    .card h4 { margin-top: 0; }
+    .tag {
+      display: inline-block;
+      font-size: 0.73rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-right: 6px;
+    }
+    .tag-v1 { background: rgba(248,113,113,0.16); color: var(--red); border: 1px solid rgba(248,113,113,0.35); }
+    .tag-v2 { background: rgba(52,211,153,0.16); color: var(--green); border: 1px solid rgba(52,211,153,0.35); }
+    .tag-warn { background: rgba(251,191,36,0.16); color: var(--amber); border: 1px solid rgba(251,191,36,0.4); }
+
+    .callout {
+      border-radius: 11px;
+      padding: 14px 18px;
+      margin: 16px 0;
+      border-left: 4px solid var(--accent);
+      background: var(--bg-card);
+      border-top: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .callout.danger { border-left-color: var(--red); background: rgba(248, 113, 113, 0.08); }
+    .callout.warn { border-left-color: var(--amber); background: rgba(251, 191, 36, 0.08); }
+    .callout.ok { border-left-color: var(--green); background: rgba(52, 211, 153, 0.08); }
+    .callout-title { font-weight: 700; margin-bottom: 5px; display: flex; align-items: center; gap: 8px; }
+
+    .table-wrap {
+      overflow-x: auto;
+      margin: 16px 0 22px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--bg-card);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.89rem; }
+    th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th {
+      background: var(--bg-elev);
+      font-weight: 700;
+      color: var(--accent);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(56, 189, 248, 0.04); }
+
+    .formula {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent-2);
+      border-radius: 10px;
+      padding: 13px 18px;
+      margin: 14px 0;
+      font-family: "Cambria Math", "STIX Two Math", Georgia, serif;
+      font-size: 1.06rem;
+      overflow-x: auto;
+    }
+    .formula .eq-note {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.83rem;
+      color: var(--fg-muted);
+      margin-top: 6px;
+    }
+
+    .figure-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin: 22px 0;
+      box-shadow: var(--shadow);
+    }
+    .figure-box svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+      background: #0c1322;
+    }
+    [data-theme="light"] .figure-box svg { background: #0f172a; }
+    .figcaption { margin-top: 10px; font-size: 0.84rem; color: var(--fg-muted); text-align: center; }
+
+    .sim-controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 14px;
+      padding: 14px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .sim-slider label { display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
+    .sim-slider input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .sim-readouts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .sim-stat { background: var(--bg-code); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+    .sim-stat .s-val { font-family: "Cascadia Code", Consolas, monospace; font-weight: 700; font-size: 0.98rem; }
+    .sim-stat .s-lbl { font-size: 0.75rem; color: var(--fg-muted); }
+
+    .checklist { list-style: none; padding-left: 0; }
+    .checklist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .checklist li:last-child { border-bottom: none; }
+    .checklist input[type="checkbox"] { margin-top: 4px; transform: scale(1.15); accent-color: var(--green); }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .topbar { position: relative; padding: 10px 16px; }
+      [id] { scroll-margin-top: 16px; }
+      .content { padding: 22px 18px 60px; }
+    }
+    @media print {
+      .topbar, .sidebar, .controls { display: none !important; }
+      .layout { display: block; }
+      .doc-part.hidden { display: block !important; }
+      body { background: #fff; color: #000; font-size: 12px; }
+      .card, .figure-box, .table-wrap { box-shadow: none; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-badge">Next Gen PiTrac</span>
+      <span>Hardware, System Wiring &amp; Light-Sheet Theory Reference</span>
+    </div>
+    <div class="part-tabs" role="tablist" aria-label="Document section filter">
+      <button class="tab-btn active" onclick="filterPart('all', this)">All 3 Docs</button>
+      <button class="tab-btn" onclick="filterPart('part-1', this)">I. Next Gen vs. Current</button>
+      <button class="tab-btn" onclick="filterPart('part-2', this)">II. Wiring &amp; Pinouts</button>
+      <button class="tab-btn" onclick="filterPart('part-3', this)">III. Light-Sheet Theory</button>
+    </div>
+    <div class="controls">
+      <button class="icon-btn" id="themeBtn" onclick="toggleTheme()">Light / Dark</button>
+      <button class="icon-btn" onclick="window.print()">Print / PDF</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar" aria-label="Table of contents">
+      <h4>Part I &middot; Next Gen vs. Current</h4>
+      <a href="#part-1" onclick="ensureVisible('part-1')">Overview &amp; Mirrored Architecture</a>
+      <a href="#p1-table" onclick="ensureVisible('part-1')">1.1 Side-by-Side Table</a>
+      <a href="#fig-strobe-power" onclick="ensureVisible('part-1')">5 V Brownout Protection</a>
+      <a href="#p1-highlights" onclick="ensureVisible('part-1')">1.2 Nine Core Upgrades</a>
+
+      <h4>Part II &middot; System Wiring</h4>
+      <a href="#part-2" onclick="ensureVisible('part-2')">2.1 Safety Rules</a>
+      <a href="#fig-full-wiring" onclick="ensureVisible('part-2')">2.2 Full Harness Schematic</a>
+      <a href="#p2-psu-irled" onclick="ensureVisible('part-2')">2.3 PSU (J1), Panel (J7) &amp; IRLED2 (J3)</a>
+      <a href="#p2-pi5" onclick="ensureVisible('part-2')">2.4 Raspberry Pi 5 (J8 + CSI)</a>
+      <a href="#p2-cameras" onclick="ensureVisible('part-2')">2.5 Mira220 + TXS0108E (J4 + J5.2)</a>
+      <a href="#p2-mics" onclick="ensureVisible('part-2')">2.6 Digital Mic: I2S &amp; PDM (J5)</a>
+      <a href="#p2-checklist" onclick="ensureVisible('part-2')">2.7 Pre-Power Checklist</a>
+
+      <h4>Part III &middot; Light-Sheet Theory</h4>
+      <a href="#part-3" onclick="ensureVisible('part-3')">3.1 Why Modulated IR?</a>
+      <a href="#p3-geom" onclick="ensureVisible('part-3')">3.2 Stereo Tower &amp; 8:7 FOV</a>
+      <a href="#p3-chain" onclick="ensureVisible('part-3')">3.3 End-to-End Analog Chain</a>
+      <a href="#p3-demod" onclick="ensureVisible('part-3')">3.4 Lock-In Demodulation &amp; Trapezoid</a>
+      <a href="#p3-hpf" onclick="ensureVisible('part-3')">3.5 LPF &amp; Gated Baseline HPF</a>
+      <a href="#p3-speed" onclick="ensureVisible('part-3')">3.6 Speed &amp; Interactive Simulator</a>
+      <a href="#p3-rev1" onclick="ensureVisible('part-3')">3.7 Hardware Bench Boundaries</a>
+    </nav>
+
+    <main class="content">
+      <div class="hero">
+        <h1>Next Gen PiTrac &mdash; Technical Reference Manual</h1>
+        <p>
+          Unified visual engineering guide for the <strong>Next Gen PiTrac</strong> RP2354B controller &amp; connector board:
+          consolidating the architectural comparison against <strong>Current PiTrac</strong>, netlist-verified pinout schematics for the
+          IRLED2 strobe array, Raspberry Pi 5, TXS0108E-translated Mira220 stereo cameras, and optional I&sup2;S / PDM digital microphones,
+          and the mathematical theory of the 104.17 kHz lock-in light-sheet trigger.
+        </p>
+        <div class="kpi-grid">
+          <div class="kpi"><div class="val">RP2354B</div><div class="lbl">150 MHz, 48 GPIO, 3 PIO / 12 SMs</div></div>
+          <div class="kpi"><div class="val">104.17 kHz</div><div class="lbl">Phase-Locked IR Carrier (~48 dB rej.)</div></div>
+          <div class="kpi"><div class="val">~31 &mu;s</div><div class="lbl">Optical Trigger Latency (Zero OS Jitter)</div></div>
+          <div class="kpi"><div class="val">9.0 A / 20 ns</div><div class="lbl">Cascode Strobe Sink + 500 ksps Sense</div></div>
+          <div class="kpi"><div class="val">2&times; Mira220</div><div class="lbl">Closed-Loop Single-Pi Stereo Sync</div></div>
+          <div class="kpi"><div class="val">5.20 V &rarr; J8</div><div class="lbl">Soft-Latch Power + UART A/B Rollback OTA</div></div>
+        </div>
+      </div>
+
+      <!-- ==================== PART I ==================== -->
+      <section id="part-1" class="doc-part">
+        <div class="part-banner">
+          <span class="part-num">Part I</span>
+          <h2>Next Gen PiTrac vs. Current PiTrac</h2>
+        </div>
+
+        <p>
+          <strong>Current PiTrac</strong> uses a <strong>passive, all-through-hole connector PCB</strong> with no onboard microcontroller, driven directly by Raspberry Pi 5 Linux userspace GPIO and SPI calls.
+          <strong>Next Gen PiTrac</strong> replaces that board with a <strong>turnkey SMD real-time controller &amp; connector board</strong>
+          built around an onboard <strong>Raspberry Pi RP2354B</strong> (<code>U3</code>), onto which the Raspberry Pi 5 mounts directly via 40-pin socket <code>J8</code>.
+        </p>
+
+        <div class="callout ok">
+          <div class="callout-title">Core Design Split</div>
+          <strong>"The RP2354 owns everything with microsecond timing. The Pi owns everything with pixels."</strong>
+          Inside the Next Gen firmware, <em>"the CPU orchestrates, hardware executes"</em>: carrier/demod clocks, ball-transit timing, dual-camera shutter handshaking, strobe pulse trains, and continuous ADC ring sampling run on dedicated PWM/PIO/DMA hardware state machines with zero OS or ISR jitter.
+        </div>
+
+        <!-- FIGURE 1.1: Mirrored Connector-Board-Centered Flow Schematics -->
+        <div class="figure-box" id="fig-arch-compare">
+          <svg viewBox="0 0 1120 562" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Mirrored architecture comparison with the Connector Board centered in both Current PiTrac and Next Gen PiTrac">
+            <defs>
+              <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8"/></marker>
+              <marker id="arr-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="#f87171"/></marker>
+              <marker id="arr-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="#34d399"/></marker>
+              <marker id="arr-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="#fbbf24"/></marker>
+              <marker id="arr-purple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="#a78bfa"/></marker>
+              <marker id="arr-mipi" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="4.2" markerHeight="4.2" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="#94a3b8"/></marker>
+            </defs>
+
+            <!-- Top Signal / Cable Legend Bar -->
+            <rect x="14" y="10" width="1092" height="30" rx="6" fill="#131c31" stroke="#263554"/>
+            <text x="28" y="29" fill="#cbd5e1" font-size="10.5" font-weight="700">SIGNAL KEY:</text>
+            <line x1="115" y1="25" x2="155" y2="25" stroke="#34d399" stroke-width="2.6"/>
+            <text x="163" y="29" fill="#6ee7b7" font-size="10.2" font-weight="600">Deterministic Hardware Timing / DC Power (Solid)</text>
+            <line x1="468" y1="25" x2="512" y2="25" stroke="#f87171" stroke-width="2.6" stroke-dasharray="2 5" stroke-linecap="round"/>
+            <text x="520" y="29" fill="#fca5a5" font-size="10.2" font-weight="600">Non-Deterministic Linux OS / Async Signal (Dotted)</text>
+            <line x1="836" y1="25" x2="880" y2="25" stroke="#94a3b8" stroke-width="5.5"/>
+            <text x="888" y="29" fill="#e2e8f0" font-size="10.2" font-weight="600">MIPI CSI-2 Ribbon (Thick)</text>
+
+            <g transform="translate(0, 36)">
+              <!-- ================= LEFT PANEL: CURRENT PITRAC ================= -->
+              <rect x="14" y="14" width="534" height="502" rx="12" fill="#131b2e" stroke="#472836" stroke-width="1.5"/>
+              <rect x="28" y="26" width="248" height="26" rx="6" fill="#3b1d2a"/>
+              <text x="42" y="44" fill="#f87171" font-size="13" font-weight="700">CURRENT PITRAC</text>
+
+              <!-- [Top-Left] Power Supply -->
+              <rect x="28" y="72" width="128" height="72" rx="8" fill="#1b2640" stroke="#64748b"/>
+              <text x="92" y="95" text-anchor="middle" fill="#e2e8f0" font-size="11.5" font-weight="700">5.0 V Power Supply</text>
+              <text x="92" y="112" text-anchor="middle" fill="#94a3b8" font-size="9.8">Meanwell LRS-75-5</text>
+              <text x="92" y="128" text-anchor="middle" fill="#f87171" font-size="9.5">Always live (no button)</text>
+
+              <!-- (No dedicated Shot Trigger block on Current PiTrac — triggering lives inside Bottom Cam + Pi 5!) -->
+
+              <!-- [CENTER] Current Connector Board -->
+              <rect x="190" y="72" width="182" height="156" rx="10" fill="#1d2238" stroke="#f87171" stroke-width="2"/>
+              <text x="281" y="94" text-anchor="middle" fill="#fca5a5" font-size="12.2" font-weight="800">Current Connector Board</text>
+              <text x="281" y="112" text-anchor="middle" fill="#cbd5e1" font-size="10">Through-Hole PCB &middot; No MCU</text>
+              <line x1="204" y1="121" x2="358" y2="121" stroke="#334155"/>
+              <text x="281" y="138" text-anchor="middle" fill="#94a3b8" font-size="9.8">MC33063: 36 V @ 0.1 A Boost</text>
+              <text x="281" y="154" text-anchor="middle" fill="#94a3b8" font-size="9.8">1&times; 330 &mu;F Cap &middot; No UVLO</text>
+              <text x="281" y="170" text-anchor="middle" fill="#94a3b8" font-size="9.8">8-bit SPI DAC (26 steps)</text>
+              <text x="281" y="186" text-anchor="middle" fill="#94a3b8" font-size="9.8">Pass-through SPI MOSI Gate</text>
+              <text x="281" y="204" text-anchor="middle" fill="#f87171" font-size="9.8" font-weight="700">No HW Pulse-Width Clamp</text>
+
+              <!-- [Bottom-Center] Raspberry Pi 5 -->
+              <rect x="190" y="276" width="182" height="108" rx="8" fill="#1e293b" stroke="#94a3b8" stroke-width="1.6"/>
+              <text x="281" y="297" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Raspberry Pi 5</text>
+              <text x="281" y="314" text-anchor="middle" fill="#fca5a5" font-size="9.8">Owns Vision + Real-Time:</text>
+              <text x="281" y="330" text-anchor="middle" fill="#cbd5e1" font-size="9.6">OpenCV polls 232 fps Tee Cam</text>
+              <text x="281" y="346" text-anchor="middle" fill="#cbd5e1" font-size="9.6">800 KB lgSpiWrite on MOSI</text>
+              <text x="281" y="362" text-anchor="middle" fill="#f87171" font-size="9.5">ms latency + Linux OS jitter</text>
+
+              <!-- [Top-Right] IRLED Strobe -->
+              <rect x="404" y="68" width="130" height="66" rx="8" fill="#1b2640" stroke="#f87171"/>
+              <text x="469" y="90" text-anchor="middle" fill="#fca5a5" font-size="11.2" font-weight="700">IRLED Strobe</text>
+              <text x="469" y="106" text-anchor="middle" fill="#94a3b8" font-size="9.6">~5 &mu;s SPI bit steps</text>
+              <text x="469" y="121" text-anchor="middle" fill="#94a3b8" font-size="9.6">Static Driver/Putter</text>
+
+              <!-- [Mid-Right] Top Camera -->
+              <rect x="404" y="152" width="130" height="72" rx="8" fill="#1b2640" stroke="#64748b"/>
+              <text x="469" y="173" text-anchor="middle" fill="#e2e8f0" font-size="11" font-weight="700">Top Cam (Flight)</text>
+              <text x="469" y="190" text-anchor="middle" fill="#f87171" font-size="9.6">Open-loop GPIO25</text>
+              <text x="469" y="206" text-anchor="middle" fill="#94a3b8" font-size="9.5">Bypasses board!</text>
+
+              <!-- [Bottom-Right] Bottom Camera (carries Shot Trigger role!) -->
+              <rect x="404" y="242" width="130" height="92" rx="8" fill="#1b2640" stroke="#fbbf24"/>
+              <text x="469" y="262" text-anchor="middle" fill="#e2e8f0" font-size="11" font-weight="700">Bottom Cam (Tee)</text>
+              <text x="469" y="278" text-anchor="middle" fill="#fde047" font-size="9.6" font-weight="700">Shot Trigger (232 fps)</text>
+              <text x="469" y="293" text-anchor="middle" fill="#94a3b8" font-size="9.3">Visible LED + OpenCV poll</text>
+              <text x="469" y="308" text-anchor="middle" fill="#f87171" font-size="9.3">(No pre-shot speed v;</text>
+              <text x="469" y="321" text-anchor="middle" fill="#f87171" font-size="9.3">not strobe-triggered)</text>
+
+              <!-- Current PiTrac Connections -->
+              <!-- DC Power (Solid) -->
+              <line x1="156" y1="108" x2="188" y2="108" stroke="#fbbf24" stroke-width="2.4" marker-end="url(#arr-amber)"/>
+              <line x1="248" y1="228" x2="248" y2="274" stroke="#fbbf24" stroke-width="2.4" marker-end="url(#arr-amber)"/>
+              <text x="241" y="255" text-anchor="end" fill="#fde68a" font-size="9.3">USB-C Pwr</text>
+
+              <!-- Non-Deterministic Linux SPI MOSI Strobe (DOTTED!) -->
+              <line x1="312" y1="276" x2="312" y2="230" stroke="#f87171" stroke-width="2.6" stroke-dasharray="2 5" stroke-linecap="round" marker-end="url(#arr-red)"/>
+              <text x="319" y="255" fill="#fca5a5" font-size="9.3">8p SPI MOSI</text>
+              <line x1="372" y1="101" x2="402" y2="101" stroke="#f87171" stroke-width="2.6" stroke-dasharray="2 5" stroke-linecap="round" marker-end="url(#arr-red)"/>
+
+              <!-- Non-Deterministic Pi GPIO25 bypassing board -> Top Cam (DOTTED!) -->
+              <path d="M 372 302 L 388 302 L 388 188 L 402 188" fill="none" stroke="#f87171" stroke-width="2.6" stroke-dasharray="2 5" stroke-linecap="round" marker-end="url(#arr-red)"/>
+
+              <!-- Thick Solid MIPI CSI-2 Ribbons from both cams -> Pi 5 -->
+              <path d="M 469 334 L 469 360 L 376 360" fill="none" stroke="#94a3b8" stroke-width="5" marker-end="url(#arr-mipi)"/>
+              <path d="M 534 188 L 542 188 L 542 376 L 376 376" fill="none" stroke="#94a3b8" stroke-width="5" marker-end="url(#arr-mipi)"/>
+              <text x="454" y="352" text-anchor="middle" fill="#cbd5e1" font-size="9.2" font-weight="700">2x MIPI CSI</text>
+
+              <rect x="28" y="416" width="506" height="86" rx="8" fill="#191624" stroke="#472836"/>
+              <text x="42" y="435" fill="#fca5a5" font-size="11" font-weight="700">Current PiTrac Architectural Limits:</text>
+              <text x="42" y="452" fill="#cbd5e1" font-size="10.2">&bull; Every trigger &amp; strobe signal is Linux-driven (dotted): ball moves ~halfway across FOV first</text>
+              <text x="42" y="469" fill="#cbd5e1" font-size="10.2">&bull; Tee Cam is tied up polling video, so single-Pi mode cannot trigger both cameras for stereo</text>
+              <text x="42" y="486" fill="#cbd5e1" font-size="10.2">&bull; USB-C cable drop + 0.1 A MC33063 boost (no UVLO) risks Pi 5 brownouts under load</text>
+
+              <!-- ================= RIGHT PANEL: NEXT GEN PITRAC (MIRRORED LAYOUT!) ================= -->
+              <rect x="572" y="14" width="534" height="502" rx="12" fill="#101d2c" stroke="#1e4e4a" stroke-width="1.5"/>
+              <rect x="586" y="26" width="265" height="26" rx="6" fill="#113835"/>
+              <text x="600" y="44" fill="#34d399" font-size="13" font-weight="700">NEXT GEN PITRAC</text>
+
+              <!-- [Top-Left] Power Supply (Mirrored!) -->
+              <rect x="586" y="72" width="128" height="72" rx="8" fill="#16283e" stroke="#34d399"/>
+              <text x="650" y="95" text-anchor="middle" fill="#e2e8f0" font-size="11.5" font-weight="700">5.20 V Power Supply</text>
+              <text x="650" y="112" text-anchor="middle" fill="#94a3b8" font-size="9.8">Meanwell LRS-75-5</text>
+              <text x="650" y="128" text-anchor="middle" fill="#34d399" font-size="9.5">+ Soft Power Button (J7)</text>
+
+              <!-- [Bottom-Left] Dedicated Hardware Shot Trigger -->
+              <rect x="586" y="186" width="128" height="96" rx="8" fill="#16283e" stroke="#38bdf8"/>
+              <text x="650" y="208" text-anchor="middle" fill="#7dd3fc" font-size="11.5" font-weight="700">Shot Trigger</text>
+              <text x="650" y="226" text-anchor="middle" fill="#34d399" font-size="9.8">104 kHz IR Light Sheet</text>
+              <text x="650" y="242" text-anchor="middle" fill="#cbd5e1" font-size="9.5">48 dB Lock-In Demod</text>
+              <text x="650" y="257" text-anchor="middle" fill="#a78bfa" font-size="9.5">+ MEMS &amp; J5 I2S/PDM Mic</text>
+              <text x="650" y="272" text-anchor="middle" fill="#34d399" font-size="9.5" font-weight="700">Measures Speed v Live!</text>
+
+              <!-- [CENTER] Next Gen Connector Board (Mirrored!) -->
+              <rect x="748" y="72" width="182" height="156" rx="10" fill="#152c44" stroke="#38bdf8" stroke-width="2.2"/>
+              <text x="839" y="94" text-anchor="middle" fill="#38bdf8" font-size="12.2" font-weight="800">Next Gen Connector Board</text>
+              <text x="839" y="112" text-anchor="middle" fill="#6ee7b7" font-size="10" font-weight="700">SMD PCB + RP2354B MCU</text>
+              <line x1="762" y1="121" x2="916" y2="121" stroke="#264366"/>
+              <text x="839" y="138" text-anchor="middle" fill="#e2e8f0" font-size="9.8">PIO0/1/2 + ENDLESS ADC DMA</text>
+              <text x="839" y="154" text-anchor="middle" fill="#e2e8f0" font-size="9.8">Q1/Q3 Soft-Latch (&le;3 m&Omega;)</text>
+              <text x="839" y="170" text-anchor="middle" fill="#fde68a" font-size="9.8">LM5157: 36 V @ 0.4 A + UVLO</text>
+              <text x="839" y="186" text-anchor="middle" fill="#e2e8f0" font-size="9.8">10b DAC + Q9/Q10 9 A Cascode</text>
+              <text x="839" y="204" text-anchor="middle" fill="#34d399" font-size="9.8" font-weight="700">U5 135 &mu;s HW Clamp + Sense</text>
+
+              <!-- [Bottom-Center] Raspberry Pi 5 (Mirrored!) -->
+              <rect x="748" y="276" width="182" height="108" rx="8" fill="#1e293b" stroke="#34d399" stroke-width="1.8"/>
+              <text x="839" y="297" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="700">Raspberry Pi 5</text>
+              <text x="839" y="314" text-anchor="middle" fill="#6ee7b7" font-size="9.8">Owns Pixels &amp; Vision ONLY:</text>
+              <text x="839" y="330" text-anchor="middle" fill="#cbd5e1" font-size="9.6">Direct 40-pin J8 (no USB-C)</text>
+              <text x="839" y="346" text-anchor="middle" fill="#cbd5e1" font-size="9.6">921.6k UART + Soft Shutdown</text>
+              <text x="839" y="362" text-anchor="middle" fill="#a78bfa" font-size="9.5">No USB needed (UART A/B OTA)</text>
+
+              <!-- [Top-Right] IRLED Strobe (Mirrored!) -->
+              <rect x="962" y="68" width="130" height="66" rx="8" fill="#16283e" stroke="#34d399"/>
+              <text x="1027" y="90" text-anchor="middle" fill="#6ee7b7" font-size="11.2" font-weight="700">IRLED Strobe</text>
+              <text x="1027" y="106" text-anchor="middle" fill="#cbd5e1" font-size="9.6">1 &mu;s PIO scaled to v</text>
+              <text x="1027" y="121" text-anchor="middle" fill="#34d399" font-size="9.6">500 ksps ADC0 sense</text>
+
+              <!-- [Mid-Right] Top Camera (Mirrored!) -->
+              <rect x="962" y="152" width="130" height="72" rx="8" fill="#16283e" stroke="#38bdf8"/>
+              <text x="1027" y="173" text-anchor="middle" fill="#7dd3fc" font-size="11" font-weight="700">Top Cam (Angled)</text>
+              <text x="1027" y="190" text-anchor="middle" fill="#34d399" font-size="9.6">Simultaneous J4 Trig</text>
+              <text x="1027" y="206" text-anchor="middle" fill="#cbd5e1" font-size="9.5">+ Strobe_1 closed-loop</text>
+
+              <!-- [Bottom-Right] Bottom Camera (Mirrored!) -->
+              <rect x="962" y="242" width="130" height="92" rx="8" fill="#16283e" stroke="#38bdf8"/>
+              <text x="1027" y="265" text-anchor="middle" fill="#7dd3fc" font-size="11" font-weight="700">Bottom Cam (Level)</text>
+              <text x="1027" y="284" text-anchor="middle" fill="#34d399" font-size="9.6">Simultaneous J4 Trig</text>
+              <text x="1027" y="302" text-anchor="middle" fill="#cbd5e1" font-size="9.5">+ Strobe_0 closed-loop</text>
+              <text x="1027" y="320" text-anchor="middle" fill="#6ee7b7" font-size="9.3">Full stereo on 1 Pi!</text>
+
+              <!-- Next Gen PiTrac Connections: ALL Real-Time Paths Are SOLID Deterministic Hardware! -->
+              <line x1="714" y1="108" x2="746" y2="108" stroke="#34d399" stroke-width="2.6" marker-end="url(#arr-green)"/>
+              <path d="M 714 224 L 732 224 L 732 190 L 746 190" fill="none" stroke="#38bdf8" stroke-width="2.6" marker-end="url(#arr-blue)"/>
+
+              <!-- Direct J8 +5V Power (Solid) + Non-real-time Async UART/GPIO (Dotted!) -->
+              <line x1="818" y1="228" x2="818" y2="274" stroke="#34d399" stroke-width="3" marker-end="url(#arr-green)"/>
+              <text x="810" y="255" text-anchor="end" fill="#6ee7b7" font-size="9.3" font-weight="700">J8 +5V</text>
+              <line x1="862" y1="274" x2="862" y2="230" stroke="#a78bfa" stroke-width="2.4" stroke-dasharray="2 5" stroke-linecap="round" marker-start="url(#arr-purple)" marker-end="url(#arr-purple)"/>
+              <text x="870" y="255" fill="#c4b5fd" font-size="9.2">Async UART</text>
+
+              <!-- Deterministic PIO -> IRLED + Both Cameras (SOLID!) -->
+              <line x1="930" y1="101" x2="960" y2="101" stroke="#34d399" stroke-width="2.6" marker-end="url(#arr-green)"/>
+              <line x1="930" y1="184" x2="960" y2="184" stroke="#38bdf8" stroke-width="2.5" marker-start="url(#arr-blue)" marker-end="url(#arr-blue)"/>
+              <path d="M 944 184 L 944 282 L 960 282" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arr-blue)"/>
+
+              <!-- Thick Solid MIPI CSI-2 Ribbons from both cameras -> Pi 5 -->
+              <path d="M 1027 334 L 1027 360 L 934 360" fill="none" stroke="#94a3b8" stroke-width="5" marker-end="url(#arr-mipi)"/>
+              <path d="M 1092 188 L 1100 188 L 1100 376 L 934 376" fill="none" stroke="#94a3b8" stroke-width="5" marker-end="url(#arr-mipi)"/>
+              <text x="1008" y="352" text-anchor="middle" fill="#cbd5e1" font-size="9.2" font-weight="700">2x MIPI CSI</text>
+
+              <rect x="586" y="416" width="506" height="86" rx="8" fill="#0d2329" stroke="#1e4e4a"/>
+              <text x="600" y="435" fill="#6ee7b7" font-size="11" font-weight="700">Next Gen PiTrac Architectural Wins:</text>
+              <text x="600" y="452" fill="#cbd5e1" font-size="10.2">&bull; Every trigger, camera handshake &amp; strobe path is deterministic PIO hardware (solid)</text>
+              <text x="600" y="469" fill="#cbd5e1" font-size="10.2">&bull; Linux sits completely off the critical loop (async UART report after capture finishes)</text>
+              <text x="600" y="486" fill="#cbd5e1" font-size="10.2">&bull; Direct J8 5.2 V soft-latch, 4.52 V boost UVLO, and USB-free UART A/B rollback updates</text>
+            </g>
+          </svg>
+          <div class="figcaption"><strong>Figure 1.1 &mdash; Mirrored Architecture Comparison:</strong> Solid lines denote deterministic hardware timing / DC power, dotted lines denote non-deterministic OS-scheduled or async paths, and thick bands denote MIPI CSI-2 camera ribbons.</div>
+        </div>
+
+        <h3 id="p1-table">1.1 Side-by-Side Technical Comparison</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Subsystem</th>
+                <th>Current PiTrac</th>
+                <th>Next Gen PiTrac</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>PCB &amp; Assembly</strong></td>
+                <td>DIY hand-soldered <strong>all-through-hole</strong> PCB (<code>DIP-8</code>, <code>TO-92</code>, axial) + 8-pin Pi jumper header (<code>J3</code>)</td>
+                <td>Turnkey <strong>JLCPCB SMD</strong> controller board; Pi 5 seats directly onto 40-pin socket <code>J8</code></td>
+              </tr>
+              <tr>
+                <td><strong>Timing Controller</strong></td>
+                <td><strong>None</strong> &mdash; Raspberry Pi 5 Linux userspace (<code>lgpio</code> + <code>spidev</code> in <code>pulse_strobe.cpp</code>)</td>
+                <td>Onboard <strong>RP2354B</strong> (<code>150 MHz</code> Cortex-M33, 3 PIO blocks / 12 SMs, 12 PWM slices, 16 DMA channels)</td>
+              </tr>
+              <tr>
+                <td><strong>Ball Trigger &amp; Speed</strong></td>
+                <td>Cam 1 free-runs at <code>232 fps</code>; OpenCV detects motion <em>after</em> ball leaves tee (no pre-shot speed)</td>
+                <td><strong>104.17 kHz modulated IR light curtain</strong> + synchronous lock-in demod + PIO transit timer measures speed <em>before</em> capture</td>
+              </tr>
+              <tr>
+                <td><strong>Audio Trigger</strong></td>
+                <td>None on V3 board (upstream <code>feature/pico</code> branch wires an external I&sup2;S mic)</td>
+                <td><strong>Onboard analog MEMS mic</strong> (<code>CMM-2718AT</code>, <code>250 ksps</code> on <code>ADC7</code>) <strong>+ <code>J5</code> digital I&sup2;S / PDM header</strong></td>
+              </tr>
+              <tr>
+                <td><strong>Stereo Cameras</strong></td>
+                <td>Single-Pi mode free-runs Cam 1 and triggers <strong>only Cam 2</strong> (<code>GPIO25</code>), open-loop; full stereo requires <strong>two Pi 5s</strong></td>
+                <td>Triggers <strong>both cameras simultaneously</strong> (<code>D_Cam_Trigger</code>) and waits in PIO1 for <strong>both</strong> <code>Cam_Strobe</code> feedbacks on <strong>one Pi 5</strong></td>
+              </tr>
+              <tr>
+                <td><strong>36 V Strobe Boost</strong></td>
+                <td><code>MC33063AP</code> (<code>36 V @ 0.1 A</code>), single <code>330 &mu;F</code> cap, no soft-start, no programmable UVLO</td>
+                <td><code>LM5157RTER</code> (<code>36 V @ 0.4 A</code>, ~1 MHz), <strong><code>2 &times; 330 &mu;F</code> + <code>8 &times; 2.2 &mu;F</code> MLCC bank</strong>, <code>~86 ms</code> soft-start, UVLO (<code>4.74 / 4.52 V</code>)</td>
+              </tr>
+              <tr>
+                <td><strong>Strobe Current Sink</strong></td>
+                <td><code>8-bit</code> <code>MCP4801</code> SPI DAC (<code>26</code> usable codes, <code>~0.38 A/step</code>) shifting an <code>LM317L</code> gate rail; pulsed into <code>IRLU024N</code> gate</td>
+                <td><code>10-bit</code> PWM DAC (<code>1024</code> levels) + &times;3 amp holding linear sink <strong><code>Q9</code></strong> steady (<code>1 &mu;F</code> gate-hold rework), switched by <code>12 V</code> series FET <strong><code>Q10</code></strong> (<code>~20 ns</code> rise)</td>
+              </tr>
+              <tr>
+                <td><strong>Strobe Pulse Timing</strong></td>
+                <td>Bit-banged <code>800 KB</code> buffer over Linux SPI <code>MOSI</code> (<code>~5 &mu;s</code> bit steps; drifts with Pi clock scaling); static Driver/Putter arrays</td>
+                <td><strong>PIO0 SM0 + DMA</strong> (<code>1.000 MHz</code> = exact <code>1 &mu;s</code> steps, <code>&lt; 0.1 &mu;s</code> edge accuracy); width &amp; gap computed per shot from measured ball speed</td>
+              </tr>
+              <tr>
+                <td><strong>Strobe Safety &amp; Sense</strong></td>
+                <td>Removed earlier 555 timer (no HW width clamp); slow SPI <code>MCP3202</code> ADC used only for static <code>DIAG</code> calibration</td>
+                <td>Hardware <strong><code>74LVC1G123</code> (<code>U5</code>) <code>~135 &mu;s</code> pulse clamp</strong> + <strong><code>500 ksps</code> <code>ADC0</code> DMA readback</strong> checking every pulse and latching faults</td>
+              </tr>
+              <tr>
+                <td><strong>Pi Power &amp; Shutdown</strong></td>
+                <td>Powered via external <strong>USB-C cable</strong> from V3 board (<code>J2</code>/<code>J5</code>); hard power-on/off with AC supply</td>
+                <td>Powered <strong>directly via 40-pin header <code>J8</code></strong> (<code>5.2 V</code> through <code>&le; 3 m&Omega;</code> <code>SI7137DP</code> soft-latch <code>Q3</code>); panel button runs clean <code>gpio-shutdown</code> + RO mount check</td>
+              </tr>
+              <tr>
+                <td><strong>MCU Link &amp; Updates</strong></td>
+                <td>N/A (or USB cable required for Pico add-on)</td>
+                <td><strong>Zero USB needed after initial setup</strong>: <code>921.6 kbaud</code> CRC-framed UART (<code>J8.8/10</code>) + <strong>RAM-staged A/B partition OTA updates</strong> from the Pi with hardware rollback</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="figure-box" id="fig-strobe-power">
+          <svg viewBox="0 0 1120 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="5V rail brownout protection thresholds comparing Next Gen PiTrac against Current PiTrac">
+            <rect x="16" y="14" width="1088" height="302" rx="10" fill="#111a2e" stroke="#263554"/>
+            <text x="36" y="40" fill="#38bdf8" font-size="14" font-weight="700">Why Next Gen PiTrac Resists Pi 5 Brownouts (5 V Rail &amp; Boost UVLO Coordination)</text>
+
+            <line x1="135" y1="62" x2="135" y2="296" stroke="#64748b" stroke-width="3.5"/>
+            <rect x="128" y="64" width="14" height="96" rx="3" fill="#34d399"/>
+            <rect x="128" y="160" width="14" height="54" rx="3" fill="#fbbf24"/>
+            <rect x="128" y="214" width="14" height="80" rx="3" fill="#f87171"/>
+
+            <line x1="120" y1="70" x2="154" y2="70" stroke="#34d399" stroke-width="2"/>
+            <text x="112" y="74" text-anchor="end" fill="#34d399" font-size="12" font-weight="700" font-family="Consolas, monospace">5.20 V</text>
+            <text x="166" y="74" fill="#e2e8f0" font-size="11.2"><tspan fill="#6ee7b7" font-weight="700">Next Gen Feed:</tspan> Meanwell PSU &rarr; J1 &rarr; two &le;3 m&Omega; SI7137DP P-FETs (Q1+Q3) straight into J8 pins 2 &amp; 4 (zero USB-C cable/connector IR drop)</text>
+
+            <line x1="120" y1="100" x2="154" y2="100" stroke="#34d399" stroke-width="1.5"/>
+            <text x="112" y="104" text-anchor="end" fill="#6ee7b7" font-size="11.5" font-family="Consolas, monospace">5.05 V</text>
+            <text x="166" y="104" fill="#cbd5e1" font-size="10.8"><tspan fill="#6ee7b7" font-weight="700">V5_MIN_FOR_LATCH:</tspan> Calibrated ADC1 guard blocks latching on weak USB bench power (~4.6&ndash;4.85 V) so Pi never draws through 1 A USB diode D8</text>
+
+            <line x1="120" y1="130" x2="154" y2="130" stroke="#38bdf8" stroke-width="1.5"/>
+            <text x="112" y="134" text-anchor="end" fill="#7dd3fc" font-size="11.5" font-family="Consolas, monospace">4.90 V</text>
+            <text x="166" y="134" fill="#cbd5e1" font-size="10.8"><tspan fill="#7dd3fc" font-weight="700">V5_MIN_SUSTAINED:</tspan> 500 ms debounce rides through brief millisecond strobe dips while catching real PSU loss cleanly</text>
+
+            <line x1="120" y1="160" x2="154" y2="160" stroke="#fbbf24" stroke-width="1.5"/>
+            <text x="112" y="164" text-anchor="end" fill="#fde68a" font-size="11.5" font-family="Consolas, monospace">4.74 V</text>
+            <text x="166" y="164" fill="#fde68a" font-size="10.8"><tspan fill="#fde68a" font-weight="700">LM5157 Boost UVLO Turn-ON</tspan> (+ ~86 ms C6 soft-start prevents 36 V charging inrush from slamming +5V during Pi boot)</text>
+
+            <line x1="120" y1="187" x2="154" y2="187" stroke="#fbbf24" stroke-width="1.5"/>
+            <text x="112" y="191" text-anchor="end" fill="#fbbf24" font-size="11.5" font-family="Consolas, monospace">4.64 V</text>
+            <text x="166" y="191" fill="#cbd5e1" font-size="10.8">Raspberry Pi 5 PMIC non-fatal undervoltage warning threshold</text>
+
+            <line x1="120" y1="215" x2="154" y2="215" stroke="#34d399" stroke-width="2.4"/>
+            <text x="112" y="219" text-anchor="end" fill="#34d399" font-size="12" font-weight="700" font-family="Consolas, monospace">4.52 V</text>
+            <text x="166" y="219" fill="#34d399" font-size="11.2" font-weight="700">Next Gen LM5157 UVLO Turn-OFF: 36 V boost disconnects itself automatically BEFORE the Pi 5 can crash!</text>
+
+            <line x1="120" y1="252" x2="154" y2="252" stroke="#f87171" stroke-width="2"/>
+            <text x="112" y="256" text-anchor="end" fill="#f87171" font-size="12" font-weight="700" font-family="Consolas, monospace">4.20 V</text>
+            <text x="166" y="256" fill="#fca5a5" font-size="11.2" font-weight="700">Raspberry Pi 5 PMIC FATAL brownout reset / crash threshold</text>
+
+            <line x1="120" y1="288" x2="154" y2="288" stroke="#f87171" stroke-dasharray="4 2" stroke-width="1.8"/>
+            <text x="112" y="292" text-anchor="end" fill="#f87171" font-size="11.5" font-family="Consolas, monospace">3.00 V</text>
+            <text x="166" y="292" fill="#f87171" font-size="10.8"><tspan font-weight="700">Current PiTrac MC33063 Min V_in:</tspan> No UVLO &mdash; keeps drawing peak inductor current + USB-C cable drop right through a 4.20 V Pi crash!</text>
+          </svg>
+          <div class="figcaption"><strong>Figure 1.2 &mdash; 5 V Rail &amp; Brownout Coordination:</strong> Next Gen PiTrac eliminates USB-C cable IR drop, soft-starts the 36 V boost, and brackets the <code>LM5157</code> hardware UVLO (<code>4.74 / 4.52 V</code>) safely above the Pi 5's <code>4.20 V</code> fatal reset point.</div>
+        </div>
+
+        <h3 id="p1-highlights">1.2 Nine Core Improvements Explained</h3>
+        <div class="card-grid">
+          <div class="card">
+            <h4><span class="tag tag-v2">1 &middot; PIO + DMA</span> Deterministic Sub-&mu;s Triggering</h4>
+            <p>Current PiTrac polls <code>232 fps</code> Camera 1 frames in Linux OpenCV (ball moves halfway across FOV before strobing) and shifts <code>800 KB</code> SPI buffers whose rate drifts with Pi CPU clocks unless <code>force_turbo=1</code> is set. Next Gen PiTrac runs transit timing on <strong>PIO2</strong>, camera sync on <strong>PIO1</strong>, and strobe bursts on <strong>PIO0</strong> with cross-block <code>irq prev set 4</code> handoff and ~31 &mu;s analog latency.</p>
+          </div>
+          <div class="card">
+            <h4><span class="tag tag-v2">2 &middot; 104.17 kHz</span> Modulated IR Light-Sheet Trigger</h4>
+            <p>Replaces visible tee-lighting + video motion polling with a cylindrical IR light curtain (<code>D11</code> @ ~3 A peak) and <code>36 V</code> reverse-biased PIN photodiode <code>D12</code> + <code>2.27 Hz</code> DC servo + phase-locked synchronous demodulator (<code>~48 dB</code> 120 Hz rejection), measuring ball launch speed <em>before</em> capture.</p>
+          </div>
+          <div class="card">
+            <h4><span class="tag tag-v2">3 &middot; Acoustic</span> Onboard Analog + Digital Mic</h4>
+            <p>Adds an always-on <strong>onboard analog MEMS mic</strong> (<code>CMM-2718AT</code> + <code>LMV321</code> <code>2.4&ndash;24 kHz</code> band-pass, <code>250 ksps</code> on <code>ADC7</code>, <code>51&ndash;54 dB</code> SNR) for exact club-strike timestamping and practice-swing veto, plus header <code>J5</code> for an optional <strong>I&sup2;S or PDM digital mic</strong>.</p>
+          </div>
+          <div class="card">
+            <h4><span class="tag tag-v2">4 &middot; 9 A Cascode</span> Strobe Power, Speed &amp; Safety</h4>
+            <p>4&times; boost recharge (<code>0.4 A</code> <code>LM5157</code> vs. <code>0.1 A</code> <code>MC33063</code>), 2&times; bulk capacitance (<code>~660 &mu;F</code> + 8 MLCCs), pre-settled 10-bit linear sink <code>Q9</code> + <code>12 V</code> series switch <code>Q10</code> (<code>~20 ns</code> rise), dynamic per-shot blur scheduling (<code>w = 1 mm / v</code>), <code>500 ksps</code> <code>ADC0</code> current verification, and <code>U5</code> <code>~135 &mu;s</code> hardware clamp.</p>
+          </div>
+          <div class="card">
+            <h4><span class="tag tag-v2">5 &middot; Stereo</span> Closed-Loop Dual-Camera Triggering</h4>
+            <p>Single-Pi Current PiTrac ties up Cam 1 free-running and triggers only Cam 2 open-loop (requiring two Pi 5s for true stereo). Next Gen PiTrac puts <strong>both cameras in external-trigger mode on one Pi 5</strong>, asserting shared <code>D_Cam_Trigger</code> and waiting in PIO1 until both <code>Cam_Strobe_0/1</code> lines confirm exposure open in the same clock cycle.</p>
+          </div>
+          <div class="card">
+            <h4><span class="tag tag-v2">6 &middot; Soft Latch</span> Safe Pi 5 Power Button</h4>
+            <p>Always-on <code>+3V3</code> (<code>~32 mA</code>) powers the RP2354B while high-side P-FET <code>Q3</code> holds <code>+5V</code> off. Button press boots the Pi (if <code>+5V_IN &ge; 5.05 V</code>) or pulses <code>RPI5_SHUTDOWN</code> (<code>GPIO26</code>) low for <code>200 ms</code>, cutting <code>+5V</code> only after the Pi's shutdown hook verifies all block mounts are read-only (plus a 5 s force-off hold).</p>
+          </div>
+          <div class="card">
+            <h4><span class="tag tag-v2">7 &middot; No USB-C</span> Direct Header Power &amp; Brownout Guard</h4>
+            <p>Seats the Pi 5 directly onto <code>J8</code> and feeds <code>5.20 V</code> through two <code>&le; 3 m&Omega;</code> <code>SI7137DP</code> FETs (eliminating USB-C cable/connector drop), protected by <code>86 ms</code> boost soft-start, <code>4.52 V</code> boost UVLO load-shedding above the Pi's <code>4.2 V</code> crash point, and calibrated <code>ADC1</code> supply guards.</p>
+          </div>
+          <div class="card">
+            <h4><span class="tag tag-v2">8 &middot; Zero USB</span> Framed UART &amp; A/B Rollback OTA</h4>
+            <p>After one-time USB partition/calibration setup, runtime control and MCU updates run over <code>921.6 kbaud</code> CRC-16 UART (<code>J8.8/10</code>). <code>pitrac-link update</code> stages new firmware in <code>288 KB</code> RAM, cleanly shuts down the Pi, flashes the inactive A/B partition under the RP2350 boot ROM's <code>16.7 s</code> Try-Before-You-Buy watchdog, and auto-reboots the Pi.</p>
+          </div>
+          <div class="card">
+            <h4><span class="tag tag-v2">9 &middot; Ecosystem</span> Mira220 Raw V4L2 &amp; Open Licensing</h4>
+            <p>Evaluates <code>1600&times;1400</code> NIR-enhanced <strong>ams OSRAM Mira220</strong> &amp; <strong>IMX296</strong> over direct V4L2 / RP1 CFE raw capture with ChArUco distortion tools, ships 273 native C + cycle-accurate PIO host tests, and pairs <strong>CERN-OHL-S v2</strong> hardware licensing with <strong>GPL-3.0-or-later</strong> firmware/software.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== PART II ==================== -->
+      <section id="part-2" class="doc-part">
+        <div class="part-banner">
+          <span class="part-num">Part II</span>
+          <h2>System Wiring Diagram &amp; Netlist-Verified Pinout Guide</h2>
+        </div>
+
+        <div class="callout danger" id="p2-safety">
+          <div class="callout-title">Non-Negotiable Wiring &amp; Assembly Safety Rules</div>
+          1. <strong>Wire and re-seat ONLY while completely unpowered</strong> (both 5.2 V PSU on <code>J1</code> and USB-C on <code>J6</code> unplugged; wait for <code>36 V</code> <code>VIR</code> caps to discharge).<br/>
+          2. <strong>NEVER wire <code>J4</code> directly to a Mira220 camera.</strong> Mira220 digital I/O is strict <code>1.8 V</code> with zero <code>3.3 V</code> tolerance (<code>CR-09</code>). Always route through the <strong>HiLetgo <code>TXS0108E</code></strong> level converter.<br/>
+          3. <strong>Feed <code>TXS0108E</code> <code>VB</code> (<code>3.3 V</code>) from PCB <code>J5.2</code> (<code>+3.3VA</code>), NEVER from Mira220 <code>P1.2</code> (<code>3V3</code>).</strong> Leave camera <code>3V3</code> unconnected on both cameras so a powered MCU never back-feeds an unpowered camera.<br/>
+          4. <strong>Feed <code>TXS0108E</code> <code>VA + OE</code> from Camera 0 <code>P1.5</code> (<code>1V8</code>) ONLY (leave Camera 1 <code>P1.5</code> unconnected), and give each camera its own channel pair (<code>Ch 1&ndash;2</code> for Cam 0, <code>Ch 3&ndash;4</code> for Cam 1).</strong> Never short two camera LDOs together and never split one <code>A</code>-side pin across both cameras' <code>12 k&Omega;</code> <code>REQ EXP</code> pull-downs.<br/>
+          5. <strong>Leave the seated Raspberry Pi 5's own USB-C power port UNPLUGGED</strong>, and <strong>tape over <code>SW2</code> (<code>RUN</code> reset)</strong> so an MCU reset cannot hard-cut Pi power.<br/>
+          6. <strong><code>J3.2</code> (<code>VIR_RTN</code>) and <code>TP5</code> (<code>Strobe_GND</code>) are NOT ground</strong> &mdash; never tie them to <code>GND</code> or scope earth, and keep nothing conductive near <strong><code>D12</code> (<code>36 V</code> cathode)</strong>.
+        </div>
+
+        <!-- FIGURE 3.1: Master Full-System Harness SVG -->
+        <div class="figure-box" id="fig-full-wiring">
+          <svg viewBox="0 0 1160 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Master system wiring schematic connecting Next Gen PiTrac PCB to PSU, Panel, IRLED2 Strobe, Raspberry Pi 5, single HiLetgo TXS0108E 8-channel level converter, 2x Mira220 cameras, and optional J5 digital mic">
+            <!-- Wire Color Legend Bar -->
+            <rect x="16" y="12" width="1128" height="32" rx="6" fill="#131c31" stroke="#263554"/>
+            <text x="30" y="32" fill="#cbd5e1" font-size="10.5" font-weight="700">WIRE LEGEND:</text>
+            <line x1="125" y1="28" x2="155" y2="28" stroke="#ef4444" stroke-width="3"/><text x="161" y="32" fill="#fca5a5" font-size="10">+5.2V / +36V VIR</text>
+            <line x1="270" y1="28" x2="300" y2="28" stroke="#fb923c" stroke-width="3"/><text x="306" y="32" fill="#fdba74" font-size="10">+3.3VA (J5.2)</text>
+            <line x1="400" y1="28" x2="430" y2="28" stroke="#22d3ee" stroke-width="3"/><text x="436" y="32" fill="#67e8f9" font-size="10">1.8V (Cam 1V8)</text>
+            <line x1="538" y1="28" x2="568" y2="28" stroke="#facc15" stroke-width="2.5"/><text x="574" y="32" fill="#fde047" font-size="10">Trigger / Clock Out</text>
+            <line x1="695" y1="28" x2="725" y2="28" stroke="#34d399" stroke-width="2.5"/><text x="731" y="32" fill="#6ee7b7" font-size="10">Strobe / Data In</text>
+            <line x1="842" y1="28" x2="872" y2="28" stroke="#c084fc" stroke-width="3"/><text x="878" y="32" fill="#d8b4fe" font-size="10">VIR_RTN (Switched!)</text>
+            <line x1="1005" y1="28" x2="1035" y2="28" stroke="#94a3b8" stroke-width="5"/><text x="1041" y="32" fill="#cbd5e1" font-size="10">GND / MIPI CSI</text>
+
+            <!-- LEFT COLUMN: PSU, Panel, IRLED2 -->
+            <!-- Meanwell PSU -->
+            <rect x="20" y="64" width="215" height="96" rx="10" fill="#162238" stroke="#ef4444" stroke-width="1.5"/>
+            <text x="127" y="86" text-anchor="middle" fill="#fca5a5" font-size="12" font-weight="700">Meanwell LRS-75-5 PSU</text>
+            <text x="127" y="103" text-anchor="middle" fill="#fde68a" font-size="10">Trimmed to 5.20 V (&ge;5 A)</text>
+            <text x="222" y="126" text-anchor="end" fill="#fca5a5" font-size="10.5" font-weight="700">+V (5.20V)</text>
+            <text x="222" y="146" text-anchor="end" fill="#94a3b8" font-size="10.5" font-weight="700">-V (GND)</text>
+
+            <!-- IRLED2 Board -->
+            <rect x="20" y="188" width="215" height="114" rx="10" fill="#162238" stroke="#c084fc" stroke-width="1.5"/>
+            <text x="127" y="210" text-anchor="middle" fill="#e9d5ff" font-size="12" font-weight="700">IRLED2 Strobe Array PCB</text>
+            <text x="127" y="227" text-anchor="middle" fill="#94a3b8" font-size="10">2&times;5 VSMA1085400 (9 A Pulse)</text>
+            <text x="222" y="254" text-anchor="end" fill="#fca5a5" font-size="10.5" font-weight="700">VIR+ (Anodes)</text>
+            <text x="222" y="278" text-anchor="end" fill="#d8b4fe" font-size="10.5" font-weight="700">VIR- (Cathodes)</text>
+            <text x="127" y="295" text-anchor="middle" fill="#fbbf24" font-size="9.3">16-18 AWG Tightly Twisted Pair!</text>
+
+            <!-- Enclosure Panel -->
+            <rect x="20" y="330" width="215" height="128" rx="10" fill="#162238" stroke="#38bdf8" stroke-width="1.5"/>
+            <text x="127" y="352" text-anchor="middle" fill="#7dd3fc" font-size="12" font-weight="700">Enclosure Panel (Optional)</text>
+            <text x="222" y="374" text-anchor="end" fill="#fca5a5" font-size="10">Ring LED +</text>
+            <text x="222" y="390" text-anchor="end" fill="#7dd3fc" font-size="10">Ring LED &minus;</text>
+            <text x="222" y="406" text-anchor="end" fill="#fde047" font-size="10">Button NO</text>
+            <text x="222" y="422" text-anchor="end" fill="#94a3b8" font-size="10">Button GND</text>
+            <text x="222" y="438" text-anchor="end" fill="#fca5a5" font-size="10">Ready LED +</text>
+            <text x="222" y="452" text-anchor="end" fill="#6ee7b7" font-size="10">Ready LED &minus;</text>
+
+            <!-- Optional Digital Mic -->
+            <rect x="20" y="492" width="215" height="162" rx="10" fill="#162238" stroke="#34d399" stroke-width="1.5"/>
+            <text x="127" y="514" text-anchor="middle" fill="#6ee7b7" font-size="12" font-weight="700">Optional Digital Mic</text>
+            <text x="127" y="530" text-anchor="middle" fill="#94a3b8" font-size="9.8">3.3 V I2S or PDM Breakout</text>
+            <text x="222" y="554" text-anchor="end" fill="#fdba74" font-size="10" font-weight="700">3V / VDD</text>
+            <text x="222" y="574" text-anchor="end" fill="#6ee7b7" font-size="10" font-weight="700">DOUT / DAT</text>
+            <text x="222" y="594" text-anchor="end" fill="#fde047" font-size="10" font-weight="700">LRCLK / WS (I2S only)</text>
+            <text x="222" y="614" text-anchor="end" fill="#fde047" font-size="10" font-weight="700">BCLK / CLK</text>
+            <text x="222" y="634" text-anchor="end" fill="#94a3b8" font-size="10" font-weight="700">GND &amp; SEL (Left)</text>
+
+            <!-- CENTER COLUMN: NEXT GEN CONNECTOR PCB -->
+            <rect x="305" y="64" width="280" height="632" rx="14" fill="#102338" stroke="#38bdf8" stroke-width="2.5"/>
+            <text x="445" y="90" text-anchor="middle" fill="#38bdf8" font-size="14" font-weight="800">Next Gen Connector PCB</text>
+            <text x="445" y="107" text-anchor="middle" fill="#94a3b8" font-size="10">RP2354B Real-Time Controller Board</text>
+
+            <!-- J1 on PCB -->
+            <rect x="315" y="114" width="112" height="44" rx="5" fill="#182f49" stroke="#ef4444"/>
+            <text x="323" y="130" fill="#fca5a5" font-size="10" font-weight="700">J1.1 +VDC</text>
+            <text x="323" y="148" fill="#94a3b8" font-size="10" font-weight="700">J1.2 GND</text>
+
+            <!-- J2 Open Callout -->
+            <rect x="450" y="116" width="122" height="40" rx="5" fill="#2a1c24" stroke="#fbbf24" stroke-dasharray="3 2"/>
+            <text x="511" y="133" text-anchor="middle" fill="#fde68a" font-size="10" font-weight="700">J2 Bypass: OPEN</text>
+            <text x="511" y="148" text-anchor="middle" fill="#94a3b8" font-size="9">(No jumper installed)</text>
+
+            <!-- J3 on PCB -->
+            <rect x="315" y="236" width="122" height="54" rx="5" fill="#182f49" stroke="#c084fc"/>
+            <text x="323" y="255" fill="#fca5a5" font-size="10" font-weight="700">J3.1 VIR (+36V)</text>
+            <text x="323" y="279" fill="#d8b4fe" font-size="10" font-weight="700">J3.2 VIR_RTN</text>
+
+            <!-- SW2 Tape Warning -->
+            <rect x="450" y="238" width="122" height="50" rx="5" fill="#3b1d2a" stroke="#f87171"/>
+            <text x="511" y="258" text-anchor="middle" fill="#fca5a5" font-size="10" font-weight="700">SW2 (RUN): TAPED</text>
+            <text x="511" y="274" text-anchor="middle" fill="#cbd5e1" font-size="9">Reset cuts Pi +5V!</text>
+
+            <!-- J7 on PCB -->
+            <rect x="315" y="358" width="122" height="104" rx="5" fill="#182f49" stroke="#38bdf8"/>
+            <text x="323" y="374" fill="#fca5a5" font-size="9.5">J7.1 # +5V</text>
+            <text x="323" y="390" fill="#7dd3fc" font-size="9.5">J7.2 PWR_LED-</text>
+            <text x="323" y="406" fill="#fde047" font-size="9.5">J7.3 PWR_TOGGLE</text>
+            <text x="323" y="422" fill="#94a3b8" font-size="9.5">J7.4 GND</text>
+            <text x="323" y="438" fill="#fca5a5" font-size="9.5">J7.5 +5V</text>
+            <text x="323" y="454" fill="#6ee7b7" font-size="9.5">J7.6 RDY_LED-</text>
+
+            <!-- J8 Socket on PCB (Right-Top) -->
+            <rect x="448" y="310" width="128" height="132" rx="6" fill="#182f49" stroke="#34d399" stroke-width="1.8"/>
+            <text x="512" y="329" text-anchor="middle" fill="#6ee7b7" font-size="10.8" font-weight="700">J8 (2x20 Socket)</text>
+            <text x="512" y="346" text-anchor="middle" fill="#fca5a5" font-size="9.5">Pins 2,4: +5V Feed</text>
+            <text x="512" y="362" text-anchor="middle" fill="#cbd5e1" font-size="9.5">Pin 1: 3V3 Sense</text>
+            <text x="512" y="378" text-anchor="middle" fill="#7dd3fc" font-size="9.5">Pins 8,10: UART</text>
+            <text x="512" y="394" text-anchor="middle" fill="#6ee7b7" font-size="9.5">Pin 15: RPI5_ON</text>
+            <text x="512" y="410" text-anchor="middle" fill="#fde047" font-size="9.5">Pin 37: SHUTDOWN</text>
+            <text x="512" y="426" text-anchor="middle" fill="#94a3b8" font-size="9.5">Pins 11,13: IRQ/RDY</text>
+
+            <!-- J4 Camera Header on PCB (Right-Mid) -->
+            <rect x="448" y="462" width="128" height="130" rx="6" fill="#182f49" stroke="#facc15" stroke-width="1.6"/>
+            <text x="512" y="480" text-anchor="middle" fill="#fde047" font-size="10.8" font-weight="700">J4 (2x4 Cam, 3.3V)</text>
+            <text x="568" y="498" text-anchor="end" fill="#fde047" font-size="9.5">J4.3 Trig_0</text>
+            <text x="568" y="514" text-anchor="end" fill="#6ee7b7" font-size="9.5">J4.7 Strobe_0</text>
+            <text x="568" y="530" text-anchor="end" fill="#94a3b8" font-size="9.5">J4.1,5 GND</text>
+            <text x="568" y="550" text-anchor="end" fill="#fde047" font-size="9.5">J4.4 Trig_1</text>
+            <text x="568" y="566" text-anchor="end" fill="#6ee7b7" font-size="9.5">J4.8 Strobe_1</text>
+            <text x="568" y="582" text-anchor="end" fill="#94a3b8" font-size="9.5">J4.2,6 GND</text>
+
+            <!-- J5 Mic + 3.3VA Header on PCB (Bottom) -->
+            <rect x="315" y="534" width="122" height="118" rx="6" fill="#182f49" stroke="#fb923c" stroke-width="1.6"/>
+            <text x="376" y="550" text-anchor="middle" fill="#fdba74" font-size="10.5" font-weight="700">J5 (2x3 Header)</text>
+            <text x="323" y="568" fill="#fdba74" font-size="9.5" font-weight="700">J5.2 +3.3VA</text>
+            <text x="323" y="584" fill="#6ee7b7" font-size="9.5">J5.1 # D_DATA</text>
+            <text x="323" y="600" fill="#fde047" font-size="9.5">J5.3 D_WS</text>
+            <text x="323" y="616" fill="#fde047" font-size="9.5">J5.5 D_SCK</text>
+            <text x="323" y="634" fill="#94a3b8" font-size="9.5">J5.4,6 GND</text>
+
+            <text x="445" y="680" text-anchor="middle" fill="#64748b" font-size="9.5">J6 USB-C: Unplugged in normal play (bench CLI / setup only)</text>
+
+            <!-- LEFT-TO-PCB WIRES -->
+            <line x1="235" y1="122" x2="315" y2="126" stroke="#ef4444" stroke-width="3"/>
+            <line x1="235" y1="142" x2="315" y2="144" stroke="#94a3b8" stroke-width="3"/>
+
+            <line x1="235" y1="250" x2="315" y2="251" stroke="#ef4444" stroke-width="3"/>
+            <line x1="235" y1="274" x2="315" y2="275" stroke="#c084fc" stroke-width="3"/>
+
+            <line x1="235" y1="370" x2="315" y2="370" stroke="#ef4444" stroke-width="1.6"/>
+            <line x1="235" y1="386" x2="315" y2="386" stroke="#38bdf8" stroke-width="1.6"/>
+            <line x1="235" y1="402" x2="315" y2="402" stroke="#facc15" stroke-width="1.6"/>
+            <line x1="235" y1="418" x2="315" y2="418" stroke="#94a3b8" stroke-width="1.6"/>
+            <line x1="235" y1="434" x2="315" y2="434" stroke="#ef4444" stroke-width="1.6"/>
+            <line x1="235" y1="450" x2="315" y2="450" stroke="#34d399" stroke-width="1.6"/>
+
+            <line x1="235" y1="550" x2="315" y2="564" stroke="#fb923c" stroke-width="2.2"/>
+            <line x1="235" y1="570" x2="315" y2="581" stroke="#34d399" stroke-width="2"/>
+            <line x1="235" y1="590" x2="315" y2="597" stroke="#facc15" stroke-width="2" stroke-dasharray="4 2"/>
+            <line x1="235" y1="610" x2="315" y2="613" stroke="#facc15" stroke-width="2"/>
+            <line x1="235" y1="630" x2="315" y2="631" stroke="#94a3b8" stroke-width="2"/>
+
+            <!-- RIGHT COLUMN TOP: RASPBERRY PI 5 -->
+            <rect x="650" y="64" width="235" height="172" rx="12" fill="#172936" stroke="#34d399" stroke-width="2"/>
+            <text x="767" y="88" text-anchor="middle" fill="#6ee7b7" font-size="13" font-weight="800">Raspberry Pi 5</text>
+            <text x="767" y="106" text-anchor="middle" fill="#fca5a5" font-size="10" font-weight="700">Pi USB-C Port: UNPLUGGED!</text>
+            <text x="767" y="125" text-anchor="middle" fill="#cbd5e1" font-size="10">Plugs directly onto all 40 pins of J8</text>
+            <text x="767" y="143" text-anchor="middle" fill="#94a3b8" font-size="9.8">gpio-shutdown on GPIO26, uart0 on</text>
+            <rect x="668" y="160" width="198" height="28" rx="5" fill="#101c28" stroke="#64748b"/>
+            <text x="767" y="178" text-anchor="middle" fill="#7dd3fc" font-size="10" font-weight="700">CAM/DISP0 (22p) &amp; CAM/DISP1 (22p)</text>
+            <text x="767" y="222" text-anchor="middle" fill="#94a3b8" font-size="9.5">CSI ribbons carry 3.3V, GND, I2C &amp; MIPI</text>
+
+            <!-- Direct 40-pin bus J8 <-> Pi 5 -->
+            <path d="M 576 355 L 616 355 L 616 125 L 650 125" fill="none" stroke="#34d399" stroke-width="5"/>
+            <text x="603" y="245" text-anchor="middle" fill="#6ee7b7" font-size="10" font-weight="700" transform="rotate(-90 603 245)">Direct 2x20 Plug</text>
+
+            <!-- SINGLE HiLetgo TXS0108E (8-Ch Level Converter: Ch 1-4 Used) -->
+            <rect x="654" y="344" width="202" height="324" rx="10" fill="#16223d" stroke="#38bdf8" stroke-width="2"/>
+            <text x="755" y="365" text-anchor="middle" fill="#7dd3fc" font-size="11.8" font-weight="700">HiLetgo TXS0108E (1x)</text>
+            <text x="755" y="380" text-anchor="middle" fill="#94a3b8" font-size="9.3">8-Ch Shifter (Ch 1&ndash;4 Active)</text>
+
+            <!-- TXS0108E Left (3.3V B-Side) -->
+            <text x="665" y="400" fill="#fdba74" font-size="9.8" font-weight="700">VB (3.3V)</text>
+            <text x="665" y="422" fill="#fde047" font-size="9.8" font-weight="700">B1 (Trig_0)</text>
+            <text x="665" y="444" fill="#6ee7b7" font-size="9.8" font-weight="700">B2 (Str_0)</text>
+
+            <line x1="666" y1="498" x2="844" y2="498" stroke="#263554" stroke-dasharray="3 3"/>
+            <text x="755" y="516" text-anchor="middle" fill="#64748b" font-size="9.2">B5..B8 &amp; A5..A8 = NC (4 spare)</text>
+            <line x1="666" y1="528" x2="844" y2="528" stroke="#263554" stroke-dasharray="3 3"/>
+
+            <text x="665" y="598" fill="#fde047" font-size="9.8" font-weight="700">B3 (Trig_1)</text>
+            <text x="665" y="620" fill="#6ee7b7" font-size="9.8" font-weight="700">B4 (Str_1)</text>
+            <text x="665" y="644" fill="#94a3b8" font-size="9.8" font-weight="700">GND</text>
+
+            <!-- TXS0108E Right (1.8V A-Side) -->
+            <text x="845" y="400" text-anchor="end" fill="#67e8f9" font-size="9.8" font-weight="700">VA + OE</text>
+            <text x="845" y="422" text-anchor="end" fill="#fde047" font-size="9.8" font-weight="700">A1 (Cam 0)</text>
+            <text x="845" y="444" text-anchor="end" fill="#6ee7b7" font-size="9.8" font-weight="700">A2 (Cam 0)</text>
+
+            <text x="845" y="598" text-anchor="end" fill="#fde047" font-size="9.8" font-weight="700">A3 (Cam 1)</text>
+            <text x="845" y="620" text-anchor="end" fill="#6ee7b7" font-size="9.8" font-weight="700">A4 (Cam 1)</text>
+            <text x="845" y="644" text-anchor="end" fill="#94a3b8" font-size="9.8" font-weight="700">GND</text>
+
+            <!-- +3.3VA from J5.2 routed cleanly below J4 to Single TXS0108E VB -->
+            <path d="M 437 564 L 443 564 L 443 604 L 634 604 L 634 396 L 654 396" fill="none" stroke="#fb923c" stroke-width="2.5"/>
+
+            <!-- J4 <-> Single TXS0108E B1..B4 & GND Wires (Zero Splices on J4!) -->
+            <path d="M 576 494 L 608 494 L 608 418 L 654 418" fill="none" stroke="#facc15" stroke-width="2.2"/>
+            <path d="M 576 510 L 620 510 L 620 440 L 654 440" fill="none" stroke="#34d399" stroke-width="2.2"/>
+            <path d="M 576 546 L 616 546 L 616 594 L 654 594" fill="none" stroke="#facc15" stroke-width="2.2"/>
+            <path d="M 576 562 L 606 562 L 606 616 L 654 616" fill="none" stroke="#34d399" stroke-width="2.2"/>
+            <path d="M 576 578 L 596 578 L 596 640 L 654 640" fill="none" stroke="#94a3b8" stroke-width="2.2"/>
+
+            <!-- FAR RIGHT: MIRA220 CAM 0 & CAM 1 -->
+            <rect x="920" y="318" width="220" height="176" rx="10" fill="#132533" stroke="#22d3ee" stroke-width="1.8"/>
+            <text x="1030" y="339" text-anchor="middle" fill="#67e8f9" font-size="12" font-weight="700">Mira220 Cam 0 (V2.2)</text>
+            <text x="1030" y="355" text-anchor="middle" fill="#94a3b8" font-size="9.5">J1 (15p CSI) + P1 (1x9 Left Edge)</text>
+            <text x="932" y="400" fill="#67e8f9" font-size="10" font-weight="700">P1.5 1V8 (Feeds VA+OE)</text>
+            <text x="932" y="422" fill="#fde047" font-size="10" font-weight="700">P1.7 REQ EXP (Trig In)</text>
+            <text x="932" y="444" fill="#6ee7b7" font-size="10" font-weight="700">P1.6 ILLUM TRIG (Out)</text>
+            <text x="932" y="466" fill="#cbd5e1" font-size="10" font-weight="700">P1.1 # GND (Sq. Pad)</text>
+            <text x="932" y="485" fill="#f87171" font-size="9.6" font-weight="700">P1.2 3V3 = DO NOT WIRE!</text>
+
+            <rect x="920" y="514" width="220" height="176" rx="10" fill="#132533" stroke="#22d3ee" stroke-width="1.8"/>
+            <text x="1030" y="535" text-anchor="middle" fill="#67e8f9" font-size="12" font-weight="700">Mira220 Cam 1 (V2.2)</text>
+            <text x="1030" y="551" text-anchor="middle" fill="#94a3b8" font-size="9.5">J1 (15p CSI) + P1 (1x9 Left Edge)</text>
+            <text x="932" y="574" fill="#fbbf24" font-size="9.6" font-weight="700">P1.5 1V8 = LEAVE NC!</text>
+            <text x="932" y="598" fill="#fde047" font-size="10" font-weight="700">P1.7 REQ EXP (Trig In)</text>
+            <text x="932" y="620" fill="#6ee7b7" font-size="10" font-weight="700">P1.6 ILLUM TRIG (Out)</text>
+            <text x="932" y="644" fill="#cbd5e1" font-size="10" font-weight="700">P1.1 # GND (Sq. Pad)</text>
+            <text x="932" y="668" fill="#f87171" font-size="9.6" font-weight="700">P1.2 3V3 = DO NOT WIRE!</text>
+
+            <!-- Single TXS0108E <-> Mira220 Cam 0 & Cam 1 1.8V Wires -->
+            <line x1="856" y1="396" x2="920" y2="396" stroke="#22d3ee" stroke-width="2.5"/>
+            <line x1="856" y1="418" x2="920" y2="418" stroke="#facc15" stroke-width="2.2"/>
+            <line x1="856" y1="440" x2="920" y2="440" stroke="#34d399" stroke-width="2.2"/>
+
+            <line x1="856" y1="594" x2="920" y2="594" stroke="#facc15" stroke-width="2.2"/>
+            <line x1="856" y1="616" x2="920" y2="616" stroke="#34d399" stroke-width="2.2"/>
+
+            <!-- Common Ground Bus from TXS0108E / J4 to Both Cameras -->
+            <line x1="856" y1="640" x2="920" y2="640" stroke="#94a3b8" stroke-width="2.2"/>
+            <path d="M 888 640 L 888 462 L 920 462" fill="none" stroke="#94a3b8" stroke-width="2.2"/>
+            <circle cx="888" cy="640" r="3.5" fill="#94a3b8"/>
+
+            <!-- CSI Ribbon Cables from Pi 5 to Both Cameras (Thick Solid MIPI Ribbons) -->
+            <path d="M 885 170 L 1045 170 L 1045 318" fill="none" stroke="#94a3b8" stroke-width="5.2"/>
+            <path d="M 885 182 L 1125 182 L 1125 514" fill="none" stroke="#94a3b8" stroke-width="5.2"/>
+            <text x="1002" y="161" text-anchor="middle" fill="#cbd5e1" font-size="9.8" font-weight="700">2x 22p-to-15p MIPI CSI-2 Ribbons (Thick)</text>
+          </svg>
+          <div class="figcaption"><strong>Figure 2.1 &mdash; Master System Wiring Schematic:</strong> Complete harness showing power, strobe array, direct 40-pin Pi 5 interface, MIPI CSI-2 ribbons, single 8-channel <code>TXS0108E</code> 1.8 V camera translator (<code>Ch 1&ndash;4</code>), and optional <code>J5</code> digital microphone.</div>
+        </div>
+
+        <h3 id="p2-psu-irled">2.3 Main Power (<code>J1</code>), Panel Controls (<code>J7</code>) &amp; IRLED2 Strobe Bank (<code>J3</code>)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Connector &amp; Pin</th>
+                <th>PCB Net</th>
+                <th>Wire / Gauge</th>
+                <th>External Destination</th>
+                <th>Critical Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong><code>J1.1</code></strong></td>
+                <td><code>+VDC</code></td>
+                <td><code>14&ndash;16 AWG</code> Red (TP)</td>
+                <td>Meanwell <code>LRS-75-5</code> <strong><code>+V</code></strong></td>
+                <td>Adjust PSU trim pot to <strong><code>5.20 V</code></strong> on a DMM before landing (<code>&ge;5 A</code> limit with Pi)</td>
+              </tr>
+              <tr>
+                <td><strong><code>J1.2</code></strong></td>
+                <td><code>GND</code></td>
+                <td><code>14&ndash;16 AWG</code> Black (TP)</td>
+                <td>Meanwell <code>LRS-75-5</code> <strong><code>-V</code></strong></td>
+                <td>Main system power return</td>
+              </tr>
+              <tr>
+                <td><strong><code>J2.1 &ndash; J2.2</code></strong></td>
+                <td>Latch Bypass</td>
+                <td><strong>LEAVE OPEN</strong></td>
+                <td>None</td>
+                <td>Fitting a jumper forces <code>+5V</code> permanently ON (bench smoke-test only)</td>
+              </tr>
+              <tr>
+                <td><strong><code>J3.1</code></strong></td>
+                <td><code>VIR</code> (<code>+36 V</code>)</td>
+                <td><code>16&ndash;18 AWG</code> Red (tight TP)</td>
+                <td><code>IRLED2</code> <strong><code>VIR+</code></strong></td>
+                <td><code>36 V</code> boost rail; connect/disconnect only with PSU &amp; USB off and discharged</td>
+              </tr>
+              <tr>
+                <td><strong><code>J3.2</code></strong></td>
+                <td><code>VIR_RTN</code></td>
+                <td><code>16&ndash;18 AWG</code> Black (tight TP)</td>
+                <td><code>IRLED2</code> <strong><code>VIR-</code></strong></td>
+                <td><strong>Switched <code>Q9</code> drain return &mdash; NOT <code>GND</code>!</strong> Twist tightly with <code>J3.1</code> to cut inductive spikes</td>
+              </tr>
+              <tr>
+                <td><strong><code>J7.1 / J7.2</code></strong></td>
+                <td><code>+5V / PWR_LED-</code></td>
+                <td>22&ndash;26 AWG</td>
+                <td>Panel Ring LED (<code>+</code> / <code>-</code>)</td>
+                <td><code>J7.1</code> is square pad; series <code>R48</code> (<code>47 &Omega;</code>) is already on PCB</td>
+              </tr>
+              <tr>
+                <td><strong><code>J7.3 / J7.4</code></strong></td>
+                <td><code>PWR_TOGGLE / GND</code></td>
+                <td>22&ndash;26 AWG</td>
+                <td>Momentary NO Button</td>
+                <td>Short press = boot / clean Pi shutdown; 5 s hold = hard force-off</td>
+              </tr>
+              <tr>
+                <td><strong><code>J7.5 / J7.6</code></strong></td>
+                <td><code>+5V / RDY_LED-</code></td>
+                <td>22&ndash;26 AWG</td>
+                <td>Panel Ready LED (<code>+</code> / <code>-</code>)</td>
+                <td>Series <code>R49</code> (<code>220 &Omega;</code>) is already on PCB</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="p2-pi5">2.4 Raspberry Pi 5 Interface (<code>J8</code> 40-Pin Socket + Dual CSI Ribbons)</h3>
+        <p>
+          Seat the Raspberry Pi 5 directly onto all 40 pins of <code>J8</code> (Pin 1 aligned to square Pad 1; no loose jumper wires), keep the Pi's own USB-C unplugged, tape over <code>SW2</code>,
+          and connect <code>CAM/DISP0</code> and <code>CAM/DISP1</code> (`22-pin`, `0.5 mm`) to Mira220 <code>J1</code> (`15-pin`, `1.0 mm`) using Raspberry Pi 5 camera adapter FPC ribbons.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th><code>J8</code> Pin(s)</th>
+                <th>Pi 5 Function / BCM</th>
+                <th>Next Gen PCB Net &amp; RP2354B Pin</th>
+                <th>Role in System</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><strong><code>2, 4</code></strong></td><td><code>5V</code> Power In</td><td><code>+5V</code> (switched via <code>Q3</code>)</td><td>Sole <code>5.20 V</code> power feed to the Raspberry Pi 5</td></tr>
+              <tr><td><strong><code>6, 9, 14, 20, 25, 30, 34, 39</code></strong></td><td><code>GND</code></td><td><code>GND</code></td><td>Power and signal returns</td></tr>
+              <tr><td><strong><code>1</code></strong> <em>(<code>17</code> unrouted, CR-27)</em></td><td><code>3V3</code> Out</td><td><code>+3V3_Pi5</code> &rarr; <code>R45/R44</code> &rarr; <code>GPIO24</code></td><td>Pi 3.3 V presence sense ONLY (<strong>isolated from PCB <code>+3V3</code>!</strong>)</td></tr>
+              <tr><td><strong><code>8 / 10</code></strong></td><td><code>GPIO14 TXD0 / GPIO15 RXD0</code></td><td><code>GPIO37 RX / GPIO36 TX</code> (<code>220 &Omega;</code>)</td><td><code>921,600</code> baud CRC-16 framed UART (<code>pitrac-link</code> &amp; RAM-staged A/B OTA updates)</td></tr>
+              <tr><td><strong><code>15</code></strong></td><td><code>GPIO22</code></td><td><code>RPI5_ON</code> &rarr; <code>GPIO0</code> (<code>1 k&Omega;</code>)</td><td>High when userspace is up; dropped by shutdown hook only once all disks are read-only</td></tr>
+              <tr><td><strong><code>37</code></strong></td><td><code>GPIO26</code></td><td><code>RPI5_SHUTDOWN</code> &larr; <code>GPIO43</code> (<code>1 k&Omega;</code>)</td><td>Active-low <code>200 ms</code> shutdown request to <code>dtoverlay=gpio-shutdown</code></td></tr>
+              <tr><td><strong><code>11 / 13</code></strong></td><td><code>GPIO17 / GPIO27</code></td><td><code>IRQ_OUT (GPIO3) / System_Ready (GPIO2)</code></td><td>Shot capture-complete poke &amp; armed-state mirror (<code>16, 36</code> = spare handshakes; <code>18, 22</code> = SWD, leave unused)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="p2-cameras">2.5 Mira220 Cameras via HiLetgo <code>TXS0108E</code> Level Converter (<code>J4</code> + <code>J5.2</code>)</h3>
+
+        <div class="callout warn">
+          <div class="callout-title">Single 8-Channel <code>TXS0108E</code> Wiring Rules (<code>Ch 1&ndash;4</code> Used for Stereo Cameras)</div>
+          &bull; <strong>Dedicated channel per signal (4 of 8 channels used):</strong> Route Camera 0 on <strong><code>B1&rarr;A1</code></strong> (<code>REQ EXP</code>) and <strong><code>A2&rarr;B2</code></strong> (<code>ILLUM TRIG</code>), and Camera 1 on <strong><code>B3&rarr;A3</code></strong> (<code>REQ EXP</code>) and <strong><code>A4&rarr;B4</code></strong> (<code>ILLUM TRIG</code>). Each Mira220 has an onboard <code>R2 = 12 k&Omega;</code> pull-down on <code>REQ EXP</code>; giving each camera its own channel against <code>TXS0108E</code>'s internal <code>4 k&Omega;</code> pull-up yields a clean <code>1.35 V</code> HIGH plateau (<code>&gt;1.26 V VIH(min)</code>), whereas tying two cameras to a single <code>A</code> pin (<code>6 k&Omega;</code>) sags to <code>1.08 V</code> and fails.<br/>
+          &bull; <strong><code>VA + OE</code> from Camera 0 <code>P1.5</code> (<code>1V8</code>) ONLY:</strong> Never short Camera 0 <code>P1.5</code> and Camera 1 <code>P1.5</code> together (each is an independent <code>TCR2EF18LM</code> LDO output). Leave Camera 1 <code>P1.5</code> <strong>unconnected (<code>NC</code>)</strong>.<br/>
+          &bull; <strong>Open both cameras together in software:</strong> On the Mira220 board (<code>MIRA220CSP-Sheet1.SchDoc</code>), <code>1V8</code> is gated by sequencer <code>U4</code> (<code>LM3880</code>) from each CSI port's <code>CAM_ENABLE</code> line when <code>/dev/videoX</code> opens. Always open both cameras together for stereo capture so <code>VA</code> is powered and neither camera sits unpowered while <code>VA = 1.8 V</code>.
+        </div>
+
+        <div class="callout danger">
+          <div class="callout-title">Why <code>VB</code> (<code>3.3 V</code>) CANNOT Come from the Camera's <code>3V3</code> Pin (Separate <code>3.3 V</code> Domains!)</div>
+          <strong>The Raspberry Pi 5's <code>3V3</code> rail and the custom PCB's <code>+3V3</code> rail are NOT connected together</strong> (only <code>GND</code> is shared):<br/>
+          &bull; <strong>Custom PCB <code>+3V3</code> / <code>+3.3VA</code> (<code>J5.2</code>)</strong> comes from onboard LDO <code>U2</code> (<code>NCP1117-3.3</code>) off <strong>always-on <code>+5V_IN</code></strong> (ahead of latch <code>Q3</code>), so the RP2354B and its <code>J4</code> I/O pins are live at <code>3.3 V</code> even in <code>STANDBY</code> or <code>BENCH_RUNNING</code>.<br/>
+          &bull; <strong>Pi 5 <code>3V3</code> (<code>J8.1</code> <code>+3V3_Pi5</code>) &amp; Camera <code>P1.2</code> (<code>3V3</code> over CSI)</strong> come from the Pi 5's PMIC off <strong>switched <code>+5V</code></strong> (behind latch <code>Q3</code>). On <code>J8.1</code>, <code>+3V3_Pi5</code> feeds <em>only</em> a <code>110 k&Omega;</code> sense divider (<code>R45/R44</code> into <code>GPIO24</code>) &mdash; it never joins PCB <code>+3V3</code>!<br/>
+          &bull; Therefore, whenever the Pi/camera is off while the PCB is on, <strong>Camera <code>3V3</code> sits at <code>0 V</code> while PCB <code>J4</code> sits in a live <code>3.3 V</code> domain</strong>. Tying <code>TXS0108E</code> <code>VB</code> to Camera <code>3V3</code> violates TI's <code>VA &le; VB</code> power rule and allows a <code>3.3 V</code> high on <code>D_Cam_Trigger</code> (<code>R18 = 220 &Omega;</code>, up to <code>~12 mA</code>) to back-power the unpowered camera's <code>VDD33</code> rail and <code>LM3880</code> sequencer through the translator! Tying <code>VB</code> to PCB <code>J5.2</code> (<code>+3.3VA</code>) matches each side of the translator to the exact power domain of the pins connected to it.
+        </div>
+
+        <!-- FIGURE 3.2: Close-up Pin-Accurate J4 + Single TXS0108E + Mira220 P1 SVG -->
+        <div class="figure-box" id="fig-mira-pinout">
+          <svg viewBox="0 0 1120 390" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Pin-accurate close-up of Next Gen PCB J4 2x4 header, single HiLetgo TXS0108E 20-pin breakout using channels 1 to 4, and Mira220 P1 1x9 left-edge header">
+            <!-- Left: PCB J4 + J5.2 -->
+            <rect x="20" y="20" width="280" height="350" rx="10" fill="#111d30" stroke="#263554"/>
+            <text x="160" y="45" text-anchor="middle" fill="#fde047" font-size="12.5" font-weight="700">Next Gen PCB Headers (3.3 V)</text>
+
+            <!-- J4 2x4 Physical Pad Drawing -->
+            <text x="160" y="72" text-anchor="middle" fill="#cbd5e1" font-size="11" font-weight="700">J4 (2x4, 2.54 mm) &mdash; Top View</text>
+            <rect x="115" y="84" width="90" height="148" rx="6" fill="#1b2b44" stroke="#64748b"/>
+            <!-- Odd pads (left col) -->
+            <rect x="129" y="96" width="16" height="16" fill="#94a3b8"/> <!-- Pin 1 square! -->
+            <circle cx="137" cy="140" r="8" fill="#facc15"/>
+            <circle cx="137" cy="176" r="8" fill="#94a3b8"/>
+            <circle cx="137" cy="212" r="8" fill="#34d399"/>
+            <!-- Even pads (right col) -->
+            <circle cx="183" cy="104" r="8" fill="#94a3b8"/>
+            <circle cx="183" cy="140" r="8" fill="#facc15"/>
+            <circle cx="183" cy="176" r="8" fill="#94a3b8"/>
+            <circle cx="183" cy="212" r="8" fill="#34d399"/>
+
+            <text x="108" y="108" text-anchor="end" fill="#cbd5e1" font-size="10">GND (1 #)</text>
+            <text x="108" y="144" text-anchor="end" fill="#fde047" font-size="10" font-weight="700">Trig_0 (3)</text>
+            <text x="108" y="180" text-anchor="end" fill="#94a3b8" font-size="10">GND (5)</text>
+            <text x="108" y="216" text-anchor="end" fill="#6ee7b7" font-size="10" font-weight="700">Str_0 (7)</text>
+
+            <text x="212" y="108" fill="#cbd5e1" font-size="10">(2) GND</text>
+            <text x="212" y="144" fill="#fde047" font-size="10" font-weight="700">(4) Trig_1</text>
+            <text x="212" y="180" fill="#94a3b8" font-size="10">(6) GND</text>
+            <text x="212" y="216" fill="#6ee7b7" font-size="10" font-weight="700">(8) Str_1</text>
+
+            <!-- J5.2 Tap -->
+            <rect x="65" y="264" width="190" height="82" rx="6" fill="#1b2b44" stroke="#fb923c"/>
+            <text x="160" y="286" text-anchor="middle" fill="#fdba74" font-size="11" font-weight="700">3.3 V Supply Tap: J5 Pin 2</text>
+            <text x="160" y="305" text-anchor="middle" fill="#cbd5e1" font-size="10">J5.2 = +3.3VA (always-on)</text>
+            <text x="160" y="323" text-anchor="middle" fill="#94a3b8" font-size="9.5">Direct wire to TXS0108E VB</text>
+            <text x="160" y="339" text-anchor="middle" fill="#fca5a5" font-size="9.5">(J4 has no 3.3 V pin on current PCB)</text>
+
+            <!-- Middle: Single HiLetgo TXS0108E Module (Showing All 4 Camera Channels) -->
+            <rect x="355" y="20" width="350" height="350" rx="10" fill="#111d30" stroke="#38bdf8"/>
+            <text x="530" y="45" text-anchor="middle" fill="#7dd3fc" font-size="12.5" font-weight="700">Single HiLetgo TXS0108E (Ch 1&ndash;4 Active)</text>
+            <rect x="418" y="62" width="224" height="240" rx="8" fill="#153252" stroke="#38bdf8" stroke-width="2"/>
+            <text x="530" y="81" text-anchor="middle" fill="#e2e8f0" font-size="10.5" font-weight="700">TXS0108E Breakout (Top View)</text>
+
+            <!-- B-Row on Left here to face PCB, A-Row on Right to face Cameras -->
+            <text x="430" y="103" fill="#fdba74" font-size="9.8" font-weight="700">VB (3.3V)</text>
+            <text x="430" y="123" fill="#fde047" font-size="9.8" font-weight="700">B1 (J4.3)</text>
+            <text x="430" y="143" fill="#6ee7b7" font-size="9.8" font-weight="700">B2 (J4.7)</text>
+            <text x="430" y="165" fill="#fde047" font-size="9.8" font-weight="700">B3 (J4.4)</text>
+            <text x="430" y="185" fill="#6ee7b7" font-size="9.8" font-weight="700">B4 (J4.8)</text>
+            <text x="430" y="214" fill="#64748b" font-size="9.3">B5..B8 (NC)</text>
+            <text x="430" y="284" fill="#cbd5e1" font-size="9.8" font-weight="700">GND</text>
+
+            <text x="630" y="103" text-anchor="end" fill="#67e8f9" font-size="9.8" font-weight="700">VA (Cam0 1V8)</text>
+            <text x="630" y="123" text-anchor="end" fill="#fde047" font-size="9.8" font-weight="700">A1 (Cam0 P1.7)</text>
+            <text x="630" y="143" text-anchor="end" fill="#6ee7b7" font-size="9.8" font-weight="700">A2 (Cam0 P1.6)</text>
+            <text x="630" y="165" text-anchor="end" fill="#fde047" font-size="9.8" font-weight="700">A3 (Cam1 P1.7)</text>
+            <text x="630" y="185" text-anchor="end" fill="#6ee7b7" font-size="9.8" font-weight="700">A4 (Cam1 P1.6)</text>
+            <text x="630" y="214" text-anchor="end" fill="#64748b" font-size="9.3">(NC) A5..A8</text>
+            <text x="630" y="284" text-anchor="end" fill="#67e8f9" font-size="9.8" font-weight="700">OE (tie VA!)</text>
+
+            <!-- Jumper loop VA <-> OE -->
+            <path d="M 636 99 L 660 99 L 660 280 L 636 280" fill="none" stroke="#22d3ee" stroke-width="2.4"/>
+            <text x="666" y="195" fill="#67e8f9" font-size="9.5" font-weight="700" transform="rotate(90 666 195)">Jumper OE to VA</text>
+
+            <text x="530" y="324" text-anchor="middle" fill="#fde68a" font-size="10" font-weight="700">R2 = 12 k&Omega; Pull-Down Check:</text>
+            <text x="530" y="341" text-anchor="middle" fill="#cbd5e1" font-size="9.5">1 ch per cam (A1 &amp; A3): 4 k&Omega; vs 12 k&Omega; = 1.35 V (&gt;1.26 V VIH).</text>
+            <text x="530" y="356" text-anchor="middle" fill="#fca5a5" font-size="9.5">Never share A1 across both cams (6 k&Omega; &rArr; 1.08 V FAILS)!</text>
+
+            <!-- Right: Mira220 Front View P1 1x9 Header -->
+            <rect x="752" y="20" width="352" height="350" rx="10" fill="#111d30" stroke="#22d3ee"/>
+            <text x="928" y="45" text-anchor="middle" fill="#67e8f9" font-size="12.5" font-weight="700">Mira220 V2.2 Front View &mdash; Header P1</text>
+
+            <!-- Mira220 PCB Outline -->
+            <rect x="802" y="64" width="286" height="268" rx="8" fill="#0d2b3e" stroke="#38bdf8" stroke-width="1.5"/>
+            <rect x="1020" y="220" width="56" height="56" rx="4" fill="#1e293b" stroke="#94a3b8"/>
+            <text x="1048" y="246" text-anchor="middle" fill="#cbd5e1" font-size="8.8" font-weight="700">Mira220</text>
+            <text x="1048" y="259" text-anchor="middle" fill="#94a3b8" font-size="8">Sensor</text>
+
+            <!-- P1 9 Pads Top (9) to Bottom (1 Square) -->
+            <circle cx="822" cy="86" r="6" fill="#475569"/><text x="836" y="90" fill="#64748b" font-size="9.6">9: READ TRIG (NC)</text>
+            <circle cx="822" cy="112" r="6" fill="#475569"/><text x="836" y="116" fill="#94a3b8" font-size="9.6">8: REQ FRAME (NC*)</text>
+            <circle cx="822" cy="138" r="6" fill="#facc15"/><text x="836" y="142" fill="#fde047" font-size="9.6" font-weight="700">7: REQ EXP (A1 Cam0 / A3 Cam1)</text>
+            <circle cx="822" cy="164" r="6" fill="#34d399"/><text x="836" y="168" fill="#6ee7b7" font-size="9.6" font-weight="700">6: ILLUM TRIG (A2 Cam0 / A4 Cam1)</text>
+            <circle cx="822" cy="190" r="6" fill="#22d3ee"/><text x="836" y="194" fill="#67e8f9" font-size="9.6" font-weight="700">5: 1V8 (Cam0&rarr;VA; Cam1 NC!)</text>
+            <circle cx="822" cy="216" r="6" fill="#475569"/><text x="836" y="220" fill="#64748b" font-size="9.6">4: SCK (NC - on CSI)</text>
+            <circle cx="822" cy="242" r="6" fill="#475569"/><text x="836" y="246" fill="#64748b" font-size="9.6">3: SDA (NC - on CSI)</text>
+            <circle cx="822" cy="268" r="6" fill="#ef4444"/><text x="836" y="272" fill="#f87171" font-size="9.8" font-weight="700">2: 3V3 &mdash; LEAVE NC!</text>
+            <rect x="816" y="288" width="12" height="12" fill="#cbd5e1"/><text x="836" y="298" fill="#e2e8f0" font-size="9.8" font-weight="700">1: GND (Square Pad!)</text>
+
+            <text x="928" y="352" text-anchor="middle" fill="#94a3b8" font-size="9.5">Top 8-pin PicoBlade J2 lacks 1V8 &mdash; always wire to left 9-pin P1!</text>
+
+            <!-- Inter-box Representative Wires (Routed cleanly around J4 labels) -->
+            <path d="M 255 280 L 388 280 L 388 99 L 424 99" fill="none" stroke="#fb923c" stroke-width="2.3"/>
+            <path d="M 137 132 L 137 78 L 318 78 L 318 119 L 424 119" fill="none" stroke="#facc15" stroke-width="2" opacity="0.9"/>
+            <path d="M 268 140 L 330 140 L 330 161 L 424 161" fill="none" stroke="#facc15" stroke-width="1.9" stroke-dasharray="4 2" opacity="0.88"/>
+            <path d="M 137 220 L 137 244 L 338 244 L 338 139 L 424 139" fill="none" stroke="#34d399" stroke-width="2" opacity="0.9"/>
+            <path d="M 262 212 L 348 212 L 348 181 L 424 181" fill="none" stroke="#34d399" stroke-width="1.9" stroke-dasharray="4 2" opacity="0.88"/>
+
+            <path d="M 636 119 L 732 119 L 732 138 L 814 138" fill="none" stroke="#facc15" stroke-width="2.2"/>
+            <path d="M 636 139 L 718 139 L 718 164 L 814 164" fill="none" stroke="#34d399" stroke-width="2.2"/>
+            <path d="M 660 190 L 814 190" fill="none" stroke="#22d3ee" stroke-width="2.3"/>
+            <path d="M 424 284 L 398 284 L 398 312 L 738 312 L 738 294 L 814 294" fill="none" stroke="#94a3b8" stroke-width="2"/>
+          </svg>
+          <div class="figcaption"><strong>Figure 2.2 &mdash; Pin-Accurate Camera Level-Shifter Wiring:</strong> Physical pad orientation of <code>J4</code> (<code>2&times;4</code>), the single HiLetgo <code>TXS0108E</code> breakout (<code>Ch 1&ndash;4</code>), and Mira220 left-edge <code>1&times;9</code> header <code>P1</code> (with square <code>GND</code> Pad 1 at bottom-left).</div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Signal Path</th>
+                <th>Next Gen PCB Pin</th>
+                <th>Single <code>TXS0108E</code> Pin</th>
+                <th>Mira220 <code>P1</code> Pin (Silkscreen)</th>
+                <th>Direction &amp; Level</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>3.3 V High-Side Supply</strong></td><td><strong><code>J5.2</code></strong> (<code>+3.3VA</code>)</td><td><strong><code>VB</code></strong></td><td><em>None &mdash; leave both <code>P1.2</code> (<code>3V3</code>) <strong>NC</strong>!</em></td><td><code>3.3 V</code> Reference</td></tr>
+              <tr><td><strong>1.8 V Low-Side Supply &amp; Enable</strong></td><td><em>None</em></td><td><strong><code>VA</code></strong> + <strong><code>OE</code></strong> (jumpered)</td><td><strong>Cam 0 <code>P1.5</code> (<code>1V8</code>) ONLY</strong> <em>(leave Cam 1 <code>P1.5</code> <strong>NC</strong>!)</em></td><td><code>1.8 V</code> Reference</td></tr>
+              <tr><td><strong>Cam 0 &middot; Exposure Trigger</strong></td><td><strong><code>J4.3</code></strong> (<code>D_Cam_Trigger</code>)</td><td><strong><code>B1</code></strong> &rarr; <strong><code>A1</code></strong></td><td>Cam 0 <strong><code>P1.7</code></strong> (<code>REQ EXP</code>)*</td><td><code>3.3 V &rarr; 1.8 V</code></td></tr>
+              <tr><td><strong>Cam 0 &middot; Strobe Exposure Monitor</strong></td><td><strong><code>J4.7</code></strong> (<code>Cam_Strobe_0</code>)</td><td><strong><code>B2</code></strong> &larr; <strong><code>A2</code></strong></td><td>Cam 0 <strong><code>P1.6</code></strong> (<code>ILLUM TRIG</code>)</td><td><code>1.8 V &rarr; 3.3 V</code></td></tr>
+              <tr><td><strong>Cam 1 &middot; Exposure Trigger</strong></td><td><strong><code>J4.4</code></strong> (<code>D_Cam_Trigger</code>)</td><td><strong><code>B3</code></strong> &rarr; <strong><code>A3</code></strong></td><td>Cam 1 <strong><code>P1.7</code></strong> (<code>REQ EXP</code>)*</td><td><code>3.3 V &rarr; 1.8 V</code></td></tr>
+              <tr><td><strong>Cam 1 &middot; Strobe Exposure Monitor</strong></td><td><strong><code>J4.8</code></strong> (<code>Cam_Strobe_1</code>)</td><td><strong><code>B4</code></strong> &larr; <strong><code>A4</code></strong></td><td>Cam 1 <strong><code>P1.6</code></strong> (<code>ILLUM TRIG</code>)</td><td><code>1.8 V &rarr; 3.3 V</code></td></tr>
+              <tr><td><strong>Common Ground</strong></td><td><strong><code>J4.1, J4.2, J4.5</code></strong> (<code>GND</code>)</td><td><strong><code>GND</code></strong></td><td>Cam 0 <strong><code>P1.1</code></strong> + Cam 1 <strong><code>P1.1</code></strong> (<code>GND</code>, sq. pad)</td><td><code>0 V</code></td></tr>
+              <tr><td><strong>Unused Channels (<code>Ch 5&ndash;8</code>)</strong></td><td><em>None</em></td><td><code>B5..B8</code> &amp; <code>A5..A8</code> <strong><code>NC</code></strong></td><td><em>None</em></td><td>Internal pull-ups hold quiet</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="font-size:0.86rem; color:var(--fg-muted);">
+          *<em>Note:</em> Keep <code>TXS0108E</code> leads short (<code>&lt;10&ndash;15 cm</code>). For extra voltage margin against Mira220's onboard <code>R2 = 12 k&Omega;</code> pull-down on <code>REQ EXP</code> (raising HIGH plateau from <code>~1.35 V</code> to <code>~1.54 V</code>), spare channels <code>B5/A5</code> (with <code>B1/A1</code>) and <code>B6/A6</code> (with <code>B3/A3</code>) can optionally be bridged per camera. If your camera script configures sensor-timed frame triggers instead of pulse-width exposure triggers, move <code>A1</code>/<code>A3</code> from <code>P1.7</code> (<code>REQ EXP</code>) to <code>P1.8</code> (<code>REQ FRAME</code>).
+        </p>
+
+        <h3 id="p2-mics">2.6 Optional External Digital Microphone on <code>J5</code>: Both I&sup2;S and PDM</h3>
+        <p>
+          Next Gen PiTrac already carries an onboard analog MEMS microphone (<code>U16</code> on <code>ADC7</code>), so <code>J5</code> is optional.
+          <code>J5</code> connects directly to <code>3.3 V</code> MEMS microphone breakouts via <code>220 &Omega;</code> series resistors into RP2354B <code>PIO0 SM1</code> &mdash; <strong>no level converter is used on the microphone</strong>, and <code>J5.2</code> (<code>+3.3VA</code>) is simply Y-spliced with the <code>TXS0108E</code> <code>VB</code> feed.
+        </p>
+
+        <!-- FIGURE 3.3: Side-by-Side I2S vs PDM Wiring SVG -->
+        <div class="figure-box" id="fig-mic-wiring">
+          <svg viewBox="0 0 1120 310" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Left: J5 to 3-wire I2S digital microphone breakout. Right: J5 to 2-wire PDM digital microphone breakout">
+            <!-- Left: Option A - I2S -->
+            <rect x="16" y="16" width="530" height="278" rx="10" fill="#111d30" stroke="#34d399"/>
+            <text x="281" y="42" text-anchor="middle" fill="#6ee7b7" font-size="13" font-weight="700">Option A: 3-Wire I&sup2;S Digital Mic (SPH0645 / ICS-43434 / INMP441)</text>
+
+            <!-- J5 Box Left -->
+            <rect x="42" y="68" width="168" height="184" rx="8" fill="#182b44" stroke="#64748b"/>
+            <text x="126" y="88" text-anchor="middle" fill="#e2e8f0" font-size="11" font-weight="700">PCB J5 (2x3)</text>
+            <rect x="60" y="104" width="12" height="12" fill="#34d399"/><text x="80" y="114" fill="#6ee7b7" font-size="10">1 # D_DATA (GP6)</text>
+            <circle cx="66" cy="134" r="6" fill="#fb923c"/><text x="80" y="138" fill="#fdba74" font-size="10">2 +3.3VA (Y to VB)</text>
+            <circle cx="66" cy="158" r="6" fill="#facc15"/><text x="80" y="162" fill="#fde047" font-size="10">3 D_WS (GP5)</text>
+            <circle cx="66" cy="182" r="6" fill="#94a3b8"/><text x="80" y="186" fill="#cbd5e1" font-size="10">4 GND</text>
+            <circle cx="66" cy="206" r="6" fill="#facc15"/><text x="80" y="210" fill="#fde047" font-size="10">5 D_SCK (GP4)</text>
+            <circle cx="66" cy="230" r="6" fill="#94a3b8"/><text x="80" y="234" fill="#cbd5e1" font-size="10">6 GND</text>
+
+            <!-- I2S Mic Box -->
+            <rect x="336" y="68" width="184" height="184" rx="8" fill="#142d34" stroke="#34d399" stroke-width="1.8"/>
+            <text x="428" y="88" text-anchor="middle" fill="#6ee7b7" font-size="11" font-weight="700">I&sup2;S Mic Breakout</text>
+            <text x="350" y="114" fill="#6ee7b7" font-size="10" font-weight="700">DOUT / SD</text>
+            <text x="350" y="138" fill="#fdba74" font-size="10" font-weight="700">3V / VDD (3.3 V)</text>
+            <text x="350" y="162" fill="#fde047" font-size="10" font-weight="700">LRCL / WS (48 kHz)</text>
+            <text x="350" y="186" fill="#cbd5e1" font-size="10" font-weight="700">GND</text>
+            <text x="350" y="210" fill="#fde047" font-size="10" font-weight="700">BCLK / SCK (~3 MHz)</text>
+            <text x="350" y="234" fill="#cbd5e1" font-size="10" font-weight="700">SEL / L-R (Left = GND)</text>
+
+            <line x1="210" y1="110" x2="336" y2="110" stroke="#34d399" stroke-width="2.3"/>
+            <line x1="210" y1="134" x2="336" y2="134" stroke="#fb923c" stroke-width="2.3"/>
+            <line x1="210" y1="158" x2="336" y2="158" stroke="#facc15" stroke-width="2.3"/>
+            <line x1="210" y1="182" x2="336" y2="182" stroke="#94a3b8" stroke-width="2"/>
+            <line x1="210" y1="206" x2="336" y2="206" stroke="#facc15" stroke-width="2.3"/>
+            <line x1="210" y1="230" x2="336" y2="230" stroke="#94a3b8" stroke-width="2"/>
+            <text x="281" y="276" text-anchor="middle" fill="#94a3b8" font-size="10">All 6 pins of J5 used; synchronous 24-bit / 18-bit PCM audio</text>
+
+            <!-- Right: Option B - PDM -->
+            <rect x="564" y="16" width="540" height="278" rx="10" fill="#111d30" stroke="#a78bfa"/>
+            <text x="834" y="42" text-anchor="middle" fill="#c4b5fd" font-size="13" font-weight="700">Option B: 2-Wire PDM Digital Mic (MP34DT01-M / SPH0641 / IM69D130)</text>
+
+            <!-- J5 Box Right -->
+            <rect x="590" y="68" width="168" height="184" rx="8" fill="#182b44" stroke="#64748b"/>
+            <text x="674" y="88" text-anchor="middle" fill="#e2e8f0" font-size="11" font-weight="700">PCB J5 (2x3)</text>
+            <rect x="608" y="104" width="12" height="12" fill="#34d399"/><text x="628" y="114" fill="#6ee7b7" font-size="10">1 # D_DATA (GP6)</text>
+            <circle cx="614" cy="134" r="6" fill="#fb923c"/><text x="628" y="138" fill="#fdba74" font-size="10">2 +3.3VA (Y to VB)</text>
+            <circle cx="614" cy="158" r="6" fill="#475569"/><text x="628" y="162" fill="#64748b" font-size="10">3 D_WS (LEAVE NC!)</text>
+            <circle cx="614" cy="182" r="6" fill="#94a3b8"/><text x="628" y="186" fill="#cbd5e1" font-size="10">4 GND</text>
+            <circle cx="614" cy="206" r="6" fill="#facc15"/><text x="628" y="210" fill="#fde047" font-size="10">5 D_SCK (GP4)</text>
+            <circle cx="614" cy="230" r="6" fill="#94a3b8"/><text x="628" y="234" fill="#cbd5e1" font-size="10">6 GND</text>
+
+            <!-- PDM Mic Box -->
+            <rect x="892" y="68" width="184" height="184" rx="8" fill="#231c3c" stroke="#a78bfa" stroke-width="1.8"/>
+            <text x="984" y="88" text-anchor="middle" fill="#c4b5fd" font-size="11" font-weight="700">PDM Mic Breakout</text>
+            <text x="906" y="114" fill="#6ee7b7" font-size="10" font-weight="700">DAT / DOUT (1-bit)</text>
+            <text x="906" y="138" fill="#fdba74" font-size="10" font-weight="700">3V / VDD (3.3 V)</text>
+            <text x="906" y="162" fill="#64748b" font-size="9.8">(No WS pin on PDM)</text>
+            <text x="906" y="186" fill="#cbd5e1" font-size="10" font-weight="700">GND</text>
+            <text x="906" y="210" fill="#fde047" font-size="10" font-weight="700">CLK (1&ndash;3.07 MHz)</text>
+            <text x="906" y="234" fill="#cbd5e1" font-size="10" font-weight="700">SEL / L-R (Tie GND)</text>
+
+            <line x1="758" y1="110" x2="892" y2="110" stroke="#34d399" stroke-width="2.3"/>
+            <line x1="758" y1="134" x2="892" y2="134" stroke="#fb923c" stroke-width="2.3"/>
+            <line x1="758" y1="158" x2="820" y2="158" stroke="#475569" stroke-width="1.8" stroke-dasharray="4 3"/>
+            <text x="826" y="162" fill="#f87171" font-size="9.5" font-weight="700">NC</text>
+            <line x1="758" y1="182" x2="892" y2="182" stroke="#94a3b8" stroke-width="2"/>
+            <line x1="758" y1="206" x2="892" y2="206" stroke="#facc15" stroke-width="2.3"/>
+            <line x1="758" y1="230" x2="892" y2="230" stroke="#94a3b8" stroke-width="2"/>
+            <text x="834" y="276" text-anchor="middle" fill="#94a3b8" font-size="10">J5.3 (D_WS) stays unconnected; 1-bit PDM stream decimated via PIO0 SM1</text>
+          </svg>
+          <div class="figcaption"><strong>Figure 2.3 &mdash; Optional External Digital Microphone Wiring (<code>J5</code>):</strong> Side-by-side comparison of 3-wire I&sup2;S vs. 2-wire PDM breakouts sharing <code>J5.2</code> (<code>+3.3VA</code>) with the single camera level converter.</div>
+        </div>
+
+        <h3 id="p2-checklist">2.7 Interactive Pre-Power Verification Checklist</h3>
+        <div class="card">
+          <ul class="checklist">
+            <li><input type="checkbox"> <span><strong>All power removed during wiring:</strong> Both <code>5.20 V</code> PSU (<code>J1</code>) and USB-C (<code>J6</code>) unplugged; <code>J2</code> bypass jumper is <strong>OPEN</strong>.</span></li>
+            <li><input type="checkbox"> <span><strong>DMM short check passed:</strong> No continuity between <code>J1.1 (+VDC)</code> &amp; <code>J1.2 (GND)</code>, between <code>J3.1 (VIR)</code> &amp; <code>J3.2 (VIR_RTN)</code>, or between <code>J3.2 (VIR_RTN)</code> &amp; <code>GND</code>.</span></li>
+            <li><input type="checkbox"> <span><strong>Camera <code>3V3</code> isolated:</strong> Mira220 <code>P1.2</code> (<code>3V3</code>) is <strong>unconnected</strong> on both cameras; <code>TXS0108E</code> <code>VB</code> comes strictly from PCB <code>J5.2</code> (<code>+3.3VA</code>).</span></li>
+            <li><input type="checkbox"> <span><strong>Single <code>TXS0108E</code> <code>1V8</code> &amp; channel isolation:</strong> <code>VA + OE</code> connects <strong>ONLY</strong> to Cam 0 <code>P1.5</code> (<code>1V8</code>) with Cam 1 <code>P1.5</code> left <strong><code>NC</code></strong>; Cam 0 uses <code>A1/A2</code> and Cam 1 uses <code>A3/A4</code> (never two cameras on one <code>A</code> pin).</span></li>
+            <li><input type="checkbox"> <span><strong>Raspberry Pi 5 seating:</strong> Plugged onto all 40 pins of <code>J8</code> (Pin 1 to square Pad 1), Pi's own USB-C power port is <strong>empty</strong>, and <code>SW2</code> is <strong>taped over</strong>.</span></li>
+            <li><input type="checkbox"> <span><strong>PSU verified off-board:</strong> Meanwell <code>LRS-75-5</code> measured at <strong><code>5.20 V &plusmn; 0.03 V</code></strong> on a DMM and bled to <code>0 V</code> before connecting <code>J1</code>.</span></li>
+            <li><input type="checkbox"> <span><strong><code>1.8 V</code> trigger dry check:</strong> Before landing <code>A1</code>/<code>A3</code> onto Mira220 <code>P1.7</code>, verified <code>A1</code> and <code>A3</code> swing to <strong><code>~1.8 V</code></strong> (never <code>3.3 V</code>).</span></li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ==================== PART III ==================== -->
+      <section id="part-3" class="doc-part">
+        <div class="part-banner">
+          <span class="part-num">Part III</span>
+          <h2>Light-Sheet Optical Trigger: Modulation, Demodulation &amp; Speed Theory</h2>
+        </div>
+
+        <p>
+          To freeze a golf ball ~10 times inside a single global-shutter frame across shots ranging from a <code>2 m/s</code> putt to a <code>90 m/s</code> drive,
+          Next Gen PiTrac must detect launch within microseconds <strong>and</strong> measure ball velocity <em>before</em> the ball leaves the shared stereo camera field of view &mdash;
+          all while rejecting sunlight, simulator projectors, <code>100/120 Hz</code> LED room-light flicker, static mat reflections, and emitter thermal drift.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Optical Interferer</th>
+                <th>Why Naive Photogates Fail</th>
+                <th>How the Next Gen Light-Sheet Chain Rejects It</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Steady Sunlight / Bright Room Lamps (DC)</strong></td>
+                <td>6 &mu;A of DC photocurrent &times; <code>470 k&Omega;</code> shifts TIA output by <code>2.82 V</code>, railing the front end</td>
+                <td><strong>Active <code>2.27 Hz</code> DC Servo</strong> (<code>U11B</code>/<code>U11D</code>) injects equal-and-opposite current into the summing node (up to <code>&plusmn;25 &mu;A</code>)</td>
+              </tr>
+              <tr>
+                <td><strong>100/120 Hz Mains LED Flicker &amp; Harmonics</strong></td>
+                <td>Flicker sits right inside the <code>50 Hz&ndash;5 kHz</code> ball-transit band and triggers false shots</td>
+                <td><strong><code>104.17 kHz</code> Chopper Demodulator</strong> up-converts unmodulated light to <code>&ge;104 kHz</code>, where the 4th-order <code>15.39 kHz</code> LPF crushes it (<code>~48 dB</code> measured)</td>
+              </tr>
+              <tr>
+                <td><strong>Static Mat/Lens Return &amp; Emitter Warm-Up Drift</strong></td>
+                <td>Static reflection is modulated at <code>f_c</code>, creating a drifting DC offset after demodulation</td>
+                <td><strong>Gated <code>0.66 s</code> Baseline HPF</strong> (<code>C81</code> + <code>U14</code>) zeroes static return while idle (<code>TRACK</code>), then freezes charge while armed (<code>HOLD</code>) so slow putts never droop</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="p3-geom">3.2 Optical Geometry &amp; End-to-End Analog Signal Chain</h3>
+        <p>
+          Emitter <code>D11</code> (<code>VSMA1085250X02</code>, <code>850 nm</code>) and reverse-biased PIN photodiode <code>D12</code> (<code>VBPW34FAS</code>) sit side by side behind a cylindrical plano-convex lens,
+          focusing strongly along the downrange flight axis <em>x</em> while fanning vertically into a thin <strong>coincident backscatter curtain</strong>.
+          As a ball of diameter <code>D_ball = 42.67 mm</code> crosses sheet profile <em>W(x)</em> at speed <em>v</em>, reflected optical power traces the spatial convolution
+          <code>P_ball(t) = R_ball &int; W(x) B(x &minus; vt) dx</code> &mdash; a smooth positive bump whose width scales as <code>1/v</code>.
+        </p>
+
+        <!-- FIGURE 2.1: Geometry + Analog Signal Chain SVG -->
+        <div class="figure-box" id="p3-chain">
+          <svg viewBox="0 0 1120 650" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Top-left: Vertical tower stereo geometry with Top Camera angled down, IRLED, Trigger, and Bottom Camera pointing straight out. Top-right: Exact 1600x1400 (8:7 aspect ratio) Mira220 image-plane FOV. Bottom: Complete analog lock-in schematic block diagram">
+            <!-- Top-Left Panel: Vertical Tower Stereo Geometry (All 4 Modules Aligned Vertically!) -->
+            <rect x="16" y="14" width="624" height="346" rx="10" fill="#111a2e" stroke="#263554"/>
+            <text x="32" y="38" fill="#38bdf8" font-size="12.4" font-weight="700">A. Stereo Tower Elevation (Aligned Vertical Axis: Top Angled, Bottom Level)</text>
+
+            <!-- Hitting Mat Floor Line -->
+            <line x1="42" y1="312" x2="615" y2="312" stroke="#475569" stroke-width="2.2"/>
+            <text x="580" y="327" text-anchor="end" fill="#94a3b8" font-size="9.5">Hitting Mat Plane</text>
+
+            <!-- Straight Vertical Alignment Spine of the PiTrac Tower (x = 104) -->
+            <rect x="48" y="60" width="112" height="252" rx="6" fill="#0d1729" stroke="#334155" stroke-width="1.5"/>
+            <line x1="104" y1="54" x2="104" y2="318" stroke="#64748b" stroke-width="1.3" stroke-dasharray="4 3"/>
+            <text x="104" y="332" text-anchor="middle" fill="#94a3b8" font-size="9.3" font-weight="700">Aligned Vertical Tower</text>
+
+            <!-- Bottom Camera Cone: Points STRAIGHT OUT horizontally (y_axis = 276, ~56.9 deg VFOV) -->
+            <!-- Upper ray from (160,276) at -28.4 deg -> (580, 50); lower ray clipped at mat y=312 -->
+            <polygon points="160,276 580,82 580,312 230,312" fill="rgba(56,189,248,0.08)" stroke="#38bdf8" stroke-opacity="0.55" stroke-dasharray="4 3"/>
+            <!-- Bottom Cam optical axis (straight horizontal!) -->
+            <line x1="160" y1="276" x2="580" y2="276" stroke="#38bdf8" stroke-width="1.3" stroke-dasharray="6 4" opacity="0.75"/>
+            <text x="276" y="290" text-anchor="middle" fill="#7dd3fc" font-size="9.2">Bottom Cam Axis (0&deg; Straight Out)</text>
+
+            <!-- Top Camera Cone: ANGLED DOWNWARD (~24 deg pitch from (160,92), ~56.9 deg VFOV) -->
+            <!-- Optical axis from (160,92) angled down ~24 deg -> (580, 279); upper ray ~ +4 deg -> (580, 70); lower ray ~ -52 deg -> hits mat at (345, 312) -->
+            <polygon points="160,92 580,78 580,312 342,312" fill="rgba(167,139,250,0.09)" stroke="#a78bfa" stroke-opacity="0.6" stroke-dasharray="4 3"/>
+            <line x1="160" y1="92" x2="565" y2="272" stroke="#a78bfa" stroke-width="1.3" stroke-dasharray="6 4" opacity="0.8"/>
+            <text x="318" y="152" fill="#c4b5fd" font-size="9.2" transform="rotate(24 318 152)">Top Cam Axis (Angled Down)</text>
+
+            <!-- Shared Stereo Overlap Region (Intersection of Top Angled Cone & Bottom Straight Cone!) -->
+            <polygon points="286,218 580,82 580,312 342,312" fill="rgba(52,211,153,0.15)" stroke="#34d399" stroke-width="1.8" stroke-dasharray="6 3"/>
+            <text x="480" y="122" text-anchor="middle" fill="#6ee7b7" font-size="10.2" font-weight="700">Shared 3D Stereo Overlap</text>
+
+            <!-- IRLED Illumination Fan & IR Light-Sheet Beam from Middle of Tower -->
+            <line x1="160" y1="154" x2="438" y2="245" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.65"/>
+            <polygon points="160,212 456,145 456,312" fill="rgba(248,113,113,0.14)" stroke="#f87171" stroke-width="1.2" stroke-dasharray="3 2"/>
+            <text x="275" y="216" fill="#fca5a5" font-size="9.2" font-weight="700">IR Light Sheet</text>
+
+            <!-- Vertical Tower Stack Modules (All Centered on x = 104!) -->
+            <!-- 1. Top Camera (angled down indicator) -->
+            <g transform="translate(104, 92) rotate(14)">
+              <rect x="-46" y="-13" width="92" height="26" rx="4" fill="#16283e" stroke="#a78bfa" stroke-width="1.6"/>
+              <text x="0" y="4" text-anchor="middle" fill="#c4b5fd" font-size="9.6" font-weight="700">Top Camera</text>
+            </g>
+            <!-- 2. IRLED Strobe -->
+            <rect x="58" y="141" width="92" height="26" rx="4" fill="#17253d" stroke="#fbbf24" stroke-width="1.5"/>
+            <text x="104" y="158" text-anchor="middle" fill="#fde68a" font-size="9.6" font-weight="700">IRLED Strobe</text>
+            <!-- 3. Light-Sheet Trigger -->
+            <rect x="58" y="199" width="92" height="26" rx="4" fill="#172c46" stroke="#f87171" stroke-width="1.5"/>
+            <text x="104" y="216" text-anchor="middle" fill="#fca5a5" font-size="9.5" font-weight="700">Trigger D11|D12</text>
+            <!-- 4. Bottom Camera (level / straight out) -->
+            <rect x="58" y="263" width="92" height="26" rx="4" fill="#16283e" stroke="#38bdf8" stroke-width="1.6"/>
+            <text x="104" y="280" text-anchor="middle" fill="#7dd3fc" font-size="9.6" font-weight="700">Bottom Camera</text>
+
+            <!-- Ball Flight Plane at ~400-470 mm Stand-Off (End-on view of ball + rising launch climb!) -->
+            <line x1="456" y1="86" x2="456" y2="312" stroke="#f87171" stroke-width="2" stroke-dasharray="4 2" opacity="0.7"/>
+            <!-- Teed Ball on Mat inside Shared Stereo Overlap -->
+            <circle cx="456" cy="298" r="11" fill="#e2e8f0" stroke="#38bdf8" stroke-width="2.2"/>
+            <text x="415" y="302" text-anchor="end" fill="#7dd3fc" font-size="9.6" font-weight="700">Teed Ball</text>
+            <!-- Rising Launch Positions in 3D Stereo Overlap -->
+            <g fill="#f8fafc" stroke="#34d399" stroke-width="1.5" opacity="0.9">
+              <circle cx="464" cy="264" r="9.5"/>
+              <circle cx="472" cy="230" r="9.5"/>
+              <circle cx="480" cy="196" r="9.5"/>
+              <circle cx="488" cy="162" r="9.5"/>
+            </g>
+            <text x="504" y="200" fill="#6ee7b7" font-size="9.3" font-weight="700">Launch Climb</text>
+            <text x="504" y="213" fill="#94a3b8" font-size="9">(in both FOVs)</text>
+
+            <!-- Stand-off dimension -->
+            <line x1="160" y1="338" x2="456" y2="338" stroke="#64748b" stroke-width="1.3" marker-start="url(#arr-blue)" marker-end="url(#arr-blue)"/>
+            <text x="308" y="351" text-anchor="middle" fill="#94a3b8" font-size="9.5">Stand-off Distance (~400&ndash;480 mm to Ball Flight Line)</text>
+
+            <!-- Top-Right Panel: Exact 8:7 (1600 x 1400) Mira220 Sensor Image-Plane FOV -->
+            <rect x="656" y="14" width="448" height="346" rx="10" fill="#111a2e" stroke="#263554"/>
+            <text x="674" y="38" fill="#34d399" font-size="12.5" font-weight="700">B. Camera Sensor View: 1600 &times; 1400 (Exact 8 : 7 Aspect)</text>
+
+            <!-- Exact 8:7 Frame: 280 px wide x 245 px tall (280 / 245 = 8 / 7 = 1.1429 exact!) -->
+            <rect x="752" y="64" width="280" height="245" rx="4" fill="#091220" stroke="#34d399" stroke-width="2"/>
+
+            <!-- Aspect Ratio Dimension Labels -->
+            <text x="892" y="328" text-anchor="middle" fill="#6ee7b7" font-size="10.2" font-weight="700">1600 px Width (HFOV ~63.6&deg;, ~496 mm @ 400 mm)</text>
+            <text x="734" y="186" text-anchor="middle" fill="#6ee7b7" font-size="10.2" font-weight="700" transform="rotate(-90 734 186)">1400 px Height (8:7 Ratio, VFOV ~56.9&deg;)</text>
+            <text x="892" y="346" text-anchor="middle" fill="#94a3b8" font-size="9.5">Tall 8:7 (1.14:1) frame keeps both teed ball &amp; high-loft wedges in frame</text>
+
+            <!-- Ground / Hitting Mat Line inside 8:7 Frame -->
+            <line x1="754" y1="276" x2="1030" y2="276" stroke="#334155" stroke-width="2"/>
+            <text x="985" y="292" text-anchor="end" fill="#64748b" font-size="9.2">Hitting Mat</text>
+
+            <!-- Vertical IR Light Sheet Slice inside 8:7 Frame -->
+            <rect x="818" y="66" width="14" height="210" fill="rgba(248,113,113,0.20)" stroke="#f87171" stroke-width="1" stroke-dasharray="4 2"/>
+            <text x="825" y="80" text-anchor="middle" fill="#fca5a5" font-size="9" font-weight="700">Light Sheet</text>
+
+            <!-- Teed Ball at Address inside 8:7 Frame (seen in preview to arm!) -->
+            <circle cx="786" cy="264" r="11" fill="#e2e8f0" stroke="#38bdf8" stroke-width="2"/>
+            <rect x="783" y="275" width="6" height="6" fill="#94a3b8"/>
+            <text x="786" y="246" text-anchor="middle" fill="#7dd3fc" font-size="9.2" font-weight="700">Tee</text>
+
+            <!-- Trajectory 1: Mid-Iron / Driver (~16 deg launch) -->
+            <line x1="798" y1="261" x2="1012" y2="196" stroke="#34d399" stroke-width="1.3" stroke-dasharray="4 3"/>
+            <g fill="#f8fafc" stroke="#34d399" stroke-width="1.5">
+              <circle cx="852" cy="245" r="9.5"/>
+              <circle cx="888" cy="234" r="9.5"/>
+              <circle cx="924" cy="223" r="9.5"/>
+              <circle cx="960" cy="212" r="9.5"/>
+              <circle cx="996" cy="201" r="9.5"/>
+            </g>
+            <text x="965" y="242" fill="#6ee7b7" font-size="9.3" font-weight="700">~16&deg; Driver / Iron</text>
+
+            <!-- Trajectory 2: High-Loft Wedge (~38 deg launch — why 8:7 height matters!) -->
+            <line x1="796" y1="256" x2="976" y2="104" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/>
+            <g fill="rgba(254,243,199,0.22)" stroke="#fbbf24" stroke-width="1.4" stroke-dasharray="2 2">
+              <circle cx="846" cy="214" r="9.5"/>
+              <circle cx="878" cy="187" r="9.5"/>
+              <circle cx="910" cy="160" r="9.5"/>
+              <circle cx="942" cy="133" r="9.5"/>
+              <circle cx="974" cy="106" r="9.5"/>
+            </g>
+            <text x="935" y="92" text-anchor="middle" fill="#fde68a" font-size="9.3" font-weight="700">~38&deg; Wedge (8:7 headroom)</text>
+
+            <!-- Bottom Band: Analog Signal Chain (shifted down by 150 px) -->
+            <g transform="translate(0, 150)">
+            <rect x="16" y="224" width="1088" height="262" rx="10" fill="#111a2e" stroke="#263554"/>
+            <text x="34" y="248" fill="#a78bfa" font-size="13" font-weight="700">Complete Lock-In Optical Signal Chain (Netlist-Verified Stages &amp; Test Points)</text>
+
+            <!-- Row 1: TX + Photodiode + TIA + Demod -->
+            <rect x="34" y="270" width="145" height="74" rx="8" fill="#17253d" stroke="#f87171"/>
+            <text x="106" y="290" text-anchor="middle" fill="#fca5a5" font-size="11" font-weight="700">1. Carrier TX</text>
+            <text x="106" y="306" text-anchor="middle" fill="#cbd5e1" font-size="9.8">GPIO31 PWM 7B (25%)</text>
+            <text x="106" y="321" text-anchor="middle" fill="#cbd5e1" font-size="9.8">U9 Clamp &le;122.7 &mu;s</text>
+            <text x="106" y="335" text-anchor="middle" fill="#fca5a5" font-size="9.8">D11 LED (~3 A, 850 nm)</text>
+
+            <rect x="210" y="270" width="175" height="74" rx="8" fill="#17253d" stroke="#38bdf8"/>
+            <text x="297" y="290" text-anchor="middle" fill="#7dd3fc" font-size="11" font-weight="700">2. D12 + Inverting TIA</text>
+            <text x="297" y="306" text-anchor="middle" fill="#cbd5e1" font-size="9.8">D12 @ 36 V VIR Bias</text>
+            <text x="297" y="321" text-anchor="middle" fill="#cbd5e1" font-size="9.8">U11A OPA4323 (Rf 470k/116k)</text>
+            <text x="297" y="335" text-anchor="middle" fill="#38bdf8" font-size="9.8">TP7 (idles at +2V5 = 2.59 V)</text>
+
+            <rect x="210" y="366" width="175" height="54" rx="8" fill="#192236" stroke="#fbbf24" stroke-dasharray="4 2"/>
+            <text x="297" y="386" text-anchor="middle" fill="#fde68a" font-size="10.5" font-weight="700">Active DC Servo (U11B/D)</text>
+            <text x="297" y="403" text-anchor="middle" fill="#cbd5e1" font-size="9.5">f_c = 2.27 Hz &rarr; nulls sunlight DC</text>
+
+            <rect x="418" y="270" width="175" height="74" rx="8" fill="#17253d" stroke="#a78bfa"/>
+            <text x="505" y="290" text-anchor="middle" fill="#c4b5fd" font-size="11" font-weight="700">3. Chopper Mixer</text>
+            <text x="505" y="306" text-anchor="middle" fill="#cbd5e1" font-size="9.8">U13 TMUX1219 + U12A (&plusmn;1)</text>
+            <text x="505" y="321" text-anchor="middle" fill="#cbd5e1" font-size="9.8">Multiplies by 50% &plusmn;1 sq.</text>
+            <text x="505" y="335" text-anchor="middle" fill="#c4b5fd" font-size="9.8">TP10 (Demodulated_Signal)</text>
+
+            <rect x="418" y="366" width="175" height="54" rx="8" fill="#192236" stroke="#a78bfa"/>
+            <text x="505" y="386" text-anchor="middle" fill="#c4b5fd" font-size="10.5" font-weight="700">GPIO39 Demod PWM 11B</text>
+            <text x="505" y="403" text-anchor="middle" fill="#34d399" font-size="9.5">1.02 ns atomic PWM_EN lock</text>
+
+            <rect x="624" y="270" width="150" height="74" rx="8" fill="#17253d" stroke="#34d399"/>
+            <text x="699" y="290" text-anchor="middle" fill="#6ee7b7" font-size="11" font-weight="700">4. 4th-Order LPF</text>
+            <text x="699" y="306" text-anchor="middle" fill="#cbd5e1" font-size="9.8">U12D + U12C Sallen-Key</text>
+            <text x="699" y="321" text-anchor="middle" fill="#cbd5e1" font-size="9.8">f_0 = 15.39 kHz, Gain &times;2</text>
+            <text x="699" y="335" text-anchor="middle" fill="#6ee7b7" font-size="9.8">TP9 (-64 dB @ 104 kHz)</text>
+
+            <rect x="804" y="270" width="142" height="74" rx="8" fill="#17253d" stroke="#fbbf24"/>
+            <text x="875" y="290" text-anchor="middle" fill="#fde68a" font-size="11" font-weight="700">5. Gated HPF + &times;14.5</text>
+            <text x="875" y="306" text-anchor="middle" fill="#cbd5e1" font-size="9.8">C81 330n + U14 (GPIO33)</text>
+            <text x="875" y="321" text-anchor="middle" fill="#cbd5e1" font-size="9.8">TRACK 0.66s | HOLD open</text>
+            <text x="875" y="335" text-anchor="middle" fill="#fde68a" font-size="9.8">U12B &times;14.5 (0 V idle)</text>
+
+            <rect x="974" y="262" width="116" height="68" rx="8" fill="#172c46" stroke="#38bdf8"/>
+            <text x="1032" y="282" text-anchor="middle" fill="#38bdf8" font-size="10.8" font-weight="700">U15 Comparator</text>
+            <text x="1032" y="298" text-anchor="middle" fill="#cbd5e1" font-size="9.5">vs TP8 Threshold</text>
+            <text x="1032" y="314" text-anchor="middle" fill="#34d399" font-size="9.5">PIO2: ~1 &mu;s Trigger</text>
+
+            <rect x="974" y="346" width="116" height="68" rx="8" fill="#172c46" stroke="#34d399"/>
+            <text x="1032" y="366" text-anchor="middle" fill="#6ee7b7" font-size="10.8" font-weight="700">ADC5 (250 ksps)</text>
+            <text x="1032" y="382" text-anchor="middle" fill="#cbd5e1" font-size="9.5">32 KB DMA Ring</text>
+            <text x="1032" y="398" text-anchor="middle" fill="#34d399" font-size="9.5">50% FWHM Speed!</text>
+
+            <!-- Chain Arrows -->
+            <line x1="179" y1="307" x2="208" y2="307" stroke="#f87171" stroke-width="2" stroke-dasharray="4 2" marker-end="url(#arr-red)"/>
+            <line x1="385" y1="307" x2="416" y2="307" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr-blue)"/>
+            <line x1="297" y1="366" x2="297" y2="346" stroke="#fbbf24" stroke-width="1.8" marker-end="url(#arr-amber)"/>
+            <line x1="505" y1="366" x2="505" y2="346" stroke="#a78bfa" stroke-width="1.8" marker-end="url(#arr-purple)"/>
+            <line x1="593" y1="307" x2="622" y2="307" stroke="#a78bfa" stroke-width="2" marker-end="url(#arr-purple)"/>
+            <line x1="774" y1="307" x2="802" y2="307" stroke="#34d399" stroke-width="2" marker-end="url(#arr-green)"/>
+            <line x1="946" y1="296" x2="972" y2="296" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr-blue)"/>
+            <path d="M 956 296 L 956 380 L 972 380" fill="none" stroke="#34d399" stroke-width="2" marker-end="url(#arr-green)"/>
+
+            <text x="34" y="465" fill="#94a3b8" font-size="10.5">
+              <tspan fill="#38bdf8" font-weight="700">Reference Note:</tspan> Nodes TP6..TP10 ride on virtual ground (+2V5 = +5VA/2 &approx; 2.59 V). After C81, U12B is ground-referenced, so ADC5 idles near 0.0 V and rises on a ball pass.
+            </text>
+            </g>
+          </svg>
+          <div class="figcaption"><strong>Figure 3.1 &mdash; Light-Sheet Geometry &amp; Lock-In Chain:</strong> Co-located cylindrical backscatter curtain and the 6-stage analog lock-in receiver feeding both <code>PIO2</code> (latency) and <code>ADC5</code> (amplitude-independent FWHM accuracy).</div>
+        </div>
+
+        <h3 id="p3-demod">3.4 Synchronous (Lock-In) Demodulation &amp; Trapezoidal Phase Theory</h3>
+        <p>
+          At <code>150 MHz</code> system clock with <code>TOP = 1439</code> (<code>1440</code> counts, divider <code>1</code>), carrier slice 7B and demodulator slice 11B run at
+          <code>f_c = 104,166.67 Hz</code> (<code>T_c = 9.600 &mu;s</code>, <code>1 tick = 6.67 ns = 0.25&deg;</code>).
+          <code>U13</code> (<code>TMUX1219</code>) + <code>U12A</code> switch gain between <code>+1</code> and <code>&minus;1</code> about <code>+2V5</code>, multiplying the TIA signal by a 50% bipolar square wave <em>m(t) &isin; {+1, &minus;1}</em> containing <strong>only odd harmonics</strong>:
+        </p>
+
+        <div class="formula">
+          m(t) = (4 / &pi;) &middot; [ sin(&omega;<sub>c</sub>t) + (1/3) sin(3&omega;<sub>c</sub>t) + (1/5) sin(5&omega;<sub>c</sub>t) + &hellip; ]
+          <div class="eq-note">
+            &bull; <strong>Ball return at f<sub>c</sub></strong> mixes down to <strong>0 Hz (baseband)</strong> and passes cleanly through the 15.39 kHz 4th-order LPF.<br/>
+            &bull; <strong>100/120 Hz room flicker</strong> has no f<sub>c</sub> carrier, so multiplying by m(t) <strong>up-converts</strong> it to 104.17 kHz &plusmn; 120 Hz where the LPF rejects it (~48 dB measured).
+          </div>
+        </div>
+
+        <!-- FIGURE 2.2: Spectrum + Trapezoid SVG -->
+        <div class="figure-box" id="fig-lockin-math">
+          <svg viewBox="0 0 1120 350" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Left: Frequency-domain spectral translation in lock-in mixer. Right: Trapezoidal phase correlation response for 25% duty cycle">
+            <!-- Left: Frequency Spectrum -->
+            <rect x="16" y="16" width="530" height="318" rx="10" fill="#111a2e" stroke="#263554"/>
+            <text x="34" y="42" fill="#38bdf8" font-size="13" font-weight="700">Frequency Domain: Before vs. After Chopper Mixer (U13)</text>
+
+            <!-- Top mini-axis: Before Mixer (TP7) -->
+            <text x="38" y="68" fill="#94a3b8" font-size="10.5" font-weight="700">A. At TIA Output (TP7) &mdash; Before Demodulation:</text>
+            <line x1="55" y1="152" x2="515" y2="152" stroke="#64748b" stroke-width="1.5"/>
+            <!-- 120 Hz spike -->
+            <line x1="88" y1="152" x2="88" y2="85" stroke="#f87171" stroke-width="4"/>
+            <text x="88" y="79" text-anchor="middle" fill="#fca5a5" font-size="9.8" font-weight="700">120 Hz Flicker</text>
+            <!-- 104 kHz Ball Sidebands -->
+            <path d="M 310 152 Q 340 82 370 152" fill="rgba(52,211,153,0.3)" stroke="#34d399" stroke-width="2.2"/>
+            <line x1="340" y1="152" x2="340" y2="82" stroke="#34d399" stroke-width="2.5"/>
+            <text x="340" y="76" text-anchor="middle" fill="#6ee7b7" font-size="9.8" font-weight="700">Ball @ 104.17 kHz</text>
+            <text x="88" y="166" text-anchor="middle" fill="#94a3b8" font-size="9.5">120 Hz</text>
+            <text x="340" y="166" text-anchor="middle" fill="#94a3b8" font-size="9.5">f_c = 104.17 kHz</text>
+
+            <!-- Bottom mini-axis: After Mixer + LPF (TP9) -->
+            <text x="38" y="196" fill="#94a3b8" font-size="10.5" font-weight="700">B. After Chopper Mixer &amp; 4th-Order 15.39 kHz LPF (TP9):</text>
+            <line x1="55" y1="292" x2="515" y2="292" stroke="#64748b" stroke-width="1.5"/>
+            <!-- LPF Passband Envelope -->
+            <path d="M 55 215 L 155 215 Q 185 215 215 290 L 510 291" fill="rgba(56,189,248,0.10)" stroke="#38bdf8" stroke-width="1.8" stroke-dasharray="5 3"/>
+            <text x="165" y="210" fill="#7dd3fc" font-size="9.8">LPF Passband (15.39 kHz)</text>
+            <!-- Ball Demodulated to Baseband -->
+            <path d="M 56 292 Q 85 218 122 292" fill="rgba(52,211,153,0.38)" stroke="#34d399" stroke-width="2.5"/>
+            <text x="100" y="232" fill="#6ee7b7" font-size="10" font-weight="700">Ball Envelope</text>
+            <!-- Up-converted 120 Hz crushed at 104 kHz -->
+            <line x1="333" y1="292" x2="333" y2="262" stroke="#f87171" stroke-width="2.5" opacity="0.45"/>
+            <line x1="347" y1="292" x2="347" y2="262" stroke="#f87171" stroke-width="2.5" opacity="0.45"/>
+            <text x="340" y="253" text-anchor="middle" fill="#fca5a5" font-size="9.5">Flicker shifted to f_c (-64 dB!)</text>
+            <!-- 2f_c carrier ripple -->
+            <line x1="468" y1="292" x2="468" y2="274" stroke="#a78bfa" stroke-width="2" opacity="0.45"/>
+            <text x="468" y="267" text-anchor="middle" fill="#c4b5fd" font-size="9.5">2f_c = 208 kHz</text>
+            <text x="65" y="308" fill="#94a3b8" font-size="9.5">0 Hz</text>
+            <text x="175" y="308" fill="#94a3b8" font-size="9.5">15.4 kHz</text>
+            <text x="340" y="308" fill="#94a3b8" font-size="9.5">104.2 kHz</text>
+            <text x="468" y="308" fill="#94a3b8" font-size="9.5">208.3 kHz</text>
+
+            <!-- Right: Trapezoidal Phase Response -->
+            <rect x="564" y="16" width="540" height="318" rx="10" fill="#111a2e" stroke="#263554"/>
+            <text x="582" y="42" fill="#a78bfa" font-size="13" font-weight="700">Phase-Sweep Correlation Response Is a TRAPEZOID (D = 25%)</text>
+
+            <line x1="615" y1="175" x2="1075" y2="175" stroke="#64748b" stroke-width="1.5"/>
+            <line x1="615" y1="75" x2="615" y2="275" stroke="#64748b" stroke-width="1.5"/>
+            <text x="607" y="95" text-anchor="end" fill="#34d399" font-size="10" font-weight="700">+D&middot;&Delta;V</text>
+            <text x="607" y="179" text-anchor="end" fill="#94a3b8" font-size="10">0</text>
+            <text x="607" y="263" text-anchor="end" fill="#f87171" font-size="10" font-weight="700">&minus;D&middot;&Delta;V</text>
+
+            <!-- Fundamental Cosine Fit dashed -->
+            <path d="M 615 175 Q 672 62 730 78 Q 788 62 845 175 Q 902 288 960 272 Q 1018 288 1075 175" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+            <!-- Exact Trapezoid: 0..45 ramp, 45..135 flat, 135..225 ramp down, 225..315 flat neg, 315..360 ramp -->
+            <polyline points="615,175 672,92 788,92 902,258 1018,258 1075,175" fill="none" stroke="#a78bfa" stroke-width="3"/>
+
+            <!-- Optimal Phase Marker & Quadrature Nulls -->
+            <circle cx="730" cy="92" r="5" fill="#34d399"/>
+            <line x1="730" y1="92" x2="730" y2="175" stroke="#34d399" stroke-dasharray="3 3"/>
+            <text x="730" y="81" text-anchor="middle" fill="#6ee7b7" font-size="10" font-weight="700">Optimal Phase (best_ticks)</text>
+
+            <circle cx="615" cy="175" r="4.5" fill="#fbbf24"/>
+            <circle cx="845" cy="175" r="4.5" fill="#fbbf24"/>
+            <text x="845" y="164" text-anchor="middle" fill="#fde68a" font-size="9.8" font-weight="700">Quadrature Null (+90&deg;)</text>
+
+            <text x="615" y="293" text-anchor="middle" fill="#94a3b8" font-size="9.5">0&deg; (0)</text>
+            <text x="730" y="293" text-anchor="middle" fill="#94a3b8" font-size="9.5">90&deg; (360)</text>
+            <text x="845" y="293" text-anchor="middle" fill="#94a3b8" font-size="9.5">180&deg; (720)</text>
+            <text x="960" y="293" text-anchor="middle" fill="#94a3b8" font-size="9.5">270&deg; (1080)</text>
+            <text x="1065" y="293" text-anchor="middle" fill="#94a3b8" font-size="9.5">360&deg; (1440)</text>
+
+            <text x="582" y="318" fill="#cbd5e1" font-size="10.3">Clean 25% pulse &otimes; 50% square &rArr; <tspan fill="#c4b5fd" font-weight="700">h2/h1 = 0</tspan>, <tspan fill="#6ee7b7" font-weight="700">h3/h1 = 1/9 (0.111)</tspan>, fundamental/peak = <tspan fill="#7dd3fc" font-weight="700">1.146</tspan></text>
+          </svg>
+          <div class="figcaption"><strong>Figure 3.2 &mdash; Lock-In Spectral Mixing &amp; Trapezoidal Phase Correlation:</strong> (Left) Up-conversion of 120 Hz flicker out of the LPF passband; (Right) exact trapezoidal response versus phase offset showing the 90&deg;-wide plateau and quadrature nulls.</div>
+        </div>
+
+        <div class="formula">
+          R<sub>n</sub> = [ 4 D &Delta;V<sub>TIA</sub> / (n &pi;) ] &middot; sinc(n D) &nbsp; for odd n &nbsp;&nbsp;|&nbsp;&nbsp; phase_ticks(f<sub>c</sub>) = &tau;<sub>chain</sub> &middot; f<sub>sys</sub> &minus; (D / 2)(TOP + 1)
+          <div class="eq-note">
+            <code>cal demod</code> keeps the demodulator clock running while chopping carrier duty (<code>0% &harr; 25%</code>) at <strong>20 Hz</strong> across 64 phase offsets &mdash; sitting cleanly above the <code>2.27 Hz</code> servo and <code>0.241 Hz</code> HPF, and below the <code>15.39 kHz</code> LPF.
+          </div>
+        </div>
+
+        <h3 id="p3-hpf">3.5 Envelope Recovery &amp; the Gated Baseline HPF (<code>TRACK</code> vs. <code>HOLD</code>)</h3>
+        <p>
+          Static emitter-to-photodiode leakage and mat reflection are modulated at <code>f_c</code>, producing a steady DC offset at <code>TP9</code> that drifts slowly as <code>D11</code> warms up.
+          A fast fixed HPF would erase slow putts (<code>~23 ms</code> wide); a multi-second fixed HPF would take too long to settle. Next Gen PiTrac solves both with analog switch <code>U14</code> (<code>TMUX1219</code>, <code>GPIO33</code>):
+        </p>
+        <div class="card-grid">
+          <div class="card">
+            <h4><span class="tag tag-v2">GPIO33 = 0</span> <code>TRACK</code> Mode (Disarmed / Idle)</h4>
+            <p>Connects <code>R96</code> (<code>2 M&Omega;</code>) to <code>GND</code> behind <code>C81</code> (<code>330 nF</code>), forming a <code>&tau; = 0.66 s</code> (<code>f_c = 0.241 Hz</code>) high-pass filter that continuously zeroes static carrier return and thermal drift, holding <code>U12B</code> output (<code>ADC5</code>) near <code>0.0 V</code>.</p>
+          </div>
+          <div class="card">
+            <h4><span class="tag tag-warn">GPIO33 = 1</span> <code>HOLD</code> Mode (Armed for Shot)</h4>
+            <p>Switches <code>U14</code> to an open throw so <code>C81</code> freezes the pre-shot baseline charge. The signal path becomes <strong>DC-coupled relative to the armed instant</strong>, preserving full pulse width and amplitude even on a <code>2 m/s</code> putt (leakage walk is only <code>2.3&ndash;11 mV/s</code> &approx; microvolts per shot).</p>
+          </div>
+        </div>
+
+        <h3 id="p3-speed">3.6 Ball Speed Estimation &amp; Interactive Dual-Path Simulator</h3>
+        <p>
+          Given calibrated effective optical interaction length <code>L_eff</code> (approximately <code>D_ball + w_beam &approx; 45.7 mm</code>) and measured transit time <code>&Delta;t</code>, ball speed is
+          <code>v = L_eff / &Delta;t</code>. A fixed comparator threshold <code>V_th</code> (<code>U15</code> &rarr; <code>PIO2 SM0</code>) triggers in <code>~1 &mu;s</code>,
+          <strong>but suffers amplitude bias</strong>: dimmer or scuffed balls cross <code>V_th</code> later going up and earlier coming down, shortening <code>&Delta;t_cmp</code> and overestimating speed!
+          During the <code>100&ndash;300 &mu;s</code> wait for camera shutters to open, firmware extracts the waveform from the <code>250 ksps</code> <code>ADC5</code> ring and interpolates the
+          <strong>50%-of-own-peak (FWHM) crossings</strong> &mdash; where any reflectance scale factor <em>&alpha;</em> cancels identically!
+        </p>
+
+        <!-- INTERACTIVE SIMULATOR -->
+        <div class="figure-box" id="fig-interactive-sim">
+          <div class="sim-controls">
+            <div class="sim-slider">
+              <label><span>Ball Speed (<em>v</em>)</span> <span id="lblSpeed" class="mono">45 m/s (101 mph)</span></label>
+              <input type="range" id="rngSpeed" min="2" max="90" value="45" step="1" oninput="updateSim()">
+            </div>
+            <div class="sim-slider">
+              <label><span>Ball Reflectance / Return (<em>&alpha;</em>)</span> <span id="lblRefl" class="mono">100% (Peak 2.80 V)</span></label>
+              <input type="range" id="rngRefl" min="22" max="100" value="100" step="1" oninput="updateSim()">
+            </div>
+            <div class="sim-slider">
+              <label><span>Comparator Threshold (<em>V_th</em>)</span> <span id="lblThr" class="mono">0.45 V</span></label>
+              <input type="range" id="rngThr" min="0.10" max="1.20" value="0.45" step="0.05" oninput="updateSim()">
+            </div>
+            <div class="sim-slider">
+              <label><span>Fixed Scope Timebase</span> <span id="lblTimebase" class="mono">6.0 ms Window</span></label>
+              <div style="display:flex; gap:6px; margin-top:4px;">
+                <button type="button" class="tab-btn active" id="tb6ms" style="flex:1; padding:5px 8px; font-size:0.8rem;" onclick="setSimWindow(6000)">6.0 ms (Shots)</button>
+                <button type="button" class="tab-btn" id="tb32ms" style="flex:1; padding:5px 8px; font-size:0.8rem;" onclick="setSimWindow(32768)">32.8 ms (Putts / Ring)</button>
+              </div>
+            </div>
+          </div>
+
+          <svg id="simSvg" viewBox="0 0 1080 282" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Interactive ball transit waveform on a fixed millisecond X-axis comparing fixed comparator threshold timing against 50% FWHM ADC refinement">
+            <line x1="70" y1="225" x2="1040" y2="225" stroke="#64748b" stroke-width="1.5"/>
+            <line x1="70" y1="25" x2="70" y2="225" stroke="#64748b" stroke-width="1.5"/>
+            <text x="60" y="229" text-anchor="end" fill="#94a3b8" font-size="10">0.0 V</text>
+            <line x1="65" y1="43" x2="1040" y2="43" stroke="#f87171" stroke-dasharray="4 4" opacity="0.5"/>
+            <text x="60" y="47" text-anchor="end" fill="#fca5a5" font-size="9.5">3.3 V</text>
+
+            <!-- Fixed Timebase Tick Marks (populated by updateSim) -->
+            <g id="simTicks"></g>
+
+            <!-- Reference 100% ghost curve -->
+            <path id="simGhostPath" d="" fill="none" stroke="#475569" stroke-width="1.5" stroke-dasharray="4 4"/>
+            <!-- Active ball waveform -->
+            <path id="simWavePath" d="" fill="rgba(56,189,248,0.14)" stroke="#38bdf8" stroke-width="3"/>
+
+            <!-- Fixed Comparator Threshold Line & Span -->
+            <line id="simThrLine" x1="70" y1="190" x2="1040" y2="190" stroke="#fbbf24" stroke-width="1.8" stroke-dasharray="6 3"/>
+            <text id="simThrText" x="1035" y="184" text-anchor="end" fill="#fde68a" font-size="10.5" font-weight="700">U15 Fixed V_th</text>
+            <line id="simCmpSpan" x1="300" y1="190" x2="700" y2="190" stroke="#fbbf24" stroke-width="4"/>
+
+            <!-- 50% Own-Peak FWHM Line & Span -->
+            <line id="simFwhmLine" x1="70" y1="120" x2="1040" y2="120" stroke="#34d399" stroke-width="1.6" stroke-dasharray="3 3"/>
+            <line id="simFwhmSpan" x1="340" y1="120" x2="660" y2="120" stroke="#34d399" stroke-width="4.5"/>
+            <circle id="simFwhmL" cx="340" cy="120" r="5" fill="#34d399"/>
+            <circle id="simFwhmR" cx="660" cy="120" r="5" fill="#34d399"/>
+            <text id="simFwhmText" x="555" y="112" text-anchor="middle" fill="#6ee7b7" font-size="10.5" font-weight="700">ADC5 50% Own-Peak FWHM (Invariant with Reflectance!)</text>
+
+            <text id="simClipWarn" x="555" y="38" text-anchor="middle" fill="#fbbf24" font-size="10.5" font-weight="700" opacity="0">Slow putt exceeds 6.0 ms view &mdash; click "32.8 ms (Putts / Ring)" above to view full pulse</text>
+            <text id="simXAxisLabel" x="555" y="268" text-anchor="middle" fill="#94a3b8" font-size="10.5">Fixed Time Axis (ms relative to beam center) &mdash; Faster shots produce narrower pulses</text>
+          </svg>
+
+          <div class="sim-readouts">
+            <div class="sim-stat"><div class="s-val" id="outTrueDt" style="color:var(--green)">1016 &mu;s</div><div class="s-lbl">ADC5 50% FWHM (&Delta;t_ADC)</div></div>
+            <div class="sim-stat"><div class="s-val" id="outAdcV" style="color:var(--green)">45.0 m/s</div><div class="s-lbl">ADC Refined Speed (Unbiased)</div></div>
+            <div class="sim-stat"><div class="s-val" id="outCmpDt" style="color:var(--amber)">1310 &mu;s</div><div class="s-lbl">Comparator Width (&Delta;t_cmp)</div></div>
+            <div class="sim-stat"><div class="s-val" id="outCmpBias" style="color:var(--amber)">0.0%</div><div class="s-lbl">Comparator Drift vs. 100% Refl.</div></div>
+            <div class="sim-stat"><div class="s-val" id="outStrobeW" style="color:var(--accent)">22 &mu;s</div><div class="s-lbl">Strobe Width (&le;1 mm blur)</div></div>
+            <div class="sim-stat"><div class="s-val" id="outStrobeGap" style="color:var(--accent-2)">926 &mu;s &times; 10</div><div class="s-lbl">Inter-Pulse Gap &amp; Count</div></div>
+          </div>
+          <div class="figcaption"><strong>Figure 3.3 &mdash; Interactive Dual-Path Timing Explorer:</strong> Drag <em>Ball Reflectance</em> down while watching <code>&Delta;t_cmp</code> (amber) shrink and drift in apparent speed, whereas <code>ADC5</code> 50%-of-own-peak FWHM (green) stays locked to true speed!</div>
+        </div>
+
+        <h3 id="p3-rev1">3.7 Real-World Hardware Boundaries Verified on Current Board</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Finding / CR</th>
+                <th>Physical Mechanism on Current PCB Spin</th>
+                <th>Firmware / Operational Handling</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong><code>CR-12</code> LED Thermal Droop</strong></td>
+                <td><code>D11</code> junction warms ~76 K over 5 min (<code>&tau; &approx; 70 s</code>), dropping 850 nm output by <code>25&ndash;45%</code> while current moves <code>&lt;2%</code></td>
+                <td>Duty capped at <code>25%</code> (<code>35%</code> ceiling); calibrate after 5-min warm-up (<code>BEAM_WARMUP_MS</code>); <code>CR-28</code> adds temp sensor</td>
+              </tr>
+              <tr>
+                <td><strong><code>CR-02</code> Virtual Ground Coupling</strong></td>
+                <td><code>+2V5</code> is an <code>R75/R76</code> divider off <code>+5VA</code> (<code>f_c &approx; 31.8 Hz</code>); in <code>HOLD</code>, a slow <code>+5V</code> step couples to comparator at <strong><code>&times;7.43</code></strong></td>
+                <td>Keep <code>+5V</code> stiff while armed; next spin regulates <code>+2V5</code> with a precision reference</td>
+              </tr>
+              <tr>
+                <td><strong><code>CR-16 / CR-14</code> 3.3 V Ceiling</strong></td>
+                <td><code>U12B</code> swings to <code>5.2 V</code>, whereas <code>ADC5</code> clips at <code>3.3 V</code> (code 4095) &mdash; clipping biases FWHM <em>long</em> (opposite sign to comparator bias)</td>
+                <td>Firmware flags clipped passes with <code>DQ_SATURATED</code> so clipped FWHM widths are never silently trusted</td>
+              </tr>
+              <tr>
+                <td><strong><code>CR-13</code> No Comparator Hysteresis</strong></td>
+                <td><code>U15</code> (<code>LM393</code>) has no positive-feedback resistor yet, so slow edges can chatter across <code>V_th</code></td>
+                <td><code>PIO2</code> counts raw pulses; <code>detect_service()</code> coalesces fragments within <code>2 ms</code>, logs <code>DQ_CHATTER</code>, and uses <code>ADC5</code> FWHM</td>
+              </tr>
+              <tr>
+                <td><strong>DMA Ring Depth on Slow Putts</strong></td>
+                <td><code>32 KB</code> ring at <code>250 ksps</code> (2 ch) holds <code>32.768 ms</code>, requiring <code>&Delta;t &lesssim; 11.9 ms</code> with baseline/coalesce guards</td>
+                <td>Flags <code>DQ_WINDOW_CLIP</code> on ultra-slow ramp rolls; deeper or decimated armed ring planned in firmware</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script>
+    function toggleTheme() {
+      const root = document.documentElement;
+      root.setAttribute('data-theme', root.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+    }
+
+    function filterPart(partId, btn) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      document.querySelectorAll('.doc-part').forEach(sec => {
+        if (partId === 'all' || sec.id === partId) {
+          sec.classList.remove('hidden');
+        } else {
+          sec.classList.add('hidden');
+        }
+      });
+      if (partId !== 'all') {
+        const el = document.getElementById(partId);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    function ensureVisible(partId) {
+      const sec = document.getElementById(partId);
+      if (sec && sec.classList.contains('hidden')) {
+        const allBtn = document.querySelector('.tab-btn');
+        filterPart('all', allBtn);
+      }
+    }
+
+    let simWindowUs = 6000; // Fixed 6.0 ms window by default (or 32768 us = full 32.8 ms DMA ring)
+
+    function setSimWindow(winUs) {
+      simWindowUs = winUs;
+      document.getElementById('tb6ms').classList.toggle('active', winUs === 6000);
+      document.getElementById('tb32ms').classList.toggle('active', winUs !== 6000);
+      document.getElementById('lblTimebase').textContent = (winUs === 6000 ? '6.0 ms Window' : '32.8 ms Ring');
+      renderSimTicks();
+      updateSim();
+    }
+
+    function renderSimTicks() {
+      const g = document.getElementById('simTicks');
+      const x0 = 70, x1 = 1040, xc = 555, widthPx = x1 - x0;
+      const stepMs = simWindowUs === 6000 ? 1.0 : 4.0;
+      const halfMs = (simWindowUs / 1000.0) / 2.0;
+      let html = '';
+      for (let tMs = -Math.floor(halfMs); tMs <= Math.floor(halfMs); tMs += stepMs) {
+        const x = xc + (tMs * 1000.0 / simWindowUs) * widthPx;
+        if (x < x0 - 1 || x > x1 + 1) continue;
+        html += '<line x1="' + x.toFixed(1) + '" y1="225" x2="' + x.toFixed(1) + '" y2="231" stroke="#64748b" stroke-width="1.3"/>';
+        html += '<line x1="' + x.toFixed(1) + '" y1="25" x2="' + x.toFixed(1) + '" y2="225" stroke="#1e293b" stroke-width="1"/>';
+        const lbl = (tMs > 0 ? '+' : '') + tMs.toFixed(0) + ' ms';
+        html += '<text x="' + x.toFixed(1) + '" y="245" text-anchor="middle" fill="#94a3b8" font-size="9.5" font-family="Consolas, monospace">' + lbl + '</text>';
+      }
+      g.innerHTML = html;
+    }
+
+    function updateSim() {
+      const v = parseFloat(document.getElementById('rngSpeed').value);
+      const reflPct = parseFloat(document.getElementById('rngRefl').value);
+      const vTh = parseFloat(document.getElementById('rngThr').value);
+
+      const L_eff_mm = 45.67; // 42.67 mm ball + 3.0 mm sheet
+      const trueDt_us = (L_eff_mm / v) * 1000.0; // physical FWHM in microseconds!
+      const peakFull = 2.80; // V at 100% reflectance
+      const peakV = peakFull * (reflPct / 100.0);
+
+      document.getElementById('lblSpeed').textContent = v.toFixed(0) + ' m/s (' + Math.round(v * 2.23694) + ' mph)';
+      document.getElementById('lblRefl').textContent = reflPct.toFixed(0) + '% (Peak ' + peakV.toFixed(2) + ' V)';
+      document.getElementById('lblThr').textContent = vTh.toFixed(2) + ' V';
+
+      // Plot coordinates: x in [70..1040] represents FIXED simWindowUs!
+      const x0 = 70, x1 = 1040, xc = 555, widthPx = x1 - x0, yZero = 225, pxPerV = 55.15;
+      const pxPerUs = widthPx / simWindowUs;
+      const fwhmPx = trueDt_us * pxPerUs; // Physical pulse width changes directly with 1/v!
+      const k = 4.0 * Math.LN2 / (fwhmPx * fwhmPx);
+
+      let dWave = 'M ' + x0 + ' ' + yZero;
+      let dGhost = 'M ' + x0 + ' ' + yZero;
+      const stepPx = 3;
+      for (let x = x0; x <= x1; x += stepPx) {
+        const shape = Math.exp(-k * (x - xc) * (x - xc));
+        const yW = yZero - Math.min(3.3, peakV * shape) * pxPerV;
+        const yG = yZero - (peakFull * shape) * pxPerV;
+        dWave += ' L ' + x + ' ' + yW.toFixed(1);
+        dGhost += ' L ' + x + ' ' + yG.toFixed(1);
+      }
+      dWave += ' L ' + x1 + ' ' + yZero + ' Z';
+      document.getElementById('simWavePath').setAttribute('d', dWave);
+      document.getElementById('simGhostPath').setAttribute('d', dGhost);
+
+      // Show gentle hint if slow putt overflows the 6.0 ms scope window
+      document.getElementById('simClipWarn').setAttribute('opacity', (simWindowUs === 6000 && fwhmPx > widthPx * 0.85) ? '1' : '0');
+
+      // Threshold line
+      const yTh = yZero - vTh * pxPerV;
+      document.getElementById('simThrLine').setAttribute('y1', yTh.toFixed(1));
+      document.getElementById('simThrLine').setAttribute('y2', yTh.toFixed(1));
+      document.getElementById('simThrText').setAttribute('y', (yTh - 6).toFixed(1));
+
+      // 50% Own-Peak FWHM line (scales with 1/v, invariant with reflectance!)
+      const halfPeakV = 0.5 * peakV;
+      const yFwhm = yZero - halfPeakV * pxPerV;
+      const xFwhmL = Math.max(x0, xc - fwhmPx / 2);
+      const xFwhmR = Math.min(x1, xc + fwhmPx / 2);
+      document.getElementById('simFwhmLine').setAttribute('y1', yFwhm.toFixed(1));
+      document.getElementById('simFwhmLine').setAttribute('y2', yFwhm.toFixed(1));
+      document.getElementById('simFwhmSpan').setAttribute('x1', xFwhmL.toFixed(1));
+      document.getElementById('simFwhmSpan').setAttribute('x2', xFwhmR.toFixed(1));
+      document.getElementById('simFwhmSpan').setAttribute('y1', yFwhm.toFixed(1));
+      document.getElementById('simFwhmSpan').setAttribute('y2', yFwhm.toFixed(1));
+      document.getElementById('simFwhmL').setAttribute('cx', xFwhmL.toFixed(1));
+      document.getElementById('simFwhmL').setAttribute('cy', yFwhm.toFixed(1));
+      document.getElementById('simFwhmR').setAttribute('cx', xFwhmR.toFixed(1));
+      document.getElementById('simFwhmR').setAttribute('cy', yFwhm.toFixed(1));
+      document.getElementById('simFwhmText').setAttribute('y', Math.max(54, yFwhm - 8).toFixed(1));
+
+      // Comparator crossing math against Gaussian: exp(-k * dx^2) = vTh / peakV
+      const cmpSpan = document.getElementById('simCmpSpan');
+      const refRatio = Math.sqrt(Math.log(peakFull / vTh) / Math.LN2);
+      if (peakV <= vTh * 1.01) {
+        cmpSpan.setAttribute('opacity', '0');
+        document.getElementById('outCmpDt').textContent = 'MISS (< V_th)';
+        document.getElementById('outCmpBias').textContent = 'No Trigger!';
+      } else {
+        cmpSpan.setAttribute('opacity', '1');
+        const ratio = Math.sqrt(Math.log(peakV / vTh) / Math.LN2);
+        const dxPx = (fwhmPx / 2) * ratio;
+        cmpSpan.setAttribute('x1', Math.max(x0, xc - dxPx).toFixed(1));
+        cmpSpan.setAttribute('x2', Math.min(x1, xc + dxPx).toFixed(1));
+        cmpSpan.setAttribute('y1', yTh.toFixed(1));
+        cmpSpan.setAttribute('y2', yTh.toFixed(1));
+
+        const cmpDt_us = trueDt_us * ratio;
+        const speedDriftPct = ((refRatio / ratio) - 1.0) * 100.0;
+        document.getElementById('outCmpDt').textContent = Math.round(cmpDt_us) + ' \u00B5s';
+        document.getElementById('outCmpBias').textContent = (speedDriftPct >= 0 ? '+' : '') + speedDriftPct.toFixed(1) + '% speed err';
+      }
+
+      document.getElementById('outTrueDt').textContent = (trueDt_us >= 10000 ? (trueDt_us / 1000).toFixed(2) + ' ms' : Math.round(trueDt_us) + ' \u00B5s');
+      document.getElementById('outAdcV').textContent = v.toFixed(1) + ' m/s';
+
+      // Strobe schedule math
+      const w_us = Math.max(5, Math.min(100, Math.round(1000.0 / v)));
+      const spacing_mm = v < 12 ? 85.34 : 42.67;
+      const gap_us = Math.max(150, Math.round((spacing_mm / v) * 1000.0 - w_us));
+      let nPulses = 10;
+      while (nPulses > 3 && (nPulses * 9.0 * w_us / 1000.0) > 6.0) {
+        nPulses--;
+      }
+      document.getElementById('outStrobeW').textContent = w_us + ' \u00B5s';
+      document.getElementById('outStrobeGap').textContent = (gap_us >= 10000 ? (gap_us / 1000).toFixed(1) + ' ms' : gap_us + ' \u00B5s') + ' \u00D7 ' + nPulses;
+      document.getElementById('simXAxisLabel').textContent =
+        'Fixed Scope Timebase (' + (simWindowUs / 1000).toFixed(1) + ' ms span) \u2014 At ' + v + ' m/s, True FWHM = ' +
+        (trueDt_us >= 1000 ? (trueDt_us / 1000).toFixed(2) + ' ms' : Math.round(trueDt_us) + ' \u00B5s');
+    }
+
+    renderSimTicks();
+    updateSim();
+  </script>
+</body>
+</html>

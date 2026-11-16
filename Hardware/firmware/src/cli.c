@@ -14,6 +14,14 @@
 #include "service.h"
 #include "strobe.h"
 #include "strobe_plan.h"
+#include "camera.h"
+#include "cam_plan.h"
+#include "shot.h"
+#include "telemetry.h"
+#include "fw_update.h"
+#include "fw_layout.h"
+#include "pi_link.h"
+#include "link_proto.h"
 
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
@@ -126,6 +134,13 @@ static void bad_arg(const char *what, const char *got, const char *want) {
     printf("ERR: %s '%s' -- want %s. Nothing was changed.\n", what, got, want);
 }
 
+// A capture rate outside what the ADC's divider can make (independent review
+// 2026-10-15: a slower request wrapped the divider and ran at another rate).
+static void bad_rate(const char *got) {
+    printf("ERR: rate '%s' -- want %u-%u Hz, the range the ADC can be set to. Nothing was changed.\n",
+           got, (unsigned)ADC_RATE_MIN_HZ, (unsigned)ADC_RATE_MAX_HZ);
+}
+
 static const char *k_help =
     "\n"
     "PiTrac RP2354 bench CLI\n"
@@ -133,6 +148,14 @@ static const char *k_help =
     "  id                         firmware + chip identity\n"
     "  stat                       power state, rails, faults\n"
     "  pins                       read every signal pin\n"
+    "  hist                       halt telemetry (Phase 8.6): boots, Pi shutdowns,\n"
+    "                             Pi down unrequested, power cuts to a Pi, faults\n"
+    "  hist clear confirm         zero the counters (to flash after 10 s in STANDBY)\n"
+    "  link                       the Pi serial link (UART1, J8.8/J8.10): lines, counters\n"
+    "  upd                        firmware version, A/B partitions, the partner image,\n"
+    "                             a staged update from the Pi, the last update's result\n"
+    "  upd abort                  discard a staged update; cancel a pending\n"
+    "                             power-on of the Pi after an update\n"
     "\n"
     "  adc <ch> [n]               oversampled read (ch: 0,1,2,5,7)\n"
     "  adc ringtest [n]           switch the ring IDLE -> BURST n times (1-20, default\n"
@@ -141,7 +164,9 @@ static const char *k_help =
     "                             (samples x cycles/sample = SysTick). Fires nothing.\n"
     "  adc5v                      +5V_IN in volts (divider + cal applied)\n"
     "  adc5vcal <measured_volts>  trim the +5V_IN scale against a DMM\n"
-    "  capture <mask> <n> <rate>  block capture -> CSV. mask is a channel bitmask\n"
+    "  capture <mask> <n> <rate>  block capture -> CSV. mask is a channel bitmask;\n"
+    "                             rate " CLI_XSTR(ADC_RATE_MIN_HZ) "-" CLI_XSTR(ADC_RATE_MAX_HZ)
+    " Hz (the header gives the rate the ADC ran at)\n"
     "  capture trig <ch> [thr] [rate] [pre%] [tmo_s]\n"
     "                             TRIGGERED single shot. Runs the DMA in a ring\n"
     "                             and stops AFTER the trigger, so the buffer holds\n"
@@ -154,10 +179,12 @@ static const char *k_help =
     "                             refused elsewhere; never queues a later restart.\n"
     "  off                        request orderly shutdown\n"
     "  forceoff                   drop the latch immediately\n"
-    "  pisim                      show the simulated-Pi input levels\n"
+    "  pisim                      show the simulated-Pi input levels and J8.37\n"
     "\n"
     "  gpio <n>                   read a pin\n"
-    "  gpio <n> <0|1>             drive a pin (outputs only; guarded)\n"
+    "  gpio <n> <0|1>             drive a pin (outputs only; guarded). GPIO10, the\n"
+    "                             camera trigger: high only with the rail up, no\n"
+    "                             fault and no handshake running\n"
     "  led r|y <0|1>              on-board status LEDs (+3V3, work in standby)\n"
     "  panel pwr <0-100|auto>     power LED on J7 (needs the +5V rail latched)\n"
     "  panel rdy <0-100|auto>     ready LED on J7: on/off only, >= 50 lights it\n"
@@ -200,10 +227,12 @@ static const char *k_help =
     "  detect wave [seq]          dump a retained waveform as CSV\n"
     "\n"
     "  cfg                        show the saved calibration (carrier, phase, model)\n"
-    "  cfg save                   persist it. Refuses unless the machine is quiet\n"
+    "  cfg save                   persist it, with the halt telemetry. Refuses\n"
+    "                             unless the machine is quiet\n"
     "  cfg default                reset the in-RAM copy (does not erase flash)\n"
-    "  level                      LIVE % of full scale -- aim the target with this\n"
-    "                             BEFORE running cal demod. target 50-70 %.\n"
+    "  level                      LIVE % of full scale at the CURRENT demod phase:\n"
+    "                             an approximate aiming aid. Aim for 50-70 %, then\n"
+    "                             'cal demod' decides: its sweep peak and verdict\n"
     "  cal demod                  sweep the demod phase and commit it (3.4, ~26 s)\n"
     "  cal model [f0] [f1] [n]    fit phase vs frequency across a band (~128 s).\n"
     "                             NOTHING may move for the whole run.\n"
@@ -218,7 +247,8 @@ static const char *k_help =
     "  strobe gate <pct>          current-setpoint DAC 0-100 %; TP3 ~ 3 x DAC volts.\n"
     "                             dry: raised only while no pulse can start.\n"
     "                             live: at most ~3 % above the highest level already\n"
-    "                             fired and measured, and under the ~70 % ceiling\n"
+    "                             fired and measured, under the ~70 % ceiling, and\n"
+    "                             under the session cap once 'strobe cal' has solved\n"
     "  strobe pulse <us>          ONE pulse, " CLI_XSTR(STROBE_MIN_WIDTH_US) "-"
                                   CLI_XSTR(STROBE_SW_MAX_US) " us. dry: needs the gate at 0.\n"
     "  strobe burst <w> <gap> <n> uniform PIO/DMA burst: gap "
@@ -232,22 +262,52 @@ static const char *k_help =
     "  strobe off                 gate to 0, engine stopped, GPIO25 low, live mode off\n"
     "  strobe live                live state: staircase, budget, why it last ended\n"
     "  strobe live on [confirm]   'on' prints the checklist; 'on confirm' ARMS live\n"
-    "                             mode (from gate 0; arms the watchdog; limits the CLI)\n"
+    "                             mode (from gate 0; arms the watchdog unless a Pi is\n"
+    "                             powered; limits the CLI)\n"
     "  strobe live off            leave live mode: gate 0, engine stopped\n"
     "                             live: every firing is read back on ADC0. Overcurrent\n"
-    "                             or current outside the pulse latches a fault\n"
+    "                             or current outside the pulse latches a fault; a\n"
+    "                             spike, dip or extra pulse ends live mode\n"
     "  strobe cal [A]             live: solve the gate level for A amps (default 9.0)\n"
+    "                             and set the session cap from it\n"
     "  strobe wave                last live ADC0 record as CSV, 2 us per sample\n"
     "\n"
+    "  -- Phase 7: camera handshake (PIO1). NO CAMERA ON J4 (CR-09): 7a loopback,\n"
+    "  -- 7b a 3.3 V generator. The trigger is driven only with the rail up.\n"
+    "  cam                        handshake engine, trigger + strobe pins (read back),\n"
+    "                             the strobe gate, the last shot\n"
+    "  cam shot [first_us] [m/s] [timeout_us]\n"
+    "                             ONE test shot: trigger high, wait for both strobes,\n"
+    "                             then a DRY burst (the S15 schedule at m/s) fired by\n"
+    "                             the handshake at max(first delay, t_cam), in PIO.\n"
+    "                             Defaults " CLI_XSTR(CAM_SHOT_FIRST_DELAY_US) " us, 70 m/s, "
+                                  CLI_XSTR(CAM_TIMEOUT_US) " us. No strobes\n"
+    "                             by the timeout: the trigger drops, NOTHING fires,\n"
+    "                             CAM_TIMEOUT latches ('fault clear').\n"
+    "  cam trig [first_us] [timeout_us]\n"
+    "                             the handshake alone, no burst (trigger held "
+                                  CLI_XSTR(CAM_TRIG_HOLD_US) " us\n"
+    "                             after FIRE)\n"
+    "\n"
     "  fault                      show / 'fault clear' (also acks FAULT -> STANDBY)\n"
-    "  reset [force]              soft reset. REFUSED while a Pi is powered:\n"
-    "                             a reset drops the latch = hard power cut\n"
+    "  reset [force]              soft reset. REFUSED while a Pi may be powered (its\n"
+    "                             3V3 sensed, or a Pi classified) or the board is\n"
+    "                             still POWERING_ON, with the latch closed: a reset\n"
+    "                             drops the latch = hard power cut. Checked again\n"
+    "                             just before the reset, after a 50 ms wait\n"
     "  bootsel [force]            reboot to USB mass storage (same guard).\n"
-    "                             both disarm the watchdog first.\n"
+    "                             both disarm the watchdog just before. USB itself\n"
+    "                             cannot reset the board: 1200 baud, picotool -f off\n"
     "  wdog [on|off]              hardware watchdog. OFF by default -- a reset\n"
     "                             DROPS THE LATCH. Live strobe mode arms it itself.\n";
 
 // ---------------------------------------------------------------------------
+
+const char *cli_build_stamp(void) { return __DATE__ " " __TIME__; }
+
+static void print_version(uint32_t v) {
+    printf("%u.%u", (unsigned)(v >> 16), (unsigned)(v & 0xFFFFu));
+}
 
 static void cmd_id(void) {
     pico_unique_board_id_t uid;
@@ -259,16 +319,51 @@ static void cmd_id(void) {
            "           + strobe 6a/6b dry tests + 6c/6d live current (guarded, ADC0 per firing)\n"
            "           + ADC0 ring wait + DMA-counted readback, bracketed SRAM coverage (2026-10-12)\n"
            "           + E5-safe DMA stops, record proven by ADC/DMA flags, fresh + intact 5V_IN\n"
-           "           + ADC at true 500 ksps (DIV 0), synchronised snapshots\n");
-    printf("pending  : mic onset/veto, camera handshake, Pi integration\n");
-    printf("built    : " __DATE__ " " __TIME__ "\n");
+           "           + ADC at true 500 ksps (DIV 0), synchronised snapshots\n"
+           "           + live readback: fixed floor, pulse shape check, two-sample overcurrent\n"
+           "             (2026-10-15)\n"
+           "           + Phase 8 prep: J8.37 driven only for a powered Pi, USB reboot paths\n"
+           "             closed, halt telemetry ('hist'); session cap from 'strobe cal'\n"
+           "             (2026-10-19)\n"
+           "           + the Pi serial link ('link') and firmware updates from the Pi into\n"
+           "             the other A/B partition, try-before-you-buy ('upd') (2026-10-20)\n"
+           "           + Phase 7: the camera handshake (PIO1: trigger, both strobes, t_cam,\n"
+           "             timeout) firing a DRY strobe burst at max(first delay, t_cam);\n"
+           "             test shots only ('cam') (2026-11-10)\n"
+           "           + 'cal demod' refuses under 30 %% and puts the phase back when it\n"
+           "             does not commit; a saved threshold restored at boot; 'cfg save'\n"
+           "             names the fix (2026-11-11)\n"
+           "           + the strobe may fire with a Pi powered; live mode then arms no\n"
+           "             watchdog, and ends if a Pi appears or goes away, judged from\n"
+           "             its 3V3 as sensed now; 'level' is an aiming aid (2026-11-12)\n"
+           "           + 'reset', 'bootsel' and 'cfg save' count a Pi's 3V3 sensed now as a\n"
+           "             Pi, before the power state has classified it; 'reset' and\n"
+           "             'bootsel' refuse in POWERING_ON and check again just before\n"
+           "             the reboot (2026-11-12)\n");
+    printf("pending  : mic onset/veto, ball speed -> a fired shot from a detected pass, live\n"
+           "           current from the shot path, the Phase 8 shot messages on the link\n");
+    printf("version  : ");
+    print_version(PITRAC_FW_VERSION);
+    {
+        const fwu_layout_t *L = fwu_port_layout();
+        if (L->partitioned)
+            printf("  (partition %c at 0x%06lx)\n", L->run_start < L->other_start ? 'A' : 'B',
+                   (unsigned long)L->run_start);
+        else
+            printf("  (no partition table: flat at 0x%06lx)\n", (unsigned long)L->run_start);
+    }
+    printf("built    : %s\n", cli_build_stamp());
+#if defined(PITRAC_TEST_TRIAL_HANG) && PITRAC_TEST_TRIAL_HANG
+    printf("TEST BUILD: PITRAC_TEST_TRIAL_HANG -- never buys itself; not for use\n");
+#endif
     printf("board    : pitrac_ltb_v1 (RP2354B, 48 GPIO, 2MB internal flash)\n");
     printf("uid      : ");
     for (int i = 0; i < PICO_UNIQUE_BOARD_ID_SIZE_BYTES; i++) printf("%02x", uid.id[i]);
     printf("\n");
     printf("sysclk   : %u Hz\n", (unsigned)clock_get_hz(clk_sys));
-    printf("NOTE: run 'picotool info -a' on the host for the die revision;\n");
-    printf("      erratum E9 (input+pulldown latching ~2.2V) affects GPIO0/8/9 here.\n");
+    printf("NOTE: for the die revision, 'bootsel' and then 'picotool info -a' on the\n");
+    printf("      host (USB can no longer reboot a running board). Erratum E9\n");
+    printf("      (input+pulldown latching ~2.2V) affects GPIO0/8/9 here.\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -282,18 +377,61 @@ static void cmd_id(void) {
 //
 // Guarded rather than forbidden: there are legitimate reasons to reflash with a
 // Pi attached. It just must not happen by reflex on a console.
+//
+// "A Pi" is power_pi_maybe_present(): the FSM's classification OR the Pi's 3V3
+// sensed now (image 1.10, review finding V19-F1). Until 1.9 this read the FSM's
+// flag alone, which stays false while a Pi's 3V3 is already up -- for
+// PI_PRESENT_DEBOUNCE_MS of late detection in BENCH_RUNNING, and in POWERING_ON
+// before RAIL_SETTLE_MS -- so a plain `reset` there cut a powered Pi.
+//
+// And not in POWERING_ON at all (image 1.11, review finding V110-F1): the latch
+// has just closed and the FSM has not yet decided whether a Pi is there, which
+// is exactly when one raises its 3V3 (~5.6 ms after +5 V, BENCH_P8_PI.md 8.3).
+// Undecided is not "no Pi". BENCH_RUNNING, RUNNING or STANDBY come within
+// PI_DETECT_WINDOW_MS.
+//
+// The check is made TWICE per command: on entry, and again after the 50 ms
+// output wait, immediately before the reboot (reset_still_ok() below). In 1.10
+// a Pi whose 3V3 rose during that wait was cut: the entry check had passed.
 // ---------------------------------------------------------------------------
 static bool reset_guard_ok(int argc, char **argv, const char *cmd) {
-    // A Pi we know about, and a latch that is currently feeding it.
-    if (!(power_pi_present() && gpio_get_out_level(PIN_LATCH_CONTROL))) return true;
+    // A latch that is feeding J8, and a Pi that may be on it -- or the FSM still
+    // deciding whether there is one.
+    bool deciding = power_fsm_state() == PS_POWERING_ON;
+    if (!((power_pi_maybe_present() || deciding) && gpio_get_out_level(PIN_LATCH_CONTROL)))
+        return true;
     if (argc > 1 && !strcmp(argv[1], "force")) return true;
 
-    printf("REFUSED: a Pi is present and powered (state %s).\n"
+    // Not yet classified: in BENCH_RUNNING an `off` inside the FSM's debounce is
+    // still a hard cut (no Pi to shut down), so the Pi is classified first.
+    bool known = power_pi_present();
+    bool sensed = power_pi_3v3_sensed();
+    printf("REFUSED: %s, and the latch is closed (state %s).\n"
            "  '%s' resets the pads -> GPIO15 high-Z -> R12 pulls the latch open ->\n"
            "  the Pi loses +5V instantly. No shutdown, no sync, no warning.\n"
-           "  Shut the Pi down first ('off', or the panel button), then retry.\n"
+           "  %s\n"
            "  If you really mean it: '%s force'\n",
-           power_state_name(power_fsm_state()), cmd, cmd);
+           known  ? "a Pi is present and powered"
+         : sensed ? "a Pi's 3V3 is sensed (GPIO24), not yet classified"
+                  : "the board is still looking for a Pi",
+           power_state_name(power_fsm_state()), cmd,
+           known  ? "Shut the Pi down first ('off', or the panel button), then retry."
+         : sensed ? "Wait until 'stat' shows the Pi (PI_BOOTING or RUNNING, normally within\n"
+                    "  0.3 s), then shut it down ('off', or the panel button) and retry."
+                  : "Wait until 'stat' shows BENCH_RUNNING (no Pi: retry then) or a Pi's\n"
+                    "  state (shut it down first); up to 3 s after 'on'.",
+           cmd);
+    return false;
+}
+
+// The same guard, AFTER the command's 50 ms output wait and immediately before
+// its reboot (image 1.11, review finding V110-F1). The wait is a bare sleep, so
+// the FSM does not run during it: the latch, its state and its classification
+// are as they were at entry, and only the Pi's 3V3 can have changed. Called
+// BEFORE the watchdog is disarmed, so a refusal here leaves it as it was.
+static bool reset_still_ok(int argc, char **argv, const char *cmd) {
+    if (reset_guard_ok(argc, argv, cmd)) return true;
+    printf("  Nothing was done: the Pi's 3V3 rose during the 50 ms wait before '%s'.\n", cmd);
     return false;
 }
 
@@ -316,17 +454,25 @@ static void cmd_stat(void) {
     printf("pi       : present %d  3v3 %d  userspace %d  isdown %d\n",
            power_pi_present(), gpio_get(PIN_PI_3V3_SENSE),
            gpio_get(PIN_RPI5_ON), power_pi_is_down());
+    uint32_t down_ms = 0;
+    if (power_pi_down_unrequested(&down_ms))
+        printf("           *** DOWN WITHOUT A REQUEST, %lu s ago -- counted ('hist'). The rail\n"
+               "           stays up: 'off' or the button for an orderly end. ***\n",
+               (unsigned long)(down_ms / 1000u));
+    printf("J8.37    : %s\n", safe_state_pi_line_name(safe_state_pi_shutdown_mode()));
     printf("button   : %s\n", gpio_get(PIN_PWR_TOGGLE) ? "released" : "PRESSED");
     {
+        // Labelled by the read above, not by age == 0: that read itself takes
+        // ~1 ms, so a fresh value is already 1 ms old here (review round 5).
         uint32_t age = adc_5vin_age_ms();
         printf("adc      : mode %d   ring %s   5V_IN %s\n",
                (int)adc_engine_mode(),
                adc_ring_running() ? "RUNNING" : "*** STOPPED ***",
-               age == UINT32_MAX ? "never read" : (age == 0 ? "fresh" : "HELD"));
+               s5 == ADC_5VIN_FRESH ? "fresh" : (age == UINT32_MAX ? "never read" : "HELD"));
         // ch1 is not in the ARMED {5,7} or BURST {0} round-robin, so the value is
         // held rather than the ADC being stopped to go and fetch one (A1). Only
         // a FRESH reading resets the age (adc_5vin_read).
-        if (age && age != UINT32_MAX)
+        if (s5 != ADC_5VIN_FRESH && age != UINT32_MAX)
             printf("           +5V_IN last sampled %lu ms ago\n", (unsigned long)age);
     }
     // A watchdog that can reset the board -- and so drop the latch -- must be
@@ -334,6 +480,12 @@ static void cmd_stat(void) {
     printf("watchdog : %s%s\n",
            pitrac_watchdog_enabled() ? "ARMED (1 s)" : "off",
            pitrac_watchdog_enabled() ? "   a reset here DROPS THE LATCH" : "");
+    printf("halt     : boots %lu, Pi down unrequested %lu, power cuts to a Pi %lu,\n"
+           "           faults %lu -- 'hist'\n",
+           (unsigned long)telemetry_get(TELE_BOOTS),
+           (unsigned long)telemetry_get(TELE_PI_DOWN_UNREQ),
+           (unsigned long)telemetry_get(TELE_PI_POWER_CUT),
+           (unsigned long)telemetry_get(TELE_FAULTS));
 }
 
 static void cmd_pins(void) {
@@ -351,7 +503,6 @@ static void cmd_pins(void) {
 
     struct { const char *n; uint p; } out[] = {
         {"LATCH_CONTROL(15)",   PIN_LATCH_CONTROL},
-        {"RPI5_SHUTDOWN(43)",   PIN_RPI5_SHUTDOWN},
         {"SYSTEM_READY(2)",     PIN_SYSTEM_READY},
         {"STROBE_PULSE(25)",    PIN_STROBE_PULSE},
         {"PULSE_LIMIT_DIS(27)", PIN_PULSE_LIMIT_DIS},
@@ -365,10 +516,13 @@ static void cmd_pins(void) {
     printf("-- outputs --\n");
     for (size_t i = 0; i < count_of(out); i++)
         printf("  %-24s %d\n", out[i].n, gpio_get_out_level(out[i].p));
+    // Not a level: released is neither 0 nor 1 (board.h, "THE LINE'S REST STATE").
+    printf("  %-24s %s\n", "RPI5_SHUTDOWN(43)",
+           safe_state_pi_line_name(safe_state_pi_shutdown_mode()));
 #if PI_SHUTDOWN_ACTIVE_LOW
-    printf("  (RPI5_SHUTDOWN is ACTIVE LOW: 1 = deasserted)\n");
+    printf("  (RPI5_SHUTDOWN is ACTIVE LOW: driven 1 = deasserted)\n");
 #else
-    printf("  (RPI5_SHUTDOWN is ACTIVE HIGH: 0 = deasserted)\n");
+    printf("  (RPI5_SHUTDOWN is ACTIVE HIGH: driven 0 = deasserted)\n");
 #endif
 }
 
@@ -393,8 +547,8 @@ static void cmd_capture_trig(int argc, char **argv) {
     if (argc > 3 && !parse_u32_in(argv[3], 0u, 4095u, &thr_u)) {
         bad_arg("threshold", argv[3], "0-4095 codes"); return;
     }
-    if (argc > 4 && !parse_u32_in(argv[4], 1u, 0xFFFFFFFFu, &rate)) {
-        bad_arg("rate", argv[4], "a sample rate in Hz"); return;
+    if (argc > 4 && !parse_u32_in(argv[4], ADC_RATE_MIN_HZ, ADC_RATE_MAX_HZ, &rate)) {
+        bad_rate(argv[4]); return;
     }
     // adc_capture_triggered() clamps pre-trigger to 90 %; refuse more here so
     // the "armed:" line never reports a split the capture is not using.
@@ -417,11 +571,14 @@ static void cmd_capture_trig(int argc, char **argv) {
 
     uint16_t base = 0;
     size_t   trig = 0;
+    // The rate the divider will really run at (it rounds, and clamps near 500 k);
+    // the range check above guarantees one exists.
+    const uint32_t run_hz = adc_capture_rate_for(rate);
     printf("armed: ch%u, threshold %u codes, %lu Hz, %.0f%% pre-trigger.\n",
-           ch, thr, (unsigned long)rate, (double)(pref * 100.0f));
+           ch, thr, (unsigned long)run_hz, (double)(pref * 100.0f));
     // "  window" must stay the line prefix: tools/scope.py keys on it.
     printf("  window %.1f ms. Trigger the event now (%s). Any key aborts.\n",
-           (double)ADC_CAPTURE_MAX_SAMPLES * 1000.0 / (double)rate,
+           (double)ADC_CAPTURE_MAX_SAMPLES * 1000.0 / (double)run_hz,
            ch == (uint)ADC_CH_DETECT ? "roll the ball"
                : (ch == (uint)ADC_CH_MIC ? "make the sound" : "the stimulus"));
 
@@ -469,8 +626,8 @@ static void cmd_capture(int argc, char **argv) {
         bad_arg("mask", argv[1], "a channel bitmask, e.g. 0x20 for ch5"); return;
     }
     if (!parse_u32(argv[2], &n_u)) { bad_arg("sample count", argv[2], "a whole number"); return; }
-    if (!parse_u32_in(argv[3], 1u, 0xFFFFFFFFu, &rate)) {
-        bad_arg("rate", argv[3], "a sample rate in Hz"); return;
+    if (!parse_u32_in(argv[3], ADC_RATE_MIN_HZ, ADC_RATE_MAX_HZ, &rate)) {
+        bad_rate(argv[3]); return;
     }
     uint   mask = (uint)mask_u;
     size_t n    = (size_t)n_u;
@@ -520,14 +677,18 @@ static void cmd_capture(int argc, char **argv) {
 // Pins that the CLI is allowed to drive. PIN_PULSE_LIMIT_DIS is deliberately
 // absent: it defeats the strobe hardware watchdog and there must be no path to
 // it until Phase 6d. PIN_LATCH_CONTROL is absent too -- go through the FSM so
-// the USB-power guard cannot be bypassed.
+// the USB-power guard cannot be bypassed. So is PIN_RPI5_SHUTDOWN since
+// 2026-10-19: the FSM sets it on every pass, and a typed level could drive an
+// unpowered Pi. PIN_CAM_TRIGGER is not raw-writable since 2026-11-10 (independent
+// review H7-F3): `gpio 10 <0|1>` goes through camera_manual_trigger(), which
+// refuses a high with the rail down, a fault latched, or a handshake running.
 static bool gpio_writable(uint p) {
     switch (p) {
         case PIN_LED_RED: case PIN_LED_YELLOW:
         case PIN_PWR_BTN_LED: case PIN_READY_LED:
-        case PIN_CAM_TRIGGER: case PIN_USB_ENABLE:
+        case PIN_USB_ENABLE:
         case PIN_HPF_TOGGLE: case PIN_SYSTEM_READY:
-        case PIN_IRQ_OUT: case PIN_RPI5_SHUTDOWN:
+        case PIN_IRQ_OUT:
             return true;
         default:
             return false;
@@ -542,6 +703,20 @@ static void cmd_gpio(int argc, char **argv) {
 
     if (argc == 2) { printf("gpio%u = %d\n", p, gpio_get(p)); return; }
 
+    if (p == PIN_CAM_TRIGGER) {
+        // Exactly 0 or 1, then the camera's own rules (camera.h).
+        if (strcmp(argv[2], "0") && strcmp(argv[2], "1")) { bad_arg("level", argv[2], "0 or 1"); return; }
+        bool high = argv[2][0] == '1';
+        cam_start_t r = (high && shot_busy()) ? CAM_START_BUSY : camera_manual_trigger(high);
+        if (r != CAM_START_OK) {
+            printf("REFUSED: %s. gpio%u unchanged at %d.\n", camera_start_text(r), p,
+                   gpio_get_out_level(p));
+            return;
+        }
+        printf("gpio%u <- %d\n", p, gpio_get_out_level(p));
+        return;
+    }
+
     if (!gpio_writable(p)) {
         printf("ERR: gpio%u is not CLI-writable.\n", p);
         if (p == PIN_PULSE_LIMIT_DIS)
@@ -550,6 +725,12 @@ static void cmd_gpio(int argc, char **argv) {
         if (p == PIN_LATCH_CONTROL)
             printf("     GPIO15 is the +5V latch. Use 'on'/'off' so the USB-power\n"
                    "     guard is applied.\n");
+        if (p == PIN_RPI5_SHUTDOWN)
+            printf("     GPIO43 (J8.37) belongs to the power FSM, which sets it on every\n"
+                   "     pass: driven only with the latch closed and the Pi's 3V3 up,\n"
+                   "     released otherwise, and asserted only for the %d ms shutdown\n"
+                   "     request ('off').\n",
+                   PI_SHUTDOWN_PULSE_MS);
         return;
     }
     // Exactly 0 or 1. Anything else used to count as 1 -- `gpio 2 o` drove it high.
@@ -777,7 +958,25 @@ static void cmd_adc5vcal(int argc, char **argv) {
         if (argc < 2) { printf("usage: adc5vcal <volts measured with a DMM at +5V_IN>\n"); return; }
         float meas;
         if (!parse_float(argv[1], &meas)) { bad_arg("voltage", argv[1], "volts, e.g. 5.203"); return; }
-        float raw  = adc_read_volts(ADC_CH_5VIN, 256) * V5IN_DIVIDER;
+        // Trim the reading the power FSM decides on: ch1 of the IDLE ring, through
+        // adc_5vin_read(). Until 2026-10-15 the raw value came from a blocking
+        // single-channel read, which settles fully through the 50 kOhm divider and
+        // reads ~0.6 % above the ring at 500 ksps, so the trim did not reach
+        // `stat` (PROGRESS section 9, 2026-10-12).
+        if (adc_engine_mode() != ADC_MODE_IDLE) {
+            printf("REFUSED: adc5vcal trims the IDLE ring's +5V_IN reading, the one the\n"
+                   "  power FSM uses; the ADC is in mode %d. 'adcmode idle' first. Nothing changed.\n",
+                   (int)adc_engine_mode());
+            return;
+        }
+        float now = 0.0f;
+        adc_5vin_status_t st = adc_5vin_read(&now);
+        if (st != ADC_5VIN_FRESH) {
+            printf("REFUSED: no fresh +5V_IN reading from the ring (status %d). Nothing changed.\n",
+                   (int)st);
+            return;
+        }
+        float raw  = now / adc_get_5vin_scale();      // the scale is always > 0.5
         if (raw > 0.1f && meas > 0.1f) {
             adc_set_5vin_scale(meas / raw);
             printf("scale <- %.4f  (raw %.3f V, measured %.3f V)\n",
@@ -832,8 +1031,10 @@ static void cmd_pisim(int argc, char **argv) {
                gpio_get(PIN_PI_3V3_SENSE));
         printf("RPI5_ON(0)       = %d   <- jumper J8.15 to J8.1 (+3V3) to assert\n",
                gpio_get(PIN_RPI5_ON));
-        printf("RPI5_SHUTDOWN(43)= %d   -> scope J8.37 (%s)\n",
-               gpio_get_out_level(PIN_RPI5_SHUTDOWN),
+        printf("RPI5_SHUTDOWN(43)= %s\n"
+               "                   -> scope J8.37 (%s). Driven only with the latch\n"
+               "                   closed and PI_3V3_SENSE up; released otherwise.\n",
+               safe_state_pi_line_name(safe_state_pi_shutdown_mode()),
                PI_SHUTDOWN_ACTIVE_LOW ? "ACTIVE LOW" : "ACTIVE HIGH");
         printf("pi_is_down       = %d\n", power_pi_is_down());
     
@@ -1050,14 +1251,20 @@ static void cmd_cfg(int argc, char **argv) {
             }
             const char *why = cfg_save_blocked_reason();
             if (why) {
-                printf("REFUSED: %s.\n", why);
-                printf("  A 4 KB erase holds interrupts off for tens of ms, and during that\n"
-                       "  window the power FSM does not run -- so the V5_MIN_SUSTAINED monitor\n"
-                       "  is blind. That is the monitor that stops a Pi being fed through a\n"
-                       "  1 A diode. Quiesce first.\n");
+                const char *hint = cfg_save_unblock_hint();
+                printf("REFUSED: %s. Nothing was saved.\n", why);
+                printf("  To save: %s.\n", hint ? hint : "make the machine quiet first");
+                printf("  Why: a 4 KB erase holds interrupts off for tens of ms, and during\n"
+                       "  that window the power FSM does not run -- so the V5_MIN_SUSTAINED\n"
+                       "  monitor is blind. That is the monitor that stops a Pi being fed\n"
+                       "  through a 1 A diode.\n");
                 return;
             }
-            printf("%s\n", cfg_save() ? "saved" : "SAVE FAILED (readback did not verify)");
+            if (cfg_save())
+                printf("saved: %s, seq %lu -- calibration and the halt telemetry\n",
+                       cfg_source(), (unsigned long)cfg()->seq);
+            else
+                printf("SAVE FAILED (readback did not verify)\n");
             return;
         }
         if (argc >= 2 && !strcmp(argv[1], "default")) {
@@ -1106,7 +1313,13 @@ static void cmd_cfg(int argc, char **argv) {
                        "           re-run cal demod to fix.\n");
             }
             const char *why = cfg_save_blocked_reason();
-            printf("save     : %s\n", why ? why : "permitted now");
+            if (why) {
+                const char *hint = cfg_save_unblock_hint();
+                printf("save     : refused now: %s\n"
+                       "           to save: %s\n", why, hint ? hint : "make the machine quiet first");
+            } else {
+                printf("save     : permitted now\n");
+            }
         }
     
 }
@@ -1120,14 +1333,25 @@ static void cmd_level(int argc, char **argv) {
         if (detect_hpf_mode() != HPF_TRACK)
             printf("WARNING: HPF is in HOLD. A chopped reading needs TRACK -- 'hpf track'.\n");
 
+        // The CURRENT phase only (image 1.5's reading, kept from 1.7). 1.6's all-phase
+        // version stepped the phase faster than the HPF settles and clipped; see
+        // the note above CAL_LEVEL_CYCLES in cal.h (review finding V16-F1). From 1.8
+        // it is worded as an aiming aid, not a verdict (1.7 review note V17-N1).
         printf("live level: chopping at %u Hz, reading the peak at the CURRENT phase\n"
-               "  (%ld ticks, duty %.2f %%). Only the TRUE peak if the phase is already\n"
-               "  near it -- run 'cal demod' once first.\n",
+               "  (%ld ticks, duty %.2f %%). An approximate aiming aid, not a verdict:\n"
+               "  one reading at one phase, which can sit below 'cal demod's sweep peak\n"
+               "  even after a phase is committed. On a board that has never committed\n"
+               "  a phase it can read near 0 beside a good target: to set the level from\n"
+               "  scratch, run 'cal demod' and follow its verdict.\n",
                (unsigned)CAL_CHOP_HZ_DEFAULT, (long)beam_phase_ticks(),
                (double)(beam_duty() * 100.0f));
-        printf("TARGET 50-70 %% of full scale. Position the target, then CLAMP IT --\n"
-               "  a hand cannot hold still for the 128 s 'cal model' takes.\n"
-               "Any key stops; gives up after %u s.\n\n", (unsigned)(LEVEL_MAX_MS / 1000u));
+        printf("AIM for 50-70 %% of full scale, then run 'cal demod': its sweep peak and\n"
+               "  verdict decide (it will not commit under %.0f %%).\n"
+               "  Too low: aim the board at a plain wall or a white card, ~2 m away, and\n"
+               "  move it closer. Too high: further away, or a card over D12. Then CLAMP\n"
+               "  IT -- a hand cannot hold still for the 128 s 'cal model' takes.\n"
+               "Any key stops; gives up after %u s.\n\n",
+               (double)(CAL_PEAK_MIN_FRAC * 100.0f), (unsigned)(LEVEL_MAX_MS / 1000u));
 
         adc_engine_set_mode(ADC_MODE_ARMED);
         absolute_time_t t0 = get_absolute_time();
@@ -1149,9 +1373,10 @@ static void cmd_level(int argc, char **argv) {
             const char *verdict = settling      ? "settling -- HPF tau 0.66 s, ignore"
                                 : (pct > 90.0f) ? "*** TOO HIGH, will saturate ***"
                                 : (pct > 70.0f) ? "high -- less light"
-                                : (pct < 20.0f) ? "*** TOO LOW to fit ***"
+                                : (pct < CAL_PEAK_MIN_FRAC * 100.0f)
+                                                ? "*** very low -- more light ***"
                                 : (pct < 50.0f) ? "low  -- more light"
-                                                : "GOOD";
+                                                : "aim OK -- 'cal demod' decides";
             printf("  peak %5.0f = %3.0f %%  |%s|  %s\n",
                    (double)pk, (double)pct, bar, verdict);
 
@@ -1160,10 +1385,10 @@ static void cmd_level(int argc, char **argv) {
             if (pitrac_abort_pending()) break;
         }
         adc_engine_set_mode(ADC_MODE_IDLE);
-        printf("\nstopped. Beam left ON at %.2f %% duty.\n",
-               (double)(beam_duty() * 100.0f));
+        printf("\nstopped. Beam left ON at %.2f %% duty; phase unchanged at %ld ticks.\n",
+               (double)(beam_duty() * 100.0f), (long)beam_phase_ticks());
         return;
-    
+
 }
 
 static void cmd_cal(int argc, char **argv) {
@@ -1179,6 +1404,11 @@ static void cmd_cal(int argc, char **argv) {
                        (unsigned long)(BEAM_WARMUP_MS / 1000u));
             adc_engine_set_mode(ADC_MODE_ARMED);
             cal_demod_t r;
+            // The sweep steps the phase across the grid and leaves it on the last
+            // point. Up to image 1.5 a sweep that was NOT committed (or aborted)
+            // left the beam there, 1417 ticks at 104 kHz, instead of on the phase
+            // it had. Kept here and put back below whenever nothing is committed.
+            int32_t phase_before = beam_phase_ticks();
             // Print the frequency. `cal model` used to leave the beam at
             // 200 kHz, and without this line nothing on screen said which
             // carrier was actually being calibrated.
@@ -1188,6 +1418,7 @@ static void cmd_cal(int argc, char **argv) {
             bool ok = cal_demod_phase(beam_actual_freq_hz(), CAL_PHASE_POINTS,
                                       CAL_CHOP_CYCLES, CAL_CHOP_HZ_DEFAULT, &r);
             adc_engine_set_mode(ADC_MODE_IDLE);
+            if (!ok || !cal_demod_commit_ok(&r)) beam_set_phase(phase_before);
             printf("\nfit      : %ld ticks   (grid argmax %ld)\n",
                    (long)r.best_ticks, (long)r.argmax_ticks);
             // The tick count is an encoding; the delay is the measurement. It is
@@ -1203,8 +1434,13 @@ static void cmd_cal(int argc, char **argv) {
                    "            factor at %.2f %% duty -- the RAIL is hit by the peak)\n",
                    (double)r.peak, (double)(r.peak / ADC_FULL_SCALE * 100.0f),
                    (r.peak > ADC_FULL_SCALE)
-                       ? "  *** ABOVE FULL SCALE -- impossible for a real signal ***" : "",
+                       ? "  *** ABOVE FULL SCALE -- impossible for a real signal ***"
+                   : r.too_small
+                       ? "  *** TOO SMALL -- under the floor below ***" : "",
                    (double)r.form_factor, (double)(r.duty * 100.0f));
+            printf("floor    : %.0f %% of full scale to commit (target 50-70 %%)%s\n",
+                   (double)(CAL_PEAK_MIN_FRAC * 100.0f),
+                   r.too_small ? "  *** FAIL ***" : "");
             printf("saturated: %.0f %% of sweep points against the rail  (limit %.0f %%)%s\n",
                    (double)(r.sat_frac * 100.0f), (double)(CAL_SAT_MAX * 100.0f),
                    (r.sat_frac >= CAL_SAT_MAX) ? "  *** FAIL ***" : "");
@@ -1227,12 +1463,18 @@ static void cmd_cal(int argc, char **argv) {
                        "              response from a clipped one -- both approach\n"
                        "              0.333. Trust sat_frac here, not h3.\n");
             printf("warm     : %s\n", r.warm ? "yes" : "NO -- see above");
-            cfg_mut()->cal_warm = r.warm ? 1u : 0u;
-            // The duty is part of the answer, not context: phase_ticks carries a
-            // -(duty/2)*(TOP+1) geometric term, so a phase without the duty it was
-            // measured at cannot be used at any other duty.
-            cfg_mut()->cal_duty = r.duty;
-            if (ok) {
+            // Image 1.6: committed only if clean AND above the floor. `ok` alone
+            // (cal_demod_phase()'s return) is the quality verdict; `cal model`
+            // still uses that for its points.
+            if (ok && cal_demod_commit_ok(&r)) {
+                // These two describe the COMMITTED phase, so they are written
+                // with it. Up to 1.5 they were written before the verdict, and a
+                // refused sweep at another duty relabelled the phase still held.
+                cfg_mut()->cal_warm = r.warm ? 1u : 0u;
+                // The duty is part of the answer, not context: phase_ticks carries
+                // a -(duty/2)*(TOP+1) geometric term, so a phase without the duty
+                // it was measured at cannot be used at any other duty.
+                cfg_mut()->cal_duty = r.duty;
                 beam_set_phase(r.best_ticks);
                 printf("phase <- %ld ticks. Record it in PROGRESS.md section 6.\n",
                        (long)r.best_ticks);
@@ -1247,9 +1489,16 @@ static void cmd_cal(int argc, char **argv) {
                            "  14.5 (R98 is DNP, and fitting it only raises gain). In order of\n"
                            "  preference: move the reflector further away, use a darker one\n"
                            "  (grey card, not white), or add an ND filter over D12.\n");
+                } else if (r.too_small) {
+                    printf("  THE SIGNAL IS TOO SMALL. Add LIGHT: take any card off D12; then\n"
+                           "  aim the board at a plain wall or a white card, starting ~2 m away,\n"
+                           "  and move it closer or angle it. Clamp the target, then run\n"
+                           "  'cal demod' again: the aim is 50-70 %% of full scale.\n");
                 } else {
                     printf("  Check the reflector, the HPF mode and that the beam is on.\n");
                 }
+                printf("  The phase is back at %ld ticks, where it was before the sweep.\n",
+                       (long)beam_phase_ticks());
             }
             return;
         }
@@ -1761,7 +2010,7 @@ static void print_strobe_result(const strobe_result_t *r) {
 static void print_live_meas(const strobe_live_shot_t *s) {
     const strobe_live_meas_t *m = &s->meas;
     printf("ADC0     : %u samples at 500 ksps, %u before the edge; baseline %.1f codes\n"
-           "           (%.3f A); threshold %u codes. Verdict: %s%s\n",
+           "           (%.3f A); floor %u codes. Verdict: %s%s\n",
            (unsigned)m->n_samples, (unsigned)m->pre_samples, (double)m->baseline_code,
            (double)strobe_code_to_amps(m->baseline_code), m->threshold_code,
            strobe_verdict_text(m->verdict),
@@ -1786,9 +2035,43 @@ static void print_live_meas(const strobe_live_shot_t *s) {
            "           >= %u needed)\n",
            (unsigned)s->pre_by_time, (unsigned)s->pre_by_index,
            (unsigned)STROBE_LIVE_PRE_MIN_SAMPLES);
+    // An unusable record says nothing either way: no "no current" from it
+    // (independent review 2026-10-15) -- nor from one not proven complete.
+    if (m->verdict == STROBE_VERDICT_NO_DATA) {
+        printf("           NO MEASUREMENT: too little baseline or record to judge (see the\n"
+               "           lines above). Nothing is known about current in this firing.\n");
+        return;
+    }
+    // Which overcurrent rule fired: the pulse list alone may not show it (two of
+    // three samples, or a lone sample over I_PEAK_STOP outside any pulse).
+    if (m->verdict == STROBE_VERDICT_OVERCURRENT) {
+        printf("           OVERCURRENT (%.1f A sustained, %.1f A in one sample):",
+               (double)STROBE_LIVE_I_STOP_A, (double)STROBE_LIVE_I_PEAK_STOP_A);
+        if (m->max_amps > STROBE_LIVE_I_STOP_A)
+            printf(" plateau %.3f A;", (double)m->max_amps);
+        if (m->max_held_a > STROBE_LIVE_I_STOP_A)
+            printf(" two samples in a row at %.3f A;", (double)m->max_held_a);
+        if (m->over_2of3)
+            printf(" two of three samples over from +%lu us;", (unsigned long)m->over_2of3_us);
+        if (m->max_peak_a > STROBE_LIVE_I_PEAK_STOP_A)
+            printf(" a sample at %.3f A;", (double)m->max_peak_a);
+        printf("\n");
+    }
+    if (!m->detected && s->readback_err) {
+        printf("           no current pulse found, but the record is NOT proven complete:\n"
+               "           that is not evidence of no current.\n");
+        return;
+    }
     if (!m->detected) {
-        printf("           no current above the ~%.0f mA detection floor\n",
+        printf("           no current pulse above the ~%.0f mA floor\n",
                1000.0 * (double)strobe_code_to_amps((float)STROBE_LIVE_DETECT_MIN_CODES));
+        // Lone samples over the floor are not a pulse, but they are not hidden
+        // either (until 2026-10-15 this line also covered pulses that the old
+        // half-peak threshold had missed).
+        if ((float)m->peak_code > m->baseline_code + (float)STROBE_LIVE_DETECT_MIN_CODES)
+            printf("           but single samples were above it, the highest %.3f A at +%lu us:\n"
+                   "           ADC noise, or a pulse shorter than ~4 us -- compare with TP4\n",
+                   (double)m->max_peak_a, (unsigned long)m->peak_us);
         return;
     }
     uint32_t shown = m->n_pulses < STROBE_BURST_MAX_PULSES ? m->n_pulses
@@ -1804,6 +2087,18 @@ static void print_live_meas(const strobe_live_shot_t *s) {
     if (m->n_pulses > shown)
         printf("  ... %lu runs in all, %lu kept\n", (unsigned long)m->n_pulses,
                (unsigned long)shown);
+    if (m->shape != STROBE_SHAPE_CLEAN) {
+        const double margin_a =
+            (double)strobe_code_to_amps((float)STROBE_LIVE_SHAPE_MARGIN_CODES);
+        const bool over = m->shape == STROBE_SHAPE_OVERSHOOT;
+        printf("  NOT CLEAN: pulse %lu %s -- %.3f A at +%lu us against a settled %.3f A;\n"
+               "           bound %.3f A (settled x %.2f %s %.3f A)\n",
+               (unsigned long)(m->shape_pulse + 1u), strobe_shape_text(m->shape),
+               (double)m->shape_a, (unsigned long)m->shape_at_us,
+               (double)m->shape_settled_a, (double)m->shape_limit_a,
+               over ? 1.0 + (double)STROBE_LIVE_SHAPE_TOL : 1.0 - (double)STROBE_LIVE_SHAPE_TOL,
+               over ? "+" : "-", margin_a);
+    }
     if (shown > 1u) {
         float first = m->pulse[0].amps, last = m->pulse[shown - 1u].amps;
         printf("  burst   : min %.3f A, max %.3f A, first -> last %+.1f %%\n",
@@ -1829,15 +2124,25 @@ static void live_status(const strobe_info_t *i) {
     } else {
         printf("live     : *** ARMED *** for %lu s; idle exit in %lu s\n",
                (unsigned long)(i->live_for_ms / 1000u), (unsigned long)(i->idle_left_ms / 1000u));
-        printf("watchdog : %s\n", !l->watchdog_armed ? "*** OFF ***"
+        printf("watchdog : %s\n",
+               !l->watchdog_armed ? (l->pi_at_arm
+                                     ? "off: not armed with a Pi powered (a reset would cut its power)"
+                                     : "*** OFF ***")
                : i->live_owns_wdog ? "ARMED by live mode; disarmed when live mode ends"
                                    : "ARMED by 'wdog on'; stays armed when live mode ends");
-        uint16_t lim = strobe_live_gate_limit(l->gate_proven);
+        uint16_t lim = strobe_live_raise_limit(l->gate_proven, l->session_cap);
         printf("staircase: proven to level %u (%.2f %%); may raise to %u (%.2f %%, TP3 %.2f V)\n"
                "           ceiling %u (%.2f %%, TP3 %.2f V)\n",
                l->gate_proven, gate_pct(l->gate_proven), lim, gate_pct(lim),
                gate_tp3_volts(lim), (unsigned)STROBE_LIVE_GATE_CEILING,
                gate_pct(STROBE_LIVE_GATE_CEILING), gate_tp3_volts(STROBE_LIVE_GATE_CEILING));
+        if (l->session_cap)
+            printf("cap      : level %u (%.2f %%, TP3 %.2f V), from 'strobe cal': where the\n"
+                   "           current could first reach the %.1f A stop. Re-run the cal to move it.\n",
+                   l->session_cap, gate_pct(l->session_cap), gate_tp3_volts(l->session_cap),
+                   (double)STROBE_LIVE_I_STOP_A);
+        else
+            printf("cap      : none yet -- a solved 'strobe cal' sets one\n");
         strobe_refusal_t f = strobe_live_may_fire(&i->snap, l);
         printf("may fire : %s\n", f == STROBE_OK ? "yes" : strobe_refusal_text(f));
     }
@@ -1907,7 +2212,7 @@ static void strobe_status(void) {
                "           Live current (6c/6d) is 'strobe live on confirm'.\n");
     printf("rail     : %s (state %s)   fault %s   pi %s\n",
            i.snap.rails_ready ? "up" : "DOWN", power_state_name(power_fsm_state()),
-           fault_name(fault_current()), i.snap.pi_present ? "PRESENT" : "absent");
+           fault_name(fault_current()), strobe_pi_text(i.snap.pi));
 
     bool limit_ok = i.limit_out_sio && !i.limit_out_level && !i.limit_pad;
     printf("GPIO27   : %s, driven %d, pad %d  -> %s\n",
@@ -1991,22 +2296,36 @@ static void live_checklist(void) {
            "  - scope on TP4 (135 mV/A) and TP3, grounds on the R66 GND-pad wires\n"
            "    (not TP1 or TP5); FLIR on Q9 and HS1; 'adc 0' < 10 codes\n"
            "  - nothing conductive near D12 (36 V); no probe tips in fine-pitch areas\n"
-           "  - no Pi on J8; beam off; detector disarmed; ADC idle; gate at 0\n"
+           "  - beam off; detector disarmed; ADC idle; gate at 0\n"
+           "  - a Pi on J8 only by BENCH_P8_PI.md 8.10, with the owner's go: then\n"
+           "    the PSU limit >= 5 A\n"
            "Live mode then:\n"
-           "  - arms the 1 s watchdog (and disarms it again on exit if it armed it)\n"
-           "  - limits the CLI to: help id stat pins adc5v fault off forceoff wdog strobe\n"
+           "  - arms the 1 s watchdog, and disarms it again on exit if it armed it.\n"
+           "    NOT with a Pi powered: a watchdog reset would cut the Pi's power.\n"
+           "    A Pi that appears or goes away while live ends live mode, and so\n"
+           "    does a Pi whose 3V3 and power state disagree.\n"
+           "  - limits the CLI to: help id stat pins hist adc5v fault off forceoff wdog\n"
+           "    strobe\n"
            "  - gate <= level %u (%.1f %%, TP3 ~%.2f V); each raise at most %u levels\n"
-           "    (%.1f %%) above the highest level already fired and measured\n"
-           "  - reads every firing back on ADC0: a plateau over %.1f A (or a sample over\n"
-           "    %.1f A) latches STROBE_OVERCURRENT; current before the pulse, after it,\n"
-           "    or on longer than %u us latches STROBE_CLAMP. Either ends live mode\n"
-           "    with the gate at 0.\n"
+           "    (%.1f %%) above the highest level already fired and measured; once\n"
+           "    'strobe cal' solves, never above its session cap\n"
+           "  - reads every firing back on ADC0, against a fixed ~%.0f mA floor:\n"
+           "    a plateau, or two of any three samples in a row, over %.1f A, or one\n"
+           "    sample over %.1f A, latches STROBE_OVERCURRENT; current before the\n"
+           "    pulse, after it, or on longer than %u us latches STROBE_CLAMP; a spike\n"
+           "    or dip beyond +-%.0f %% (+%.2f A) of a pulse's settled level, or more\n"
+           "    pulses than fired, ends live mode without a fault. Each leaves the gate\n"
+           "    at 0.\n"
            "  - >= %lu ms between firings; <= %.1f mC per %lu s, booked at %.1f A\n"
            "  - ends itself after %lu s with no strobe command\n",
            (unsigned)STROBE_LIVE_GATE_CEILING, gate_pct(STROBE_LIVE_GATE_CEILING),
            gate_tp3_volts(STROBE_LIVE_GATE_CEILING), (unsigned)STROBE_LIVE_GATE_STEP_MAX,
-           gate_pct(STROBE_LIVE_GATE_STEP_MAX), (double)STROBE_LIVE_I_STOP_A,
+           gate_pct(STROBE_LIVE_GATE_STEP_MAX),
+           1000.0 * (double)strobe_code_to_amps((float)STROBE_LIVE_DETECT_MIN_CODES),
+           (double)STROBE_LIVE_I_STOP_A,
            (double)STROBE_LIVE_I_PEAK_STOP_A, (unsigned)STROBE_LIVE_MAX_ON_US,
+           100.0 * (double)STROBE_LIVE_SHAPE_TOL,
+           (double)strobe_code_to_amps((float)STROBE_LIVE_SHAPE_MARGIN_CODES),
            (unsigned long)STROBE_LIVE_MIN_INTERVAL_MS, (double)STROBE_LIVE_BUDGET_MC,
            (unsigned long)(STROBE_LIVE_BUDGET_WINDOW_MS / 1000u),
            (double)STROBE_TARGET_CURRENT_A,
@@ -2042,10 +2361,13 @@ static void cmd_strobe_live(int argc, char **argv) {
                    strobe_refusal_text(r));
             return;
         }
-        printf("LIVE: ARMED. Gate 0; the staircase starts from level 0. Watchdog ARMED (1 s).\n"
+        printf("LIVE: ARMED. Gate 0; the staircase starts from level 0. %s\n"
                "  First step (6c): 'strobe pulse 20' at gate 0 -- expect no current --\n"
                "  then 'strobe gate 3', 'strobe pulse 20', and compare every result\n"
-               "  with TP4. Raise in 3 %% steps; each firing judged OK moves the limit up.\n");
+               "  with TP4. Raise in 3 %% steps; each firing judged OK moves the limit up.\n",
+               pitrac_watchdog_enabled()
+                   ? "Watchdog ARMED (1 s)."
+                   : "Watchdog NOT armed: a Pi is powered, and a reset would cut its power.");
         return;
     }
     printf("usage: strobe live | strobe live on [confirm] | strobe live off\n");
@@ -2089,10 +2411,17 @@ static void cmd_strobe_cal(int argc, char **argv) {
                c.confirm_ok ? "every pulse within 5 % -- PASS"
                             : "*** a pulse is outside 5 % -- do not trust this level ***",
                c.solved_level);
+        printf("  Session cap: level %u (%.2f %%, TP3 nominal %.2f V). No raise above it until\n"
+               "  the next cal or re-arm: it is where the current could first reach the\n"
+               "  %.1f A stop, at %.3f A per level -- the steepest any board can have.\n",
+               c.session_cap, gate_pct(c.session_cap), gate_tp3_volts(c.session_cap),
+               (double)STROBE_LIVE_I_STOP_A, (double)STROBE_SESSION_CAP_A_PER_LEVEL);
     } else {
         printf("CAL FAILED: %s", strobe_cal_res_text(c.res));
         if (c.res == STROBE_CAL_RES_REFUSED) printf(" -- %s", strobe_refusal_text(c.refusal));
         printf(". Gate %s.\n", strobe_live_armed() ? "back to 0, still live" : "0");
+        if (strobe_live_armed())
+            printf("  No session cap: the ceiling and the staircase apply, as before a cal.\n");
     }
     if (was_live && !strobe_live_armed()) print_live_ended();
 }
@@ -2151,13 +2480,18 @@ static void cmd_strobe(int argc, char **argv) {
         if (r != STROBE_OK) {
             printf("REFUSED: %s. Gate unchanged at level %u (%.2f %%).\n",
                    strobe_refusal_text(r), strobe_gate_level(), gate_pct(strobe_gate_level()));
-            if (r == STROBE_REFUSE_STEP || r == STROBE_REFUSE_CEILING) {
+            if (r == STROBE_REFUSE_STEP || r == STROBE_REFUSE_CEILING ||
+                r == STROBE_REFUSE_SESSION_CAP) {
                 strobe_info_t i;
                 strobe_info(&i);
-                uint16_t lim = strobe_live_gate_limit(i.live_in.gate_proven);
+                uint16_t lim = strobe_live_raise_limit(i.live_in.gate_proven,
+                                                       i.live_in.session_cap);
                 printf("  Asked for level %u. Highest allowed now: level %u (%.2f %%) -- proven\n"
-                       "  to %u. Each live firing judged within limits moves the limit up.\n",
+                       "  to %u. Each live firing judged within limits moves the staircase up.\n",
                        level, lim, gate_pct(lim), i.live_in.gate_proven);
+                if (i.live_in.session_cap)
+                    printf("  Session cap: level %u, from the last 'strobe cal'. The staircase\n"
+                           "  cannot pass it.\n", i.live_in.session_cap);
             }
             return;
         }
@@ -2247,6 +2581,202 @@ static void cmd_strobe(int argc, char **argv) {
            "     live [on [confirm] | off] | cal [A] | wave\n", sub);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 7: the camera handshake (BENCH_P5_P7_MIC_CAMERA.md 7a/7b).
+//
+// A test shot starts at the handshake: no beam, no detector. shot.c runs it from
+// the superloop; this command starts it, yields until it is logged, and prints
+// it. Times from the trigger's rise are the PIO's own counts (cam_plan.h), exact
+// to one 5-cycle loop; the "CPU saw" times are polled and only coarse.
+// ---------------------------------------------------------------------------
+
+static float cyc_us(uint32_t cycles, uint32_t hz) { return cam_cycles_to_us(cycles, hz); }
+
+static void print_shot(const shot_result_t *s) {
+    const cam_run_t *c = &s->cam;
+    const uint32_t hz = c->plan.sys_hz ? c->plan.sys_hz : (uint32_t)clock_get_hz(clk_sys);
+    printf("shot     : #%lu (%s) -- %s\n", (unsigned long)s->seq,
+           s->test ? "test" : "detected pass", shot_end_text(s->end));
+
+    if (s->end == SHOT_END_REFUSED) {
+        if (s->plan_err != CAM_PLAN_OK)
+            printf("           plan: %s\n", cam_plan_err_text(s->plan_err));
+        else if (s->req.strobe && s->strobe.outcome != STROBE_RUN_TIMEOUT &&
+                 s->cam_start == CAM_START_OK) {
+            printf("           strobe: %s\n", strobe_run_text(s->strobe.outcome));
+            if (s->strobe.outcome == STROBE_RUN_REFUSED)
+                printf("           %s\n", strobe_refusal_text(s->strobe.refusal));
+            if (s->strobe.outcome == STROBE_RUN_INVALID)
+                printf("           %s\n", strobe_burst_err_text(s->strobe.burst_err));
+        } else {
+            printf("           camera: %s\n", camera_start_text(s->cam_start));
+        }
+        return;
+    }
+    if (!c->valid) return;
+
+    printf("plan     : first delay %lu us, timeout %lu us, hold %lu us -> D %lu, T %lu, H %lu\n"
+           "           (5-cycle loops at %lu Hz = %.1f ns)\n",
+           (unsigned long)s->cam_req.first_delay_us, (unsigned long)s->cam_req.timeout_us,
+           (unsigned long)s->cam_req.hold_us, (unsigned long)c->plan.d,
+           (unsigned long)c->plan.t, (unsigned long)c->plan.h, (unsigned long)hz,
+           (double)((double)CAM_PIO_LOOP_CYCLES * 1.0e9 / (double)hz));
+
+    const cam_decoded_t *d = &c->res;
+    if (c->words == 0u) {
+        printf("handshake: %s (no word from the engine)\n", camera_run_text(c->state));
+    } else if (d->outcome == CAM_OUT_TIMEOUT) {
+        printf("handshake: TIMEOUT -- both strobes not seen. Trigger dropped at %.3f us\n"
+               "           after it rose; no FIRE was raised.\n",
+               (double)cyc_us(cam_timeout_release_cycles(&c->plan), hz));
+    } else if (d->outcome == CAM_OUT_EARLY || d->outcome == CAM_OUT_LATE) {
+        printf("handshake: both strobes high at t_cam = %.3f us (to one loop, %.1f ns)\n",
+               (double)cyc_us(d->detect_cycles, hz), (double)((double)CAM_PIO_LOOP_CYCLES * 1.0e9 / (double)hz));
+        if (d->outcome == CAM_OUT_EARLY)
+            printf("           within the first delay: FIRE at %.3f us (the first delay)\n",
+                   (double)cyc_us(d->fire_cycles, hz));
+        else
+            printf("           AFTER the first delay (%lu us): FIRE at once, %.3f us\n"
+                   "           (the delay clamped to zero -- no underflow)\n",
+                   (unsigned long)s->cam_req.first_delay_us, (double)cyc_us(d->fire_cycles, hz));
+        printf("           trigger released at %.3f us (FIRE + the hold)\n",
+               (double)cyc_us(cam_release_after_fire_cycles(&c->plan, d->fire_cycles), hz));
+    } else {
+        printf("handshake: %s\n", cam_outcome_text(d->outcome));
+    }
+    printf("           engine: %s. Words %08lx %08lx. CPU saw them %lu / %lu us\n"
+           "           after the start. Trigger pad low afterwards: %s\n",
+           camera_run_text(c->state), (unsigned long)c->word0, (unsigned long)c->word1,
+           (unsigned long)c->cpu_ready_us, (unsigned long)c->cpu_end_us,
+           c->trigger_low_after ? "yes" : "*** NO ***");
+
+    if (s->req.strobe) {
+        const strobe_burst_t *b = &s->req.burst;
+        printf("strobe   : DRY burst %lu x %lu us, gap %lu us -- %s\n",
+               (unsigned long)b->count, (unsigned long)b->width_us, (unsigned long)b->gap_us,
+               strobe_run_text(s->strobe.outcome));
+        if (s->end == SHOT_END_FIRED)
+            printf("           %u pulses; the first rising edge %.1f-%.1f us after the trigger\n"
+                   "           (FIRE + %u-%u us: the burst engine's 1 MHz start)\n",
+                   (unsigned)s->pulses_fired,
+                   (double)(cyc_us(d->fire_cycles, hz) + (float)STROBE_PIO_GATE_TO_EDGE_US),
+                   (double)(cyc_us(d->fire_cycles, hz) + (float)STROBE_PIO_GATE_TO_EDGE_US + 1.0f),
+                   (unsigned)STROBE_PIO_GATE_TO_EDGE_US, (unsigned)STROBE_PIO_GATE_TO_EDGE_US + 1u);
+        if (s->end == SHOT_END_CAM_TIMEOUT || s->end == SHOT_END_ENGINE ||
+            s->end == SHOT_END_ABORTED)
+            printf("           strobe gate: %s\n", strobe_gate_seen_text(s->gate));
+    }
+    if (s->end == SHOT_END_CAM_TIMEOUT)
+        printf("fault    : CAM_TIMEOUT latched -- 'fault clear' before the next shot\n");
+    if (s->end == SHOT_END_ENGINE)
+        printf("fault    : INTERNAL latched -- an engine did something its program cannot.\n"
+               "           Save this output; 'cam' shows the engines' state.\n");
+}
+
+static void cam_status(void) {
+    camera_info_t i;
+    camera_info(&i);
+    printf("engine   : PIO%u SM%u, program %u..%u (%u instructions), %s, PC %u (%s)\n"
+           "           TX %u RX %u, clock %lu Hz (one loop = %.1f ns)\n",
+           i.pio_index, i.sm, i.offset, i.offset + i.length - 1u, i.length,
+           i.sm_enabled ? "RUNNING" : "stopped", i.pc, camera_pc_label(i.pc),
+           i.tx_level, i.rx_level, (unsigned long)i.sys_hz, (double)((double)CAM_PIO_LOOP_CYCLES * 1.0e9 / (double)i.sys_hz));
+    printf("pins     : D_Cam_Trigger(10) on %s, pad %d, SIO out %d\n"
+           "           Cam_Strobe_0(8) %d   Cam_Strobe_1(9) %d\n",
+           i.trigger_pio ? "PIO1" : "SIO", i.trigger_pad, i.trigger_out_sio,
+           i.strobe0_pad, i.strobe1_pad);
+    strobe_info_t s;
+    strobe_info(&s);
+    printf("gate     : strobe engine PC %u (gate %u, burst %u..%u)%s; FIRE flag (PIO0 irq %u) %d\n",
+           s.sm_pc, s.gate_offset, s.pio_offset, s.pio_offset + 11u,
+           s.gated ? ", a camera-gated burst ARMED" : "", (unsigned)PIO_IRQ_CAM_FIRE, s.fire_flag);
+    printf("sequencer: %s\n", shot_state_name(shot_state()));
+    printf("limits   : timeout %u us (%u-%u), first delay <= %u us, hold <= %u us\n",
+           (unsigned)CAM_TIMEOUT_US, (unsigned)CAM_TIMEOUT_MIN_US, (unsigned)CAM_TIMEOUT_MAX_US,
+           (unsigned)CAM_FIRST_DELAY_MAX_US, (unsigned)CAM_HOLD_MAX_US);
+    printf("J4       : NO CAMERA (CR-09). 7a: J4.3 jumpered to J4.7 and J4.8.\n"
+           "           7b: a 3.3 V generator on J4.7/J4.8, triggered from J4.3.\n");
+    shot_result_t r;
+    if (shot_last(&r)) print_shot(&r);
+    else               printf("shot     : none since boot\n");
+}
+
+// Start a test shot, yield until it is logged, print it.
+static void run_test_shot(const shot_test_req_t *q) {
+    shot_result_t r;
+    if (!shot_test_start(q, &r)) { print_shot(&r); return; }
+    // The shot's own deadlines end it; this bound only keeps the CLI from hanging.
+    const uint32_t hold = q->strobe ? strobe_burst_duration_us(&q->burst) + CAM_HOLD_MARGIN_US
+                                    : q->hold_us;
+    const uint64_t limit = time_us_64() + (uint64_t)q->timeout_us + hold
+                         + 3u * CAM_ENGINE_MARGIN_US + 1000000u;
+    while (shot_busy() && time_us_64() < limit) (void)pitrac_yield_ms(1);
+    if (shot_busy()) {
+        printf("*** the shot did not end within %lu us: 'cam' shows where it is ***\n",
+               (unsigned long)(limit - r.cam.t_start_us));
+        return;
+    }
+    if (shot_last(&r)) print_shot(&r);
+}
+
+static void cmd_cam(int argc, char **argv) {
+    if (argc < 2) { cam_status(); return; }
+    const char *sub = argv[1];
+    shot_test_req_t q;
+    memset(&q, 0, sizeof q);
+    q.first_delay_us = CAM_SHOT_FIRST_DELAY_US;
+    q.timeout_us     = CAM_TIMEOUT_US;
+
+    if (!strcmp(sub, "shot")) {
+        float v = CAM_SHOT_SPEED_MPS;
+        if (argc > 5 ||
+            (argc > 2 && !parse_u32_in(argv[2], 0u, CAM_FIRST_DELAY_MAX_US, &q.first_delay_us)) ||
+            (argc > 3 && !parse_float_in(argv[3], STROBE_V_MIN_MPS, STROBE_V_MAX_MPS, &v)) ||
+            (argc > 4 && !parse_u32_in(argv[4], CAM_TIMEOUT_MIN_US, CAM_TIMEOUT_MAX_US, &q.timeout_us))) {
+            printf("usage: cam shot [first_us 0-%u] [m/s %.0f-%.0f] [timeout_us %u-%u]   (NOTHING FIRED)\n",
+                   (unsigned)CAM_FIRST_DELAY_MAX_US, (double)STROBE_V_MIN_MPS,
+                   (double)STROBE_V_MAX_MPS, (unsigned)CAM_TIMEOUT_MIN_US, (unsigned)CAM_TIMEOUT_MAX_US);
+            return;
+        }
+        strobe_schedule_t sc;
+        if (strobe_compute_schedule(v, &sc) != STROBE_PLAN_OK) {
+            printf("ERR: no burst within the charge limit at %.1f m/s -- NOTHING FIRED\n", (double)v);
+            return;
+        }
+        q.strobe = true;
+        q.burst.width_us = sc.width_us;
+        q.burst.gap_us   = sc.gap_us;
+        q.burst.count    = sc.count;
+        printf("cam shot : first delay %lu us, timeout %lu us; DRY burst = S15 at %.1f m/s:\n"
+               "           %lu x %lu us, every %lu us. J4: NO CAMERA (CR-09).\n",
+               (unsigned long)q.first_delay_us, (unsigned long)q.timeout_us, (double)v,
+               (unsigned long)sc.count, (unsigned long)sc.width_us, (unsigned long)sc.period_us);
+        run_test_shot(&q);
+        return;
+    }
+    if (!strcmp(sub, "trig")) {
+        if (argc > 4 ||
+            (argc > 2 && !parse_u32_in(argv[2], 0u, CAM_FIRST_DELAY_MAX_US, &q.first_delay_us)) ||
+            (argc > 3 && !parse_u32_in(argv[3], CAM_TIMEOUT_MIN_US, CAM_TIMEOUT_MAX_US, &q.timeout_us))) {
+            printf("usage: cam trig [first_us 0-%u] [timeout_us %u-%u]   (NOTHING DRIVEN)\n",
+                   (unsigned)CAM_FIRST_DELAY_MAX_US, (unsigned)CAM_TIMEOUT_MIN_US,
+                   (unsigned)CAM_TIMEOUT_MAX_US);
+            return;
+        }
+        q.strobe  = false;
+        q.hold_us = CAM_TRIG_HOLD_US;
+        printf("cam trig : the handshake alone: first delay %lu us, timeout %lu us, hold %u us.\n"
+               "           No burst. J4: NO CAMERA (CR-09).\n",
+               (unsigned long)q.first_delay_us, (unsigned long)q.timeout_us,
+               (unsigned)CAM_TRIG_HOLD_US);
+        run_test_shot(&q);
+        return;
+    }
+    printf("ERR: '%s' is not a cam subcommand -- NOTHING WAS DONE.\n"
+           "     cam | cam shot [first_us] [m/s] [timeout_us] | cam trig [first_us] [timeout_us]\n",
+           sub);
+}
+
 // The watchdog can reset the board, and a reset drops the latch -- so it needs
 // an off switch that does not require a rebuild. It also interacts with
 // `bootsel` and `reset`, both of which now disarm it first.
@@ -2257,7 +2787,7 @@ static void cmd_wdog(int argc, char **argv) {
             // Typed on purpose: it is the operator's now, not live mode's.
             if (strobe_live_armed()) strobe_live_keep_watchdog();
         } else if (!strcmp(argv[1], "off")) {
-            if (strobe_live_armed()) {
+            if (strobe_live_watchdog_required()) {
                 printf("REFUSED: live strobe mode is armed and requires the watchdog.\n"
                        "  'strobe live off' first. Watchdog still ARMED.\n");
                 return;
@@ -2271,7 +2801,9 @@ static void cmd_wdog(int argc, char **argv) {
            "  whatever was being measured dies with it. See service.h.\n");
     printf("  Live strobe mode (6c/6d) arms it itself, where a hang with current through\n"
            "  a linear-mode FET is a genuinely different risk, and disarms it again on\n"
-           "  exit -- unless it was already armed, or you type 'wdog on' while live.\n");
+           "  exit -- unless it was already armed, or you type 'wdog on' while live.\n"
+           "  Not with a Pi powered (image 1.8): there the reset would cut the Pi's\n"
+           "  power, and U5 and the PIO already bound every pulse and burst.\n");
     printf("  'bootsel' and 'reset' disarm it themselves; you do not need to.\n");
 }
 
@@ -2552,6 +3084,213 @@ static void cmd_beam(int argc, char **argv) {
     
 }
 
+// ---------------------------------------------------------------------------
+// Phase 8.6 halt telemetry (telemetry.h). The RP2354 is the witness that knows
+// whether IT asked the Pi to shut down, and it outlives what the Pi's own log
+// may not.
+// ---------------------------------------------------------------------------
+static void cmd_link(int argc, char **argv) {
+    if (argc != 1) { printf("usage: link   (read-only)\n"); return; }
+    pi_link_stat_t s;
+    pi_link_status(&s);
+    printf("lines    : %s\n", s.connected
+           ? "CONNECTED to UART1: a Pi is up (latch closed, its 3V3 up, RPI5_ON high)"
+           : "released: no Pi up, so nothing is driven into J8.10 (connected only with\n"
+             "           the latch closed, the Pi's 3V3 up and RPI5_ON high)");
+    printf("uart     : %s, %lu baud 8N1 (asked %u)\n",
+           s.ready ? "ready" : "NOT READY: no free DMA channel for the receive ring",
+           (unsigned long)s.baud, (unsigned)LINK_BAUD);
+    printf("traffic  : rx %lu B, tx %lu B, connected %lu time(s) this boot\n",
+           (unsigned long)s.rx_bytes, (unsigned long)s.tx_bytes, (unsigned long)s.connects);
+    printf("frames   : %lu good, %lu CRC errors, %lu cut short, %lu junk bytes\n",
+           (unsigned long)s.frames, (unsigned long)s.crc_errors, (unsigned long)s.gap_drops,
+           (unsigned long)s.junk);
+    if (s.requests)
+        printf("requests : %lu answered (%lu of an unknown type); last 0x%02x, %lu ms ago\n",
+               (unsigned long)s.requests, (unsigned long)s.unknown, (unsigned)s.last_type,
+               (unsigned long)(to_ms_since_boot(get_absolute_time()) - s.last_ms));
+    else
+        printf("requests : none this boot\n");
+}
+
+static void cmd_upd(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "abort")) {
+        fwu_abort();
+        printf("staged update discarded (RAM). An install that had begun stops with no new\n"
+               "  image in the partner partition: sector 0 goes last. Any pending power-on\n"
+               "  for the Pi is cancelled: 'on' powers it.\n");
+        return;
+    }
+    if (argc != 1) { printf("usage: upd | upd abort   (NOTHING WAS CHANGED)\n"); return; }
+
+    const fwu_layout_t *L = fwu_port_layout();
+    fwu_status_t s;
+    fwu_status(&s);
+
+    printf("version  : ");
+    print_version(PITRAC_FW_VERSION);
+    printf("   built %s\n", cli_build_stamp());
+    printf("boot     : %s boot%s\n", fw_layout_boot_type_name(L->boot_type),
+           !s.trial ? "" : s.bought ? ", ON TRIAL: bought itself at the end of init"
+                                    : ", ON TRIAL: NOT bought");
+    if (L->partitioned) {
+        const char me = L->run_start < L->other_start ? 'A' : 'B';
+        printf("layout   : this image in partition %c, 0x%06lx-0x%06lx\n", me,
+               (unsigned long)L->run_start, (unsigned long)(L->run_start + L->run_size - 1u));
+        printf("           partner %c 0x%06lx-0x%06lx; config 0x%06lx-0x%06lx\n",
+               me == 'A' ? 'B' : 'A', (unsigned long)L->other_start,
+               (unsigned long)(L->other_start + L->other_size - 1u),
+               (unsigned long)L->cfg_start, (unsigned long)(L->cfg_start + L->cfg_size - 1u));
+        fwu_image_t img;
+        const uint8_t *p = fwu_port_read(L->other_start);
+        // Only a first sector of all 0xFF or all 0x00 is known to hold nothing the
+        // boot ROM could start a block from. That this firmware's parser reads no
+        // IMAGE_DEF there is no proof of none (fw_update.h, review R4-F1).
+        unsigned ff = 0u, zero = 0u;
+        for (uint32_t i = 0; p && i < FWU_SECTOR; i++) {
+            ff += p[i] == 0xFFu;
+            zero += p[i] == 0x00u;
+        }
+        if (p && fwu_parse_image(p, FWU_SECTOR, &img)) {
+            printf("partner  : version ");
+            print_version(img.version);
+            printf("%s%s\n", img.tbyb ? ", NOT bought (a trial that failed, or never ran)"
+                                      : ", bought: the fallback",
+                   img.exe_arm_s_rp2350 ? "" : ", NOT an RP2350 Arm image");
+        } else if (ff == FWU_SECTOR) {
+            printf("partner  : erased: no image\n");
+        } else if (zero == FWU_SECTOR) {
+            printf("partner  : cleared to zeros: no image\n");
+        } else {
+            printf("partner  : not erased, and no IMAGE_DEF this firmware can read: UNKNOWN\n");
+        }
+    } else {
+        printf("layout   : %s.\n"
+               "           Updates from the Pi need the partition table, installed once\n"
+               "           over USB (BENCH_P8_PI.md 8.7).\n", L->why_not);
+    }
+
+    printf("staged   : %s", fwu_state_name(s.state));
+    switch (s.state) {
+    case FWU_RECEIVING:
+        printf(", %lu of %lu B", (unsigned long)s.received, (unsigned long)s.size);
+        break;
+    case FWU_VERIFIED:
+        printf(": version ");
+        print_version(s.staged_version);
+        printf(", %lu B, SHA-256 checked; UPD_APPLY from the Pi installs it", (unsigned long)s.size);
+        break;
+    case FWU_ARMED:
+        printf(": waiting for the Pi to be powered down (%lu s so far)",
+               (unsigned long)(s.armed_for_ms / 1000u));
+        break;
+    case FWU_INSTALLING:
+        printf(": step %lu of %lu", (unsigned long)s.install_step, (unsigned long)s.install_steps);
+        break;
+    default:
+        break;
+    }
+    printf("\n");
+    if (s.last_error != FWU_OK) printf("last err : %s\n", fwu_err_name(s.last_error));
+    if (s.result != FWU_RESULT_NONE) {
+        printf("update   : %s, ", fwu_result_name(s.result));
+        print_version(s.result_from);
+        printf(" -> ");
+        print_version(s.result_to);
+        printf("%s\n", s.result_this_boot ? " (decided at this boot)" : " (an earlier boot)");
+        printf("           %s\n", fwu_detail_name(s.result, s.result_detail));
+        if (s.result == FWU_RESULT_INSTALL_FAILED && s.result_detail == FWU_E_CLEANUP)
+            printf("WARNING  : the partner may hold an image a reset would launch WITHOUT a\n"
+                   "           trial. Reflash over USB first: 'bootsel' launches no image.\n"
+                   "           No other reset or power cycle until then.\n");
+    }
+    if (s.repower_pending)
+        printf("pending  : the Pi is powered again ~1 s into STANDBY ('upd abort' cancels)\n");
+}
+
+static void cmd_hist(int argc, char **argv) {
+    if (argc == 3 && !strcmp(argv[1], "clear") && !strcmp(argv[2], "confirm")) {
+        telemetry_clear();
+        printf("halt telemetry cleared in RAM. Flash follows after %u s in STANDBY, or\n"
+               "  with 'cfg save'.\n", (unsigned)(TELEMETRY_SAVE_QUIET_MS / 1000u));
+        return;
+    }
+    if (argc != 1) {
+        printf("usage: hist | hist clear confirm   (NOTHING WAS CHANGED)\n");
+        return;
+    }
+
+    printf("halt telemetry (BENCH_P8_PI.md 8.6), counted by the RP2354:\n");
+    for (int k = 0; k < (int)TELE__COUNTERS; k++)
+        printf("  %-38s %10lu\n", telemetry_counter_name((tele_counter_t)k),
+               (unsigned long)telemetry_get((tele_counter_t)k));
+    uint32_t req  = telemetry_get(TELE_PI_SHUTDOWN_REQ);
+    uint32_t done = telemetry_get(TELE_PI_SHUTDOWN_CLEAN) + telemetry_get(TELE_PI_SHUTDOWN_TIMEOUT);
+    if (req > done)
+        printf("  %-38s %10lu\n", "  ...neither: cut short, or in progress",
+               (unsigned long)(req - done));
+
+    if (telemetry_get(TELE_FAULTS)) {
+        uint32_t boot = telemetry_word(TELE_W_LAST_FAULT_BOOT);
+        printf("last fault: %s, %lu s into boot %lu%s\n",
+               fault_name((fault_t)telemetry_word(TELE_W_LAST_FAULT)),
+               (unsigned long)telemetry_word(TELE_W_LAST_FAULT_UPTIME), (unsigned long)boot,
+               boot == telemetry_get(TELE_BOOTS) ? " (this one)" : "");
+    }
+    printf("this boot : %s\n",
+           telemetry_boot_name((tele_boot_t)telemetry_word(TELE_W_BOOT_REASON)));
+    printf("loaded    : %s\n", telemetry_source_name(telemetry_source()));
+
+    cfg_telemetry_stat_t t;
+    cfg_telemetry_status(&t);
+    if (!telemetry_dirty())
+        printf("flash     : up to date -- %s\n", cfg_source());
+    else if (t.gave_up)
+        printf("flash     : *** NOT SAVED: %lu automatic writes did not verify this boot, so\n"
+               "            they have stopped. 'cfg save' still tries. ***\n",
+               (unsigned long)t.failures);
+    else if (t.retry_wait)
+        printf("flash     : *** the last write did not verify (%lu this boot); retry in %lu s ***\n",
+               (unsigned long)t.failures, (unsigned long)(t.retry_in_ms / 1000u));
+    else
+        printf("flash     : not saved yet -- written after %u s in STANDBY%s%s\n",
+               (unsigned)(TELEMETRY_SAVE_QUIET_MS / 1000u),
+               power_fsm_state() == PS_STANDBY ? "" : ", now ",
+               power_fsm_state() == PS_STANDBY ? "" : power_state_name(power_fsm_state()));
+    printf("RAM keeps the counts through a reset (unless a BOOTSEL session overwrote it:\n"
+           "then flash); flash keeps them through a power cycle.\n");
+}
+
+// The Pi-down counters and the flash failures as last announced: each new one
+// is announced once, where the operator is looking (like live_exit_notice()).
+static uint32_t s_down_shown, s_up_shown, s_tele_fail_shown;
+
+static void background_notices(void) {
+    uint32_t down = telemetry_get(TELE_PI_DOWN_UNREQ), up = telemetry_get(TELE_PI_BACK_UP);
+    if (down > s_down_shown)
+        printf("*** THE PI WENT DOWN WITHOUT A REQUEST from the board. Counted in 'hist'.\n"
+               "    The rail stays up: 'off' or the button for an orderly end. ***\n");
+    if (up > s_up_shown)
+        printf("*** The Pi read up again after going down unrequested: a Pi reboot.\n"
+               "    Counted in 'hist'. ***\n");
+    s_down_shown = down;     // also resyncs after 'hist clear confirm'
+    s_up_shown   = up;
+
+    cfg_telemetry_stat_t t;
+    cfg_telemetry_status(&t);
+    if (t.failures != s_tele_fail_shown) {
+        s_tele_fail_shown = t.failures;
+        if (t.gave_up)
+            printf("*** Halt telemetry: %lu flash writes did not verify this boot; the\n"
+                   "    automatic writes have stopped. The counts are safe in RAM until a\n"
+                   "    power cycle; 'cfg save' still tries. ***\n", (unsigned long)t.failures);
+        else
+            printf("*** Halt telemetry: the flash write did not verify (%lu this boot). The\n"
+                   "    counts are safe in RAM; it retries in %lu s in STANDBY. ***\n",
+                   (unsigned long)t.failures, (unsigned long)(TELEMETRY_SAVE_RETRY_MS / 1000u));
+    }
+}
+
 static void cmd_fault(int argc, char **argv) {
 
         if (argc > 1 && !strcmp(argv[1], "clear")) {
@@ -2572,27 +3311,48 @@ static void cmd_fault(int argc, char **argv) {
     
 }
 
+// `reset` and `bootsel`, in this order (image 1.11, review finding V110-F1):
+//   1. the guard;
+//   2. the message, and a 50 ms bare sleep so USB carries it out;
+//   3. the guard AGAIN (reset_still_ok()), immediately before the commit;
+//   4. the watchdog disarmed, and the reboot.
+// Until 1.10 the watchdog was disarmed first and the guard ran only at 1: a Pi
+// whose 3V3 rose during the 50 ms was cut. Now a refusal at 3 leaves the
+// watchdog as it was. An armed watchdog (1 s, fed by the superloop pass just
+// before this command) cannot expire in the 50 ms.
+//
+// Bare sleep on purpose, not pitrac_yield_ms(): with the FSM frozen, nothing
+// can close the latch during the wait (a button press would, through a yield),
+// so the only input that can change before step 3 is the Pi's 3V3.
+//
+// What remains after step 3: for `reset`, the instant between that read and
+// watchdog_reboot(0, 0, 0)'s trigger (delay 0: immediate). For `bootsel`, also
+// the boot ROM's own 10 ms inside reset_usb_boot() (SDK 2.3.0 on RP2350:
+// rom_reboot(BOOTSEL, 10 ms)), which nothing can check after it is called.
 static void cmd_reset(int argc, char **argv) {
 
         if (!reset_guard_ok(argc, argv, "reset")) return;
 
+        printf("resetting...\n"); sleep_ms(50);
+        if (!reset_still_ok(argc, argv, "reset")) return;
+
         // Same reasoning as `bootsel`: watchdog_reboot() and an armed watchdog
         // both drive the same hardware. Disarm so the reboot we asked for is
-        // the one that happens.
+        // the one that happens -- after the last check, so a refusal keeps it.
         pitrac_watchdog_enable(false);
-
-        // Bare sleep on purpose: we are about to reset, so there is nothing
-        // to service and an abort would be meaningless. Just flush stdout.
-        printf("resetting...\n"); sleep_ms(50);
         watchdog_reboot(0, 0, 0);
-    
+
 }
 
 static void cmd_bootsel(int argc, char **argv) {
 
         if (!reset_guard_ok(argc, argv, "bootsel")) return;
 
-        // 🔴 DISARM THE WATCHDOG FIRST, or this command does not work.
+        printf("rebooting to BOOTSEL...\n"); sleep_ms(50);
+        if (!reset_still_ok(argc, argv, "bootsel")) return;
+
+        // 🔴 DISARM THE WATCHDOG BEFORE reset_usb_boot(), or this command does
+        // not work. (After the last check, so a refusal keeps it: image 1.11.)
         //
         // reset_usb_boot() reaches BOOTSEL through the watchdog: it writes the
         // bootrom's magic into the watchdog scratch registers and triggers a
@@ -2605,10 +3365,8 @@ static void cmd_bootsel(int argc, char **argv) {
         // vanishes. Introduced 2026-08-31 with the watchdog and found the same
         // day, by someone trying to reflash.
         pitrac_watchdog_enable(false);
-
-        printf("rebooting to BOOTSEL...\n"); sleep_ms(50);
         reset_usb_boot(0, 0);
-    
+
 }
 
 // ---------------------------------------------------------------------------
@@ -2624,6 +3382,9 @@ static const cli_cmd_t k_cmds[] = {
     { "id", NULL, cmd_id_cmd, "firmware + chip identity" },
     { "stat", NULL, cmd_stat_cmd, "power state, rails, faults" },
     { "pins", NULL, cmd_pins_cmd, "read every signal pin" },
+    { "hist", NULL, cmd_hist, "halt telemetry: boots, Pi shutdowns, power cuts (8.6)" },
+    { "link", NULL, cmd_link, "the Pi serial link: lines and counters" },
+    { "upd", NULL, cmd_upd, "version, A/B partitions, updates from the Pi" },
     { "capture", NULL, cmd_capture_cmd, "block capture -> CSV; 'capture trig' waits for a sound" },
     { "gpio", NULL, cmd_gpio_cmd, "read / drive a pin" },
     { "adc", NULL, cmd_adc, "oversampled read; 'adc ringtest' times the BURST switch" },
@@ -2646,6 +3407,7 @@ static const cli_cmd_t k_cmds[] = {
     { "wdog", NULL, cmd_wdog, "show / set the hardware watchdog" },
     { "beam", NULL, cmd_beam, "carrier and demod clock (Phase 2)" },
     { "strobe", NULL, cmd_strobe, "strobe: gate DAC, pulses, schedule; dry 6a/6b, live current 6c/6d" },
+    { "cam", NULL, cmd_cam, "camera handshake: status, a test shot, the handshake alone (Phase 7)" },
     { "fault", NULL, cmd_fault, "show / clear the latched fault" },
     { "reset", NULL, cmd_reset, "soft reset (guarded)" },
     { "bootsel", NULL, cmd_bootsel, "reboot to USB storage (guarded)" },
@@ -2674,10 +3436,10 @@ static void help_check_undocumented(void) {
 // drives a pin or peripheral live mode depends on (beam, detect, gpio, hpf, led,
 // panel, threshold, pisim), writes flash (cfg), or resets the board (reset,
 // bootsel). `off` and `forceoff` stay: taking the rail down is always allowed,
-// and it ends live mode on the way.
+// and it ends live mode on the way. `hist` only reads, or clears RAM.
 static bool allowed_while_live(const char *name) {
     static const char *const k_ok[] = {
-        "help", "?", "id", "stat", "pins", "adc5v", "fault", "off", "forceoff",
+        "help", "?", "id", "stat", "pins", "hist", "adc5v", "fault", "off", "forceoff",
         "wdog", "strobe",
     };
     for (size_t i = 0; i < count_of(k_ok); i++)
@@ -2700,8 +3462,10 @@ static void dispatch(int argc, char **argv) {
     // this command runs and again after it: on 2026-10-12 an unannounced idle
     // exit turned the operator's next `strobe pulse` into a dry one.
     live_exit_notice();
+    background_notices();
     dispatch_command(argc, argv);
     live_exit_notice();
+    background_notices();
 }
 
 static void dispatch_command(int argc, char **argv) {
@@ -2710,7 +3474,7 @@ static void dispatch_command(int argc, char **argv) {
 
     if (strobe_live_armed() && !allowed_while_live(c)) {
         printf("REFUSED: '%s' is not allowed while live strobe mode is armed.\n"
-               "  Allowed: help id stat pins adc5v fault off forceoff wdog strobe.\n"
+               "  Allowed: help id stat pins hist adc5v fault off forceoff wdog strobe.\n"
                "  'strobe live off' first.\n", c);
         return;
     }
@@ -2797,6 +3561,9 @@ void cli_init(void) {
     s_len = 0;
     s_overflow = false;
     restore_phase_model();
+    // Announce what happens from now on, not the history ('hist' has that).
+    s_down_shown = telemetry_get(TELE_PI_DOWN_UNREQ);
+    s_up_shown   = telemetry_get(TELE_PI_BACK_UP);
     printf("\n%s\n> ", k_help);
 }
 

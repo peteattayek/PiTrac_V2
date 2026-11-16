@@ -1,0 +1,23 @@
+; SPDX-License-Identifier: GPL-3.0-or-later
+; Copyright (C) 2026 PiTrac contributors
+;
+; strobe_gate.pio -- Phase 7: one instruction that holds the strobe burst until
+; the camera handshake says FIRE.
+;
+; strobe.c loads it at the offset IMMEDIATELY BEFORE strobe_burst.pio, so a
+; camera-gated burst starts the state machine here: it waits for PIO0's flag 4,
+; which cam_handshake.pio (PIO1) raises with `irq prev set 4` at max(first delay,
+; t_cam), and then falls straight into the burst's first `pull`. The burst
+; program itself is unchanged, and so is every timing 6a measured: a burst that
+; is not camera-gated starts at the burst's own first instruction, as before.
+;
+; While the gate holds, the state machine's program counter sits on this one
+; instruction. strobe.c reads that back: a gate that never opened is the proof
+; that a camera timeout fired nothing (BENCH_P5_P7_MIC_CAMERA.md 7a).
+;
+; The burst runs at 1 MHz, so the gate is seen at the next 1 us tick, and the
+; first rising edge comes 4 ticks after that (wait, pull, mov, jmp, set): 4-5 us
+; after FIRE (STROBE_PIO_GATE_TO_EDGE_US).
+
+.program strobe_gate
+    wait 1 irq 4

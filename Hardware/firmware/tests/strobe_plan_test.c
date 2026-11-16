@@ -228,19 +228,25 @@ static bool policy_exhaustive(void) {
         strobe_snapshot_t s;
         s.rails_ready          = (m & 1u)   != 0;
         s.fault_latched        = (m & 2u)   != 0;
-        s.pi_present           = (m & 4u)   != 0;
+        s.pi                   = (m & 4u) ? STROBE_PI_POWERED : STROBE_PI_ABSENT;
         s.pulse_limit_defeated = (m & 8u)   != 0;
         s.ready_led_on_pwm     = (m & 16u)  != 0;
         s.engine_busy          = (m & 32u)  != 0;
         s.pulse_pin_high       = (m & 64u)  != 0;
         s.gate_nonzero         = (m & 128u) != 0;
 
-        bool clear = s.rails_ready && !s.fault_latched && !s.pi_present
+        // A Pi on J8 is not a refusal from image 1.8: the Pi observation cycles through
+        // every combination and must change nothing here.
+        bool clear = s.rails_ready && !s.fault_latched
                   && !s.pulse_limit_defeated && !s.ready_led_on_pwm
                   && !s.engine_busy && !s.pulse_pin_high;
 
         bool fire = strobe_may_fire(&s) == STROBE_OK;
         CHECK(fire == (clear && !s.gate_nonzero));
+        // Nor does an unsettled observation (1.9): dry never depends on the Pi.
+        s.pi = STROBE_PI_UNSETTLED;
+        CHECK((strobe_may_fire(&s) == STROBE_OK) == fire);
+        s.pi = (m & 4u) ? STROBE_PI_POWERED : STROBE_PI_ABSENT;
 
         for (unsigned level = 1u; level <= DAC_TOP + 1u; level += 341u) {
             bool gate = strobe_may_set_gate(&s, (uint16_t)level) == STROBE_OK;
@@ -249,6 +255,39 @@ static bool policy_exhaustive(void) {
         }
         CHECK(strobe_may_set_gate(&s, 0u) == STROBE_OK);
     }
+    return true;
+}
+
+// Image 1.8 (owner, 2026-11-12): a Pi powered is no longer a refusal for a dry
+// pulse or the gate, and from 1.9 neither is an unsettled observation. Dry stays
+// dry: the gate must still be at zero to fire.
+static bool policy_pi_present(void) {
+    const strobe_pi_t states[] = { STROBE_PI_POWERED, STROBE_PI_UNSETTLED };
+    for (size_t k = 0; k < sizeof(states) / sizeof(states[0]); k++) {
+        strobe_snapshot_t s = safe_state();
+        s.pi = states[k];
+        CHECK(strobe_may_fire(&s) == STROBE_OK);
+        CHECK(strobe_may_set_gate(&s, 1u) == STROBE_OK);
+        s.gate_nonzero = true;
+        CHECK(strobe_may_fire(&s) == STROBE_REFUSE_GATE_NONZERO);
+        s = safe_state();
+        s.pi = states[k];
+        s.rails_ready = false;
+        CHECK(strobe_may_fire(&s) == STROBE_REFUSE_RAIL);
+    }
+    return true;
+}
+
+// Image 1.9 (V18-F1): the observation. Agreement only; any disagreement between
+// the 3V3 sensed now and the FSM's classification is UNSETTLED.
+static bool pi_observe(void) {
+    CHECK(strobe_pi_observe(false, false) == STROBE_PI_ABSENT);
+    CHECK(strobe_pi_observe(true, true)   == STROBE_PI_POWERED);
+    CHECK(strobe_pi_observe(true, false)  == STROBE_PI_UNSETTLED);   // a late Pi, debouncing
+    CHECK(strobe_pi_observe(false, true)  == STROBE_PI_UNSETTLED);   // 3V3 gone, FSM keeps it
+    CHECK(strcmp(strobe_pi_text(STROBE_PI_ABSENT), "?") != 0);
+    CHECK(strcmp(strobe_pi_text(STROBE_PI_POWERED), "?") != 0);
+    CHECK(strcmp(strobe_pi_text(STROBE_PI_UNSETTLED), "?") != 0);
     return true;
 }
 
@@ -391,24 +430,66 @@ static bool live_policy_reasons(void) {
     return true;
 }
 
+// The session cap from `strobe cal` (2026-10-19, board.h): 0 means none; set,
+// nothing above it is admitted -- raising, firing or holding -- and it is
+// checked after the ceiling and before the staircase.
+static bool live_session_cap(void) {
+    strobe_snapshot_t s = safe_state();
+    strobe_live_t l = live_ok();
+    l.gate_proven = 450u;
+    l.session_cap = 463u;
+    CHECK(strobe_live_raise_limit(450u, 463u) == 463u);
+    CHECK(strobe_live_raise_limit(450u, 0u) == 450u + STROBE_LIVE_GATE_STEP_MAX);
+    CHECK(strobe_live_raise_limit(400u, 463u) == 400u + STROBE_LIVE_GATE_STEP_MAX);
+    CHECK(strobe_live_raise_limit(STROBE_LIVE_GATE_CEILING, 0u) == STROBE_LIVE_GATE_CEILING);
+    CHECK(strobe_live_may_set_gate(&s, &l, 463u) == STROBE_OK);
+    CHECK(strobe_live_may_set_gate(&s, &l, 464u) == STROBE_REFUSE_SESSION_CAP);
+    CHECK(strobe_live_may_set_gate(&s, &l, 0u) == STROBE_OK);
+    l.gate_level = 463u;
+    CHECK(strobe_live_may_fire(&s, &l) == STROBE_OK);
+    CHECK(strobe_live_may_continue(&s, &l) == STROBE_OK);
+    l.gate_level = 464u;
+    CHECK(strobe_live_may_fire(&s, &l) == STROBE_REFUSE_SESSION_CAP);
+    CHECK(strobe_live_may_continue(&s, &l) == STROBE_REFUSE_SESSION_CAP);
+    // Above the cap AND the staircase: the cap is named, being the tighter bound.
+    l.gate_proven = 100u;
+    CHECK(strobe_live_may_set_gate(&s, &l, 500u) == STROBE_REFUSE_SESSION_CAP);
+    // Above the ceiling too: the ceiling first.
+    CHECK(strobe_live_may_set_gate(&s, &l, STROBE_LIVE_GATE_CEILING + 1u) == STROBE_REFUSE_CEILING);
+    // No cap: the old rules exactly.
+    l.session_cap = 0u;
+    l.gate_proven = 450u;
+    CHECK(strobe_live_may_set_gate(&s, &l, 450u + STROBE_LIVE_GATE_STEP_MAX) == STROBE_OK);
+    // A cap below the staircase limit binds; it is never a floor.
+    l.session_cap = 455u;
+    CHECK(strobe_live_may_set_gate(&s, &l, 456u) == STROBE_REFUSE_SESSION_CAP);
+    CHECK(strobe_live_may_set_gate(&s, &l, 455u) == STROBE_OK);
+    return true;
+}
+
 // Every combination of the eight safety inputs and the eight live inputs, at
-// gate and proven levels around every boundary. The invariants:
+// gate, proven and session-cap levels around every boundary. The invariants:
 //   - a live firing is admitted exactly when every input is clear, the gate is
-//     within the ceiling AND the staircase, and pacing allows it;
-//   - so never above the ceiling or more than STEP_MAX over the proven level;
-//   - raising the gate obeys the same staircase; lowering to 0 always works;
+//     within the ceiling, the session cap (if any) AND the staircase, and
+//     pacing allows it;
+//   - so never above the ceiling or the cap, or more than STEP_MAX over the
+//     proven level;
+//   - raising the gate obeys the same bounds; lowering to 0 always works;
 //   - arming needs the gate provably zero;
-//   - holding needs the safety inputs, the watchdog and the environment.
+//   - holding needs the safety inputs, the watchdog, the environment and the
+//     gate within the ceiling and the cap.
 static bool live_policy_exhaustive(void) {
     const uint16_t levels[] = { 0u, 1u, STROBE_LIVE_GATE_STEP_MAX, STROBE_LIVE_GATE_STEP_MAX + 1u,
                                 100u, 131u, 132u, STROBE_LIVE_GATE_CEILING,
                                 STROBE_LIVE_GATE_CEILING + 1u, DAC_TOP + 1u };
     const uint16_t proven[] = { 0u, 100u, STROBE_LIVE_GATE_CEILING - 10u, STROBE_LIVE_GATE_CEILING };
-    for (unsigned m = 0; m < 65536u; m++) {
+    const uint16_t caps[]   = { 0u, 1u, 100u, 131u, STROBE_LIVE_GATE_CEILING };
+    for (unsigned m = 0; m < 262144u; m++) {
         strobe_snapshot_t s;
         s.rails_ready          = (m & 1u)   != 0;
         s.fault_latched        = (m & 2u)   != 0;
-        s.pi_present           = (m & 4u)   != 0;
+        s.pi                   = (m & 0x20000u) ? STROBE_PI_UNSETTLED
+                               : (m & 4u)       ? STROBE_PI_POWERED : STROBE_PI_ABSENT;
         s.pulse_limit_defeated = (m & 8u)   != 0;
         s.ready_led_on_pwm     = (m & 16u)  != 0;
         s.engine_busy          = (m & 32u)  != 0;
@@ -423,39 +504,125 @@ static bool live_policy_exhaustive(void) {
         l.gate_hw_match  = (m & 0x2000u) != 0;
         l.interval_ok    = (m & 0x4000u) != 0;
         l.budget_ok      = (m & 0x8000u) != 0;
+        l.pi_at_arm      = (m & 0x10000u) != 0;
 
-        bool held   = s.rails_ready && !s.fault_latched && !s.pi_present
+        bool held   = s.rails_ready && !s.fault_latched
                    && !s.pulse_limit_defeated && !s.ready_led_on_pwm;
         bool common = held && !s.engine_busy && !s.pulse_pin_high;
         bool env    = !l.beam_on && !l.detect_armed && l.adc_idle;
+        // Image 1.8: the session is bound to the Pi state it was armed in, and the
+        // watchdog is required only for a session armed without a Pi. From 1.9
+        // an UNSETTLED observation never passes.
+        bool pi_ok  = s.pi != STROBE_PI_UNSETTLED
+                   && (s.pi == STROBE_PI_POWERED) == l.pi_at_arm;
+        bool wd_ok  = l.watchdog_armed || l.pi_at_arm;
 
         l.gate_level = 0u;
         l.gate_proven = 0u;
-        CHECK((strobe_live_may_arm(&s, &l) == STROBE_OK) == (common && !s.gate_nonzero && env));
+        CHECK((strobe_live_may_arm(&s, &l) == STROBE_OK)
+              == (common && s.pi != STROBE_PI_UNSETTLED && !s.gate_nonzero && env));
 
         for (size_t a = 0; a < sizeof(levels) / sizeof(levels[0]); a++) {
-            for (size_t b = 0; b < sizeof(proven) / sizeof(proven[0]); b++) {
+          for (size_t b = 0; b < sizeof(proven) / sizeof(proven[0]); b++) {
+            for (size_t k = 0; k < sizeof(caps) / sizeof(caps[0]); k++) {
                 uint16_t lv = levels[a];
                 l.gate_level  = lv;
                 l.gate_proven = proven[b];
+                l.session_cap = caps[k];
                 uint16_t lim  = strobe_live_gate_limit(proven[b]);
+                bool in_cap   = caps[k] == 0u || lv <= caps[k];
+                CHECK(strobe_live_raise_limit(proven[b], caps[k])
+                      == (caps[k] != 0u && caps[k] < lim ? caps[k] : lim));
 
                 bool fire = strobe_live_may_fire(&s, &l) == STROBE_OK;
-                CHECK(fire == (l.live && common && l.watchdog_armed && env && l.gate_hw_match
-                               && lv <= STROBE_LIVE_GATE_CEILING && lv <= lim
+                CHECK(fire == (l.live && common && pi_ok && wd_ok && env && l.gate_hw_match
+                               && lv <= STROBE_LIVE_GATE_CEILING && in_cap && lv <= lim
                                && l.interval_ok && l.budget_ok));
-                CHECK(!(fire && (lv > STROBE_LIVE_GATE_CEILING || lv > lim)));
-                CHECK(!(fire && !l.watchdog_armed));
+                CHECK(!(fire && (lv > STROBE_LIVE_GATE_CEILING || lv > lim || !in_cap)));
+                // Never a live firing without the watchdog unless a Pi is powered,
+                // and never one in a session armed in the other Pi state.
+                CHECK(!(fire && !l.watchdog_armed && s.pi != STROBE_PI_POWERED));
+                CHECK(!(fire && s.pi == STROBE_PI_UNSETTLED));
+                CHECK(!(fire && (s.pi == STROBE_PI_POWERED) != l.pi_at_arm));
 
                 bool gate = strobe_live_may_set_gate(&s, &l, lv) == STROBE_OK;
-                CHECK(gate == (lv == 0u || (l.live && common && lv <= lim)));
+                CHECK(gate == (lv == 0u || (l.live && common && pi_ok && in_cap && lv <= lim)));
+                CHECK(!(gate && lv > strobe_live_raise_limit(proven[b], caps[k])));
 
                 bool hold = strobe_live_may_continue(&s, &l) == STROBE_OK;
-                CHECK(hold == (l.live && held && l.watchdog_armed && env && l.gate_hw_match
-                               && lv <= STROBE_LIVE_GATE_CEILING));
+                CHECK(hold == (l.live && held && pi_ok && wd_ok && env && l.gate_hw_match
+                               && lv <= STROBE_LIVE_GATE_CEILING && in_cap));
+                CHECK(!(hold && !l.watchdog_armed && s.pi != STROBE_PI_POWERED));
+                CHECK(!(hold && s.pi == STROBE_PI_UNSETTLED));
             }
+          }
         }
     }
+    return true;
+}
+
+// Image 1.8 (owner, 2026-11-12): a Pi powered is not a refusal, the watchdog is
+// required only without one, and a session is bound to the Pi state it was armed
+// in. Image 1.9: an UNSETTLED observation never arms and always ends a session.
+static bool live_pi_rule(void) {
+    strobe_snapshot_t s = safe_state();
+    strobe_live_t l = live_ok();
+
+    // Armed with a Pi, the watchdog off: fires, holds, raises.
+    s.pi = STROBE_PI_POWERED; l.pi_at_arm = true; l.watchdog_armed = false;
+    CHECK(strobe_live_may_fire(&s, &l) == STROBE_OK);
+    CHECK(strobe_live_may_continue(&s, &l) == STROBE_OK);
+    CHECK(strobe_live_may_set_gate(&s, &l, 1u) == STROBE_OK);
+    // ... and with the operator's own `wdog on` too.
+    l.watchdog_armed = true;
+    CHECK(strobe_live_may_fire(&s, &l) == STROBE_OK);
+
+    // Armed without a Pi: the watchdog is still required.
+    s = safe_state(); l = live_ok(); l.watchdog_armed = false;
+    CHECK(strobe_live_may_fire(&s, &l) == STROBE_REFUSE_WATCHDOG);
+    CHECK(strobe_live_may_continue(&s, &l) == STROBE_REFUSE_WATCHDOG);
+
+    // A settled change of Pi state ends the session, whatever the watchdog.
+    s = safe_state(); l = live_ok(); s.pi = STROBE_PI_POWERED;
+    CHECK(strobe_live_may_fire(&s, &l) == STROBE_REFUSE_PI_CHANGED);
+    CHECK(strobe_live_may_continue(&s, &l) == STROBE_REFUSE_PI_CHANGED);
+    CHECK(strobe_live_may_set_gate(&s, &l, 1u) == STROBE_REFUSE_PI_CHANGED);
+    CHECK(strobe_live_may_set_gate(&s, &l, 0u) == STROBE_OK);   // lowering, always
+    s = safe_state(); l = live_ok(); l.pi_at_arm = true; l.watchdog_armed = false;
+    CHECK(strobe_live_may_fire(&s, &l) == STROBE_REFUSE_PI_CHANGED);
+    CHECK(strobe_live_may_continue(&s, &l) == STROBE_REFUSE_PI_CHANGED);
+
+    // UNSETTLED (1.9): ends either kind of session, watchdog or not; never arms.
+    for (int at_arm = 0; at_arm < 2; at_arm++) {
+        for (int wd = 0; wd < 2; wd++) {
+            s = safe_state(); s.pi = STROBE_PI_UNSETTLED;
+            l = live_ok(); l.pi_at_arm = at_arm != 0; l.watchdog_armed = wd != 0;
+            CHECK(strobe_live_may_fire(&s, &l) == STROBE_REFUSE_PI_UNSETTLED);
+            CHECK(strobe_live_may_continue(&s, &l) == STROBE_REFUSE_PI_UNSETTLED);
+            CHECK(strobe_live_may_set_gate(&s, &l, 1u) == STROBE_REFUSE_PI_UNSETTLED);
+            CHECK(strobe_live_may_set_gate(&s, &l, 0u) == STROBE_OK);
+        }
+    }
+    s = safe_state(); s.pi = STROBE_PI_UNSETTLED; l = live_ok(); l.live = false;
+    CHECK(strobe_live_may_arm(&s, &l) == STROBE_REFUSE_PI_UNSETTLED);
+
+    // Arming: a settled Pi, present or absent, is not a refusal.
+    s = safe_state(); s.pi = STROBE_PI_POWERED; l = live_ok(); l.live = false;
+    CHECK(strobe_live_may_arm(&s, &l) == STROBE_OK);
+    s.pi = STROBE_PI_ABSENT;
+    CHECK(strobe_live_may_arm(&s, &l) == STROBE_OK);
+
+    // Who arms the watchdog at `strobe live on confirm`, and when `wdog off` refuses.
+    CHECK(strobe_live_arms_watchdog(STROBE_PI_ABSENT, false));
+    CHECK(!strobe_live_arms_watchdog(STROBE_PI_ABSENT, true));      // already the operator's
+    CHECK(!strobe_live_arms_watchdog(STROBE_PI_POWERED, false));    // a Pi powered: not armed
+    CHECK(!strobe_live_arms_watchdog(STROBE_PI_POWERED, true));
+    CHECK(!strobe_live_arms_watchdog(STROBE_PI_UNSETTLED, false));  // never on a guess
+    CHECK(!strobe_live_arms_watchdog(STROBE_PI_UNSETTLED, true));
+    CHECK(strobe_live_needs_watchdog(true, false));
+    CHECK(!strobe_live_needs_watchdog(true, true));
+    CHECK(!strobe_live_needs_watchdog(false, false));
+    CHECK(!strobe_live_needs_watchdog(false, true));
     return true;
 }
 
@@ -497,9 +664,11 @@ int main(int argc, char **argv) {
         TEST(schedule_table), TEST(shed_keeps_spacing), TEST(schedule_rejects_bad_speed),
         TEST(validate_limits), TEST(clamptest_bounds), TEST(encode_words),
         TEST(burst_duration), TEST(policy_basic), TEST(policy_exhaustive),
+        TEST(policy_pi_present), TEST(pi_observe),
         TEST(refusal_texts), TEST(gate_settling), TEST(live_gate_limit),
         TEST(live_typed_steps), TEST(live_policy_reasons), TEST(live_policy_exhaustive),
-        TEST(live_validate_span)
+        TEST(live_pi_rule),
+        TEST(live_validate_span), TEST(live_session_cap)
 #undef TEST
     };
     if (argc == 2) {

@@ -4,11 +4,33 @@
 # Flash the RP2354 over SWD from a Raspberry Pi 5 using flying leads.
 # Run this ON the Pi. See openocd_pi5.cfg for the wiring and the Pi 5 gotchas.
 #
-#   ./flash_swd.sh [path/to/pitrac.elf]
+#   ./flash_swd.sh --flat-board-no-tbyb [path/to/pitrac.elf]
+#
+# SINCE 2026-10-20 (image 1.1) THIS IS NOT THE WAY TO FLASH, and it refuses
+# unless told otherwise:
+#   - SWD writes the ELF at flash offset 0. On a board with the A/B partition
+#     table (BENCH_P8_PI.md 8.7) that overwrites the table and partition A's
+#     start, and the board then boots nothing until it is reloaded over USB.
+#   - The default build is flagged try-before-you-buy (CMakeLists.txt,
+#     PITRAC_TBYB). The boot ROM launches such an image only on a FLASH_UPDATE
+#     boot; after this script's plain reset it launches nothing, and the board
+#     sits in BOOTSEL.
+# So SWD is only for an image built with -DPITRAC_TBYB=OFF, on a board WITHOUT
+# the partition table. Flash over USB (BOOTSEL, drag the UF2) or from the Pi
+# (pitrac-link update) instead.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "${1:-}" != "--flat-board-no-tbyb" ]]; then
+    echo "REFUSED: read the header of $0 first." >&2
+    echo "  SWD destroys the A/B partition table, and a try-before-you-buy image" >&2
+    echo "  (the default build) never starts after an SWD reset." >&2
+    echo "  Only for a -DPITRAC_TBYB=OFF build on a board without the table:" >&2
+    echo "      $0 --flat-board-no-tbyb [path/to/pitrac.elf]" >&2
+    exit 1
+fi
+shift
 ELF="${1:-$HERE/../build/pitrac.elf}"
 
 if [[ ! -f "$ELF" ]]; then

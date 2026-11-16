@@ -36,16 +36,31 @@
 
 #include "hardware/pio.h"
 
-// --- Block 0: base 0. Strobe and cameras, all in the low bank. --------------
+// --- Block 0: base 0. The strobe (and the microphone, if it is ever built). -
+// Instruction memory: strobe_burst.pio (12) at offset 20, strobe_gate.pio (1)
+// at 19, directly below it (strobe.c). 19 free.
 #define PIO_BLK_LOW       pio0
 #define PIO_BASE_LOW      0u
 #define PIO_SM_STROBE     0u      // Phase 6, GPIO25
-#define PIO_SM_CAMERA     1u      // Phase 7, GPIO8/9/10 (ARCHITECTURE.md A3)
+// The camera's FIRE: a flag in THIS block, raised from the camera's block with
+// `irq prev set 4` (RP2350), waited on by strobe_gate.pio. Flags 4-7 never
+// reach a system interrupt, so nothing else sees it.
+#define PIO_IRQ_CAM_FIRE  4u
 
-// --- Block 1: base 0. Microphone. -------------------------------------------
-#define PIO_BLK_MIC       pio1
+// The I2S mic (Phase 5, GPIO4/5/6, optional, deferred) was planned for PIO1 SM0.
+// The camera now fills PIO1, so the mic belongs here, in PIO0's 19 free
+// instructions. Nothing is written for it.
+#define PIO_BLK_MIC       pio0
 #define PIO_BASE_MIC      0u
-#define PIO_SM_I2S        0u      // Phase 5, GPIO4/5/6
+#define PIO_SM_I2S        1u      // Phase 5, GPIO4/5/6 -- planned, no firmware
+
+// --- Block 1: base 0. The camera handshake (Phase 7, ARCHITECTURE.md A3). ---
+// cam_handshake.pio is 29 instructions, so it has the block to itself. Its
+// FIRE reaches the strobe engine through `irq prev`, which names the block
+// numbered one below: PIO1 -> PIO0. pio_alloc_init() checks that relation.
+#define PIO_BLK_CAMERA    pio1
+#define PIO_BASE_CAMERA   0u
+#define PIO_SM_CAMERA     0u      // GPIO8/9 in, GPIO10 out
 
 // --- Block 2: base 16. Everything in the high bank. -------------------------
 // GPIO46 forces this. Any future PIO use of GPIO32-47 belongs here too.

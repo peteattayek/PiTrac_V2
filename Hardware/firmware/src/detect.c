@@ -58,6 +58,11 @@ void detect_init(void) {
     // Threshold starts at zero, i.e. the comparator trips on anything. That is
     // the safe direction: a threshold stuck HIGH would look like "no ball ever",
     // which is indistinguishable from a dead detector.
+    //
+    // From image 1.6, cfg_apply_threshold() then restores a SAVED threshold,
+    // called from main() after this function. A board that never saved one
+    // keeps this zero. Before 1.6 the saved level was written and shown by
+    // `cfg` but never restored, so a tuned threshold was lost at every reset.
     s_thr_level = 0;
     pwm_set_chan_level(s_slice_thr, s_chan_thr, 0);
 
@@ -525,6 +530,12 @@ void detect_threshold_set_duty(float duty) {
 
 void detect_threshold_set_volts(float v) {
     detect_threshold_set_duty((s_vref > 0.0f) ? (v / s_vref) : 0.0f);
+}
+
+void detect_threshold_set_level(uint16_t level) {
+    if (level > DAC_TOP) level = (uint16_t)DAC_TOP;
+    s_thr_level = level;
+    pwm_set_chan_level(s_slice_thr, s_chan_thr, s_thr_level);
 }
 
 float    detect_threshold_duty(void)  { return (float)s_thr_level / (float)(DAC_TOP + 1u); }

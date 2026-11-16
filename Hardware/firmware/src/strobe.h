@@ -15,7 +15,8 @@
 //     no pulse can start, so nothing can command strobe current whatever is on J3.
 //   LIVE -- `strobe live on confirm`, from gate 0 only. Pulses fire with the
 //     setpoint, under the staircase rule, the ceiling, the interval and charge
-//     budget, with the watchdog armed; every firing is read back on ADC0 and
+//     budget, with the watchdog armed unless a Pi is powered (image 1.8; see
+//     strobe_plan.h, "A PI ON J8"); every firing is read back on ADC0 and
 //     judged (strobe_live.h). Overcurrent or current outside the pulse latches a
 //     fault and drops live mode with the gate at zero.
 //
@@ -61,7 +62,25 @@ typedef enum {
                                // not ticking at the enable -- NOT fired
     STROBE_RUN_NO_FEED,        // the PIO feed's initial fill did not land, or the feed DMA's
                                // last stop did not complete -- NOT fired (dry or live)
+    // Camera-gated bursts (Phase 7):
+    STROBE_RUN_GATE_HELD,      // stopped with the camera gate still closed -- NOT fired
+    STROBE_RUN_GATE_CUT,       // stopped after the gate opened, before IRQ0 -- cut short
+    STROBE_RUN_NO_GATE,        // the state machine was not holding at the gate after the
+                               // enable -- NOT fired
 } strobe_run_t;
+
+// What a camera-gated burst's engine showed when it was stopped (H7-F2,
+// independent review 2026-11-10). Read with GPIO25 already back on SIO low and the
+// state machine already disabled, so the PC is frozen. The burst program never
+// jumps back to the gate, so a PC still on it means nothing past the gate ever ran.
+typedef enum {
+    STROBE_GATE_UNKNOWN = 0,   // no read-back was taken (not a gated run, or not started)
+    STROBE_GATE_CLOSED,        // PC on the gate and no IRQ0: the burst never started
+    STROBE_GATE_OPENED,        // PC past the gate, or IRQ0: the burst started; pulses may
+                               // have reached GPIO25
+} strobe_gate_seen_t;
+
+const char *strobe_gate_seen_text(strobe_gate_seen_t g);
 
 typedef struct {
     bool               valid;          // false until the first run attempt
@@ -83,6 +102,8 @@ typedef struct {
     bool               readback_err;   // ADC FIFO overflow (FCS.OVER) or a conversion-error flag
     uint32_t           ring_first_us;  // BURST switch -> first ADC0 sample written (UINT32_MAX: none)
     uint32_t           ring_ready_us;  // ... -> STROBE_LIVE_RING_READY_SAMPLES written, or gave up
+    // Camera-gated only (Phase 7): the gate, as the stopped engine showed it.
+    strobe_gate_seen_t gate;
 } strobe_result_t;
 
 // Validate, check admission, then run one uniform burst on PIO0 SM0, DMA-fed,
@@ -98,6 +119,44 @@ typedef struct {
 strobe_result_t strobe_run(const strobe_burst_t *b, uint32_t max_width_us);
 const char     *strobe_run_text(strobe_run_t r);
 
+// --- Camera-gated burst (Phase 7: BENCH_P5_P7_MIC_CAMERA.md 7a/7b) -------------
+// The burst is loaded and the state machine started on strobe_gate.pio's
+// `wait 1 irq 4`, so it fires only when the camera handshake (camera.h) says
+// FIRE -- at max(first delay, t_cam), in hardware -- and never if it times out.
+// NON-BLOCKING, unlike strobe_run(): shot.c arms it, starts the handshake and
+// polls both from the superloop.
+//
+// DRY ONLY in this firmware: refused while live mode is armed
+// (STROBE_REFUSE_GATED_LIVE), and admitted by the same dry rule as strobe_run()
+// (gate DAC provably zero, rail up, no fault, engine idle ...; a Pi powered is
+// not a refusal from image 1.8). Live current from the shot path is a later,
+// deliberate change.
+//
+// Arm: true with the engine holding at the gate (state HELD); false with *r
+// saying why (INVALID, REFUSED, NO_FEED, NO_GATE) and nothing fired.
+// gate_window_us: how long the gate may be held before the CPU stops it -- the
+// handshake's own timeout, plus its margin.
+bool strobe_gated_arm(const strobe_burst_t *b, uint32_t gate_window_us, strobe_result_t *r);
+
+typedef enum {
+    STROBE_GATED_IDLE = 0,     // nothing armed since the last result was collected
+    STROBE_GATED_HELD,         // armed; the gate has not opened
+    STROBE_GATED_RUNNING,      // the gate opened; the burst is playing
+    STROBE_GATED_FINISHED,     // over: *r has the outcome (OK = IRQ0 seen)
+} strobe_gated_t;
+
+// Poll. FINISHED is reported until the next arm. strobe_safe_off() ends a gated
+// burst as ABORT_POWER. Every way a gated burst ends records r->gate, read from
+// the stopped engine (strobe_gate_seen_t) -- never inferred from the outcome.
+strobe_gated_t strobe_gated_poll(strobe_result_t *r);
+
+// Stop it now, if it is still running, and return the gate as the stopped engine
+// showed it: CLOSED means nothing fired. If it had already ended (safe-off, a
+// poll), return what was recorded THEN. UNKNOWN if no gated burst ran. Calling it
+// again returns the same. *r: GATE_HELD (closed), GATE_CUT (opened), OK (IRQ0 had
+// come), or the earlier outcome.
+strobe_gate_seen_t strobe_gated_cancel(strobe_result_t *r);
+
 // --- Live mode (6c/6d) --------------------------------------------------------
 typedef enum {
     STROBE_LIVE_EXIT_NONE = 0,     // never armed since boot
@@ -107,15 +166,17 @@ typedef enum {
     STROBE_LIVE_EXIT_IDLE,         // STROBE_LIVE_IDLE_TIMEOUT_MS with no strobe command
     STROBE_LIVE_EXIT_OVERCURRENT,  // FAULT_STROBE_OVERCURRENT latched
     STROBE_LIVE_EXIT_CLAMP,        // FAULT_STROBE_CLAMP latched
-    STROBE_LIVE_EXIT_READBACK,     // no usable ADC0 record, or a noisy one
+    STROBE_LIVE_EXIT_READBACK,     // no usable ADC0 record
     STROBE_LIVE_EXIT_RUN,          // timeout or abort mid-firing
+    STROBE_LIVE_EXIT_SHAPE,        // NOISY or SHAPE: not one clean pulse per pulse fired
 } strobe_live_exit_t;
 
 const char *strobe_live_exit_text(strobe_live_exit_t e);
 
 // `strobe live on confirm`. Admitted by strobe_live_may_arm(). Arms the
-// watchdog if it is off (and disarms it again on exit); starts the staircase,
-// the budget and the idle timer from zero.
+// watchdog if it is off and no Pi is powered (image 1.8), and disarms it again
+// on exit. Records whether a Pi is present: the session is bound to it. Starts
+// the staircase, the budget and the idle timer from zero.
 strobe_refusal_t strobe_live_arm(void);
 // `strobe live off`: gate to 0, engine stopped, watchdog restored.
 void strobe_live_disarm(void);
@@ -124,6 +185,10 @@ bool strobe_live_armed(void);
 // `wdog on` while live: the operator wants the watchdog for its own sake, so
 // live mode must not disarm it on exit.
 void strobe_live_keep_watchdog(void);
+
+// Live mode is armed WITHOUT a Pi, so it needs the watchdog: `wdog off` refuses.
+// False with live off, or for a session armed with a Pi (image 1.8).
+bool strobe_live_watchdog_required(void);
 
 // From pitrac_service(), every pass. Drops live mode if a hold condition fails
 // or the idle timer runs out. Does nothing during a firing.
@@ -192,6 +257,7 @@ typedef struct {
     uint32_t         n_confirm;
     float            confirm_mean_a;
     bool             confirm_ok;     // every confirmation within STROBE_CAL_CONFIRM_TOL
+    uint16_t         session_cap;    // the cap this cal set (board.h); 0 unless SOLVED
 } strobe_cal_t;
 
 // Called after every measured step and confirmation pulse, for progress output.
@@ -201,7 +267,14 @@ typedef void (*strobe_cal_report_fn)(const strobe_cal_point_t *p, bool confirm);
 // level for target_a by interpolation, sets it, and fires the confirmation
 // pulses. On anything but SOLVED the gate is left at 0. The table of points is
 // kept in RAM (strobe_cal_points()) -- cfg cannot be saved between shots.
+//
+// The session cap (board.h): cleared when a cal starts, set when it SOLVES, from
+// the first point at or above the target. Cleared again by re-arming and by
+// leaving live mode.
 strobe_cal_t strobe_cal(float target_a, strobe_cal_report_fn report);
+
+// The session cap in force now; 0 = none (no solved cal since live mode armed).
+uint16_t     strobe_live_session_cap(void);
 size_t       strobe_cal_points(const strobe_cal_point_t **pts);
 const strobe_cal_t *strobe_cal_last(void);
 const char  *strobe_cal_res_text(strobe_cal_res_t r);
@@ -221,6 +294,10 @@ typedef struct {
     bool              limit_out_level; // GPIO27: driven level (must be 0)
     bool              limit_pad;       // GPIO27: pad level (must be 0)
     unsigned          pio_offset;
+    unsigned          gate_offset;       // strobe_gate.pio, at pio_offset - 1
+    unsigned          sm_pc;             // the state machine's PC, read back
+    bool              gated;             // a camera-gated burst is armed or playing
+    bool              fire_flag;         // PIO0 flag 4 (the camera's FIRE), right now
     int               dma_channel;
     strobe_snapshot_t snap;
     strobe_result_t   last;

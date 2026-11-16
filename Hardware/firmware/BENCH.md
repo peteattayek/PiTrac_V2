@@ -67,15 +67,17 @@ cold-LED warning. If you are on an older build, type `beam off` explicitly.
 
 **Power:** USB-C only. **No J1, no bench supply. J2 jumper off. No Pi.**
 
-1. Build (`SETUP.md`), then flash: hold SW1, tap SW2, release SW1 → a `RPI-RP2`
+1. Build (`SETUP.md`), then flash: hold SW1, tap SW2, release SW1 → a `RP2350`
    drive appears → drag `build/pitrac.uf2` onto it. The drive vanishing is success.
 2. Open the COM port (Device Manager → Ports). You should get the help banner and
    a `> ` prompt after pressing Enter.
 3. `id` — expect `sysclk : 150000000`.
-4. **`picotool info -a` on the host, with the board plugged in.** Note this reads
+4. **`picotool info -a` on the host, with the board in BOOTSEL** (`bootsel` at the
+   CLI, or SW1 + SW2). Since the 2026-10-19 image the firmware has no USB reset path,
+   so picotool cannot put a running board into BOOTSEL itself. Note this reads
    the **connected board**, not the `.uf2` file — if you pass a filename you get
    the file's build info and *no* `Device Information` section. **Record the die
-   revision** from that section.
+   revision** from that section, then tap SW2 to run the firmware again.
 5. `stat` — expect `STANDBY`, `fault none`, and `5V_IN` in the range
    **4.6–4.85 V**. USB VBUS legitimately varies by port; both ends of that range
    have been seen on the same board. Anything ≥5.0 V means J1 is powered.
@@ -131,9 +133,10 @@ definitive answer for your board, regardless of what the errata list says.)*
 
 ### 0.2 Optional: SWD flashing
 
-`tools/flash_swd.sh` from a Pi 5, flying leads only. Not required to proceed, but
-the BOOTSEL button dance gets old around the twentieth cycle. Come back to it
-whenever reflashing starts to annoy you.
+`tools/flash_swd.sh` from a Pi 5, flying leads only. Not required to proceed.
+From image 1.1 (2026-10-20) it refuses by default: SWD writes over the A/B
+partition table, and a try-before-you-buy image never starts after an SWD reset
+(the script's header).
 
 Quicker win in the meantime: **`bootsel` at the CLI** reboots straight into flash
 mode with no button press. Works whenever the firmware is running.
@@ -491,7 +494,8 @@ is ever attached.
 ### Simulating the Pi
 
 **You need a 3.3 V source.** With no Pi seated, J8.1/J8.17 (the Pi's 3V3 output pins)
-are *dead* — they are driven by the Pi, not by this board. Use the board's own
+are *dead* — they are driven by the Pi, not by this board, and J8.17 has no copper at all
+(`NEXT_BOARD_REV.md` CR-27). Use the board's own
 +3.3VA instead, which is brought out on the mic header:
 
 | Source | Pin |
@@ -503,7 +507,7 @@ are *dead* — they are driven by the Pi, not by this board. Use the board's own
 |---|---|---|
 | PI_3V3_SENSE (GPIO24) | R45/R44 divider fed from J8.1/17 | jumper **J5.2 → J8.1** |
 | RPI5_ON (GPIO0) | J8.15 via R29 1K | jumper **J5.2 → J8.15** |
-| RPI5_SHUTDOWN (GPIO43) | J8.37 via R39 1K | output — scope it |
+| RPI5_SHUTDOWN (GPIO43) | J8.37 via R39 1K | output — scope it. Driven only with the latch closed and PI_3V3_SENSE high; released otherwise (2026-10-19 image on) |
 
 Both inputs are high-impedance (110 kΩ and 1 kΩ into a GPIO), so the total load on
 +3.3VA is tens of µA. Deassert by pulling the jumper.
@@ -522,6 +526,12 @@ matching the `gpio-shutdown` overlay default. Check with `pisim` that
 RPI5_SHUTDOWN idles **1** (deasserted), then scope J8.37 during a shutdown
 request and confirm it pulses **low** for 200 ms.
 
+> **From the 2026-10-19 image on**, RPI5_SHUTDOWN is driven only while the latch is closed
+> **and** PI_3V3_SENSE reads high; otherwise it is released (input, no pulls), so nothing is
+> driven into an unpowered Pi. With the simulated Pi, jumper J5.2 → J8.1 *before* `on`: `pisim`
+> then reads `driven, deasserted`, and `released` in STANDBY. The full no-Pi check list is
+> `BENCH_P8_PI.md` §8.0b.
+
 ### ⚠ Before the "reset ≠ shutdown" test — read this or you will misread the scope
 
 **GPIO43 goes low through reset, and that is not a firmware bug.** RP2350 pads reset
@@ -530,6 +540,11 @@ PDE=1, PUE=0, OD=0, IE=0 (SDK 2.3.0 `hardware/regs/pads_bank0.h`). The output dr
 is high-Z, but a ~50–80 kΩ pull-down is actively holding the pin down until
 `safe_state_init()` executes and drives it high. For an **active-low** signal, that
 reset default *is* the asserted level.
+
+> **From the 2026-10-19 image on,** `safe_state_init()` *releases* GPIO43 (pull-down off, no
+> drive) instead of driving it high. With no pull-up on J8.37 the node then floats, so this
+> test needs the Q10 pull-up below fitted: the rising edge after RUN then comes from the
+> pull-up, at the moment the firmware turns the pull-down off.
 
 So the pass criterion is **not** "no edge appears."
 
@@ -638,7 +653,7 @@ record in `PROGRESS.md` §6, and verify against a real Pi in `BENCH_P8_PI.md` §
 |---|---|---|---|
 | ✅ | Normal boot | Assert PI_3V3_SENSE, then RPI5_ON, then press the button | `POWERING_ON` → `PI_BOOTING` → `RUNNING` |
 | ✅ | Pi never boots | Assert PI_3V3_SENSE only | `PI_BOOT_TIMEOUT` at 90 s; **latch stays on** (so you could debug the Pi); CLI responsive |
-| ✅ | Normal shutdown | From RUNNING press the button; drop both sim signals after 8 s | Request pulses low for 200 ms; **latch releases at the 15 s hold-off floor, not at 8 s** |
+| ✅ | Normal shutdown | From RUNNING press the button; drop both sim signals after 8 s | Request pulses low for 200 ms; **latch releases at the hold-off floor (10 s from image 1.3, 15 s before), not at 8 s** |
 | ✅ | Pi never halts | Press; leave both sim signals asserted | Latch releases at 60 s, `PI_SHUTDOWN_TIMEOUT` logged |
 | ✅ | 3V3 stays up | Drop RPI5_ON only, hold PI_3V3_SENSE | Fallback indicator fires; shutdown still completes |
 | ✅ | Button during shutdown | Short press mid-`SHUTTING_DOWN` | No re-latch, no second request |
@@ -668,7 +683,7 @@ GPIO43 level is a footnote. See the Q10 correction above.
 Watch state transitions live with `stat` and `pisim`.
 
 **Be patient — several of these are deliberately slow.** The guard times are real:
-the normal-shutdown test takes **≥15 s** after the button press (the hold-off floor,
+the normal-shutdown test takes **≥10 s** after the button press (15 s before image 1.3; the hold-off floor,
 which is the point of that test), "Pi never halts" runs the full **60 s** timeout, and
 "Pi never boots" waits **90 s**. If a test seems hung, check the elapsed time in
 `stat` before concluding anything is wrong.
@@ -797,7 +812,7 @@ STANDBY --press--> POWERING_ON --250 ms--> BENCH_RUNNING --press--> FORCE_OFF --
 | Let it time out | **FAULT double-blink** — and `PI_BOOT_TIMEOUT` deliberately leaves the rail UP, so the panel LED can actually show it |
 | Add **J5.2 → J8.15** (RPI5_ON), then clear the fault | `fault clear` (or a press) — **both drop the rail and return to STANDBY** |
 | Press to power up | **POWERING_ON** briefly, then straight to **RUNNING, solid** |
-| Press again | **SHUTTING_DOWN fast blink** for the full 15 s hold-off |
+| Press again | **SHUTTING_DOWN fast blink** for the full hold-off (10 s from image 1.3, 15 s before) |
 
 > **That is two presses, not one.** An earlier revision of this table said "clear fault,
 > press → straight to RUNNING." It is not: acknowledging a fault always exits via

@@ -56,7 +56,8 @@ checks do not establish physical print quality or calibrated camera coefficients
 | `firmware/BENCH_P3_DETECT.md` | Phases 3 & 4 — photodiode chain and trigger selection. |
 | `firmware/BENCH_P5_P7_MIC_CAMERA.md` | Phases 5 & 7 — microphone and cameras. |
 | `firmware/BENCH_P6_STROBE.md` | Phase 6 — ⚠ 9 A pulses, linear-mode FET. Read fully before powering. |
-| `firmware/BENCH_P8_PI.md` | Phase 8 — real Pi 5 integration and clean-shutdown acceptance. |
+| `firmware/BENCH_P8_PI.md` | Phase 8 — real Pi 5 integration and clean-shutdown acceptance; the serial link and firmware updates from the Pi (§8.7–8.9). |
+| `firmware/pi/README.md` | The Pi's side: the RPI5_ON unit, the shutdown hook, and `pitrac-link` (the serial link and the firmware updater). |
 | `firmware/NEXT_BOARD_REV.md` | Hardware change requests (CR-xx) for the next board spin. |
 | `firmware/SETUP.md` | Toolchain detail and the manual (non-VS-Code) install path. |
 
@@ -66,7 +67,7 @@ checks do not establish physical print quality or calibrated camera coefficients
 
 Bring-up is staged, and each phase is independently provable on the bench before
 the next begins. **The live status is always `firmware/PROGRESS.md` §0 and the top
-block of §10** — this table is a summary as of 2026-10-05.
+block of §10** — this table is a summary as of 2026-11-16.
 
 | Phase | |
 |---|---|
@@ -79,9 +80,9 @@ block of §10** — this table is a summary as of 2026-10-05.
 | 3 · photodiode chain and calibration | 🟡 §3.1–3.6 done on board 3; first real ball waveform passed; comparator timing and the 20-pass set are open |
 | 4 · trigger-source experiment | 🟡 firmware written, bench not started |
 | 5 · microphone | 🟡 front end validated; no onset-detection or veto firmware yet |
-| 6 · strobe | 🟡 **6a/6b dry tests PASS on board 1 (2026-10-06)** — U5 clamp 135 µs, PIO timing, schedule, A7, interlock, gate DAC. **6c/6d live-current firmware written 2026-10-07** (guarded: staircase, 70 % ceiling, ADC0 readback per firing, overcurrent/stuck-on faults, watchdog); TP3 loop stability PASS 2026-10-08; 6c on board 1 up to 24 % after a gate-drive rework (CR-23); **6d PASS 2026-10-15**; next is the ADC0 readback fix |
-| 7 · cameras | ❌ no firmware yet; blocked on the 1.8 V I/O translator (CR-09) |
-| 8 · Pi integration | 🟡 power and shutdown handshake done; UART protocol not written |
+| 6 · strobe | ✅ **Complete on board 1 (2026-11-10).** 6a/6b dry tests PASS (2026-10-06); TP3 loop stability PASS (2026-10-08); the CR-23 gate-drive rework; **6d PASS (2026-10-15)**; the ADC0 readback fix (2026-10-16); 6c to 9 A: `strobe cal 9`, bursts (the boost hiccups after 50 µs pulses, CR-25), the session cap. Another board needs its own 6a–6d |
+| 7 · cameras | 🟡 the handshake in PIO1 since image 1.5 (2026-11-10); on board 1, **7a and 7b PASS (2026-11-13)**; 7c allowed by the owner (2026-11-13), the camera only through a TXS0108E module (CR-09); 7c.0 next; 7c.1 on needs the Mira220 in external-trigger mode |
+| 8 · Pi integration | 🟡 on board 1 with a real Pi, **first seating and 8.0b–8.10 PASS (2026-11-02 to 2026-11-12)**: the shutdown handshake, halt telemetry, the serial link, firmware updates from the Pi with A/B rollback, and the strobe with a Pi present; the shot messages not written |
 
 ---
 

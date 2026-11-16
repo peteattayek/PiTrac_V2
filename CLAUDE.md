@@ -12,7 +12,8 @@ and keeps the docs true.
 2. **`Hardware/firmware/PROGRESS.md` §0** (status table) and **the top block of §10** (the live
    resume point). §10 wins over any other doc about board state.
 3. The `Hardware/firmware/BENCH_*.md` procedure for the phase in hand (today:
-   `BENCH_P6_STROBE.md`, 6c).
+   `BENCH_P5_P7_MIC_CAMERA.md` 7c.0 on board 1: a Pi seated and one camera through a
+   TXS0108E module; 7a and 7b passed 2026-11-13. `BENCH_P8_PI.md` §8.10 passed 2026-11-12).
 
 `DEVELOPER_GUIDE.md` (repo root) is the whole-repo map. `HARDWARE_REFERENCE.md` is generated from
 the netlist. When a doc and the netlist disagree, the netlist is right.
@@ -26,8 +27,9 @@ the netlist. When a doc and the netlist disagree, the netlist is right.
   physical units. If something you said was wrong, say so plainly and log it in `PROGRESS.md`.
 - After any change, audit the docs **and** the firmware's printed output and comments for
   anything stale; run `python Hardware/firmware/tools/check_doc_links.py`.
-- Safety: nothing conductive near **D12 (36 V)**; **GPIO27 `PULSE_LIMIT_DISABLE` stays 0**; no Pi
-  on J8 and no camera on J4; beam duty ≤ 25 %; never run +5 V from USB; attach probes only with
+- Safety: nothing conductive near **D12 (36 V)**; **GPIO27 `PULSE_LIMIT_DISABLE` stays 0**; a camera
+  on J4 **only for 7c, and only through a TXS0108E module**; a Pi on J8 **only for Phase 8 and
+  7c** (owner, 2026-11-09 and 2026-11-13), with SW2 taped over and the Pi's own USB-C unplugged; beam duty ≤ 25 %; never run +5 V from USB; attach probes only with
   the board unpowered (PSU and USB off); **never raise a live-strobe limit to make a test pass**.
 
 The two files `AGENTS.md` and `CLAUDE.md` at the repo root are identical pointers for different

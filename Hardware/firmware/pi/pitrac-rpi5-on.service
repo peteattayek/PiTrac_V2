@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 PiTrac contributors
+#
+# Installed as /etc/systemd/system/pitrac-rpi5-on.service by install.sh.
+#
+# RPI5_ON: Pi GPIO22 -> J8.15 -> R29 1K -> RP2354 GPIO0. High tells the board
+# that the Pi's userspace is up (PI_BOOTING -> RUNNING). Without it the board
+# raises PI_BOOT_TIMEOUT 90 s after the Pi's 3V3 comes up.
+#
+# Ordered after multi-user.target, so systemd-logind is already running to act
+# on the KEY_POWER event that the board's shutdown request sends (a 200 ms low
+# on GPIO26, through the gpio-shutdown overlay).
+#
+# There is deliberately NO ExecStop. Dropping the line here would let the board
+# cut the power (after its 15 s holdoff) while the root filesystem is still
+# writable. The line drops in pitrac-rpi5-on.shutdown, at the very end of the
+# shutdown, and only after that hook has checked that every disk filesystem is
+# read-only.
+
+[Unit]
+Description=PiTrac: raise RPI5_ON (GPIO22, J8.15) once userspace is up
+After=multi-user.target systemd-logind.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/pinctrl set 22 op dh
+
+[Install]
+WantedBy=multi-user.target

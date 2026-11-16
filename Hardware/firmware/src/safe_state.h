@@ -59,7 +59,38 @@ void safe_state_now(void);
 // between bursts and re-claims GPIO28 only after writing a fresh level.
 void safe_state_reclaim_pins(void);
 
+// J8.37, RPI5_SHUTDOWN: the one Pi-facing line that idles HIGH. Driven only
+// while a Pi is powered and released otherwise, so the board never pushes current
+// through R39 into an unpowered Pi's GPIO26 (board.h, "THE LINE'S REST STATE";
+// PROGRESS.md section 6, 2026-10-16). safe_state_init() releases it; from then on
+// the power FSM sets it on every step.
+typedef enum {
+    PI_LINE_RELEASED = 0,     // input, no pulls, input buffer off
+    PI_LINE_DEASSERTED,       // driven to the inactive level
+    PI_LINE_ASSERTED,         // driven to the shutdown-request level
+} pi_line_t;
+
+// Idempotent and glitch-free: a driven level is written before the driver is
+// enabled, and repeating a mode changes nothing at the pad.
+void        safe_state_pi_shutdown_line(pi_line_t mode);
+// What the pad is doing now, read back from the hardware.
+pi_line_t   safe_state_pi_shutdown_mode(void);
+const char *safe_state_pi_line_name(pi_line_t mode);
+
+// UART1 to the Pi: GPIO36 TX -> R30 220R -> J8.10 (Pi RXD) and J8.8 (Pi TXD) ->
+// R31 220R -> GPIO37 RX. An idle UART holds TX HIGH, which through 220R would
+// push ~12 mA into an unpowered Pi's GPIO15 clamp -- four times J8.37's
+// worst case. So the pins are CONNECTED to UART1 only while a Pi is up and
+// talking: latch closed, its 3V3 sensed, AND RPI5_ON high. RPI5_ON is driven by
+// the Pi's SoC, so current fed into the Pi's 3V3 rail cannot hold it up the way
+// it might hold up the 3V3 sense. RELEASED otherwise: SIO inputs, no pulls,
+// input buffers off. safe_state_init() releases them; from then on the power
+// FSM sets them on every step. Idempotent.
+void        safe_state_pi_uart_lines(bool connect);
+bool        safe_state_pi_uart_connected(void);   // read back from the pad's function
+
 // Latch a fault. First fault wins (so the root cause survives the cascade).
+// Each latch is also counted in the halt telemetry (telemetry.h).
 void fault_raise(fault_t f);
 void fault_clear(void);
 fault_t fault_current(void);

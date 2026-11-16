@@ -51,8 +51,16 @@ void pitrac_watchdog_enable(bool on) {
     // which is worse than useless -- it makes the watchdog fire SOONER, at the
     // exact moment the caller was trying to make it stop.
     //
-    // The SDK has no watchdog_disable(), so clear the enable bit directly.
+    // Clear the enable bit directly. (SDK 2.3.0's watchdog_disable() does the
+    // same; this line predates it, and the host tests mock the register.)
     hw_clear_bits(&watchdog_hw->ctrl, WATCHDOG_CTRL_ENABLE_BITS);
+
+    // watchdog_enable() left its mark in scratch[4], and the next boot reads a
+    // reset with that mark as the watchdog having FIRED -- a hang, in the halt
+    // telemetry (telemetry.h). Disarmed, no reset can be that, so clear it.
+    // watchdog_reboot() (`reset`) and the boot ROM's UF2 reboot clear it as well;
+    // this covers whatever else resets the board after a live session.
+    watchdog_hw->scratch[4] = 0u;
 }
 
 bool pitrac_watchdog_enabled(void) { return s_wdog_on; }

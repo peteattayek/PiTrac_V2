@@ -123,7 +123,7 @@ The RP2354 boots into a USB-drive mode when you hold a button during reset.
 2. On the board, find **SW1** (BOOTSEL) and **SW2** (RUN). They're the two small
    tactile buttons.
 3. **Hold SW1 down. While holding it, press and release SW2. Then let go of SW1.**
-4. Windows should pop up a removable drive named **`RPI-RP2`**.
+4. Windows should pop up a removable drive named **`RP2350`**.
 5. Drag `firmware\build\pitrac.uf2` onto that drive.
 6. The drive disappears on its own — that's success, not an error. The chip
    reboots and starts running your firmware.
@@ -131,7 +131,7 @@ The RP2354 boots into a USB-drive mode when you hold a button during reset.
 **Expect:** the yellow LED (D5) starts blinking slowly, roughly once every two
 seconds. That's "standby, healthy."
 
-> If no `RPI-RP2` drive appears: try a different USB-C cable. A surprising number
+> If no `RP2350` drive appears: try a different USB-C cable. A surprising number
 > of USB-C cables are charge-only and carry no data lines.
 
 ---
@@ -258,7 +258,7 @@ releases. Paste the exact error to me; it's a one-line fix each.
 The compile-time guard caught a bad configuration. Delete the whole `build`
 folder and rebuild — a stale CMake cache is the usual cause.
 
-**Build succeeds but no `RPI-RP2` drive appears**
+**Build succeeds but no `RP2350` drive appears**
 Almost always the cable. Try another one, ideally one you know carries data.
 Second most likely: you released SW1 too early. Hold it through the entire SW2
 press and for a moment after.
@@ -273,9 +273,9 @@ Expected. Reflashing resets the chip, which drops the USB serial connection.
 Reconnect the serial monitor after each flash.
 
 **You want to reflash without the button dance**
-That's what SWD is for — `tools/flash_swd.sh` and `tools/openocd_pi5.cfg`, using
-your Pi 5 with flying leads (the Pi is *not* seated on the header). Worth setting
-up once you're iterating; the buttons get old around the twentieth cycle.
+Type `bootsel` at the board's CLI: it reboots straight into the USB drive. (SWD,
+`tools/flash_swd.sh`, no longer works with the default build from image 1.1 on:
+see the script's header.)
 
 ---
 

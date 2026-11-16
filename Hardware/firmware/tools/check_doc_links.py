@@ -4,8 +4,8 @@
 """
 check_doc_links.py -- check every relative link and #anchor in the firmware docs.
 
-Covers DEVELOPER_GUIDE.md, HARDWARE_REFERENCE.md, Hardware/README.md and every
-Hardware/firmware/*.md. Anchors follow GitHub's heading-slug rules (lower case,
+Covers DEVELOPER_GUIDE.md, CHANGELOG.md, HARDWARE_REFERENCE.md, Hardware/README.md,
+every Hardware/firmware/*.md and Hardware/firmware/pi/*.md. Anchors follow GitHub's heading-slug rules (lower case,
 spaces to '-', punctuation and emoji dropped, duplicates suffixed -1, -2 ...).
 Links inside ``` fences and absolute URLs are skipped.
 
@@ -20,8 +20,10 @@ import sys
 import unicodedata
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-files = [ROOT / "DEVELOPER_GUIDE.md", ROOT / "HARDWARE_REFERENCE.md", ROOT / "Hardware" / "README.md"]
+files = [ROOT / "DEVELOPER_GUIDE.md", ROOT / "CHANGELOG.md", ROOT / "HARDWARE_REFERENCE.md",
+         ROOT / "Hardware" / "README.md"]
 files += sorted((ROOT / "Hardware" / "firmware").glob("*.md"))
+files += sorted((ROOT / "Hardware" / "firmware" / "pi").glob("*.md"))
 
 LINK = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 HEAD = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")

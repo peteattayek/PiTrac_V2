@@ -348,8 +348,23 @@ float    adc_default_5vin_scale(void);
 // x 2 bytes = 32768 = 2^15. Keep these two in step.
 #define ADC_CAPTURE_RING_BITS   15
 
-// Returns the number of samples captured, or 0 on error (bad mask, bad rate).
-// Blocking. Restores ADC_MODE_IDLE afterwards.
+// The sample rates the ADC can be programmed to at its 48 MHz clock: back to
+// back (500 ksps) down to the slowest the 16-bit DIV.INT can count,
+// 48 MHz / (1 + 65535 + 255/256) = 732.4 Hz. The captures refuse anything
+// outside, BEFORE touching the ADC (independent review 2026-10-15: a request
+// below the range used to wrap the divider silently; adc_ring_math.h). No `u`
+// suffix, so cli.c can stringify them into `help`.
+#define ADC_RATE_MIN_HZ   733
+#define ADC_RATE_MAX_HZ   500000
+
+// The rate a capture asked for `rate_hz` really runs at -- the programmed
+// divider's, which adc_capture_rate() then reports -- or 0 if the ADC cannot
+// make it. For the CLI to validate and print before it starts anything.
+uint32_t adc_capture_rate_for(uint32_t rate_hz);
+
+// Returns the number of samples captured, or 0 on error (bad mask, a rate
+// outside ADC_RATE_MIN_HZ..ADC_RATE_MAX_HZ). Blocking. Restores ADC_MODE_IDLE
+// afterwards.
 size_t adc_capture(unsigned chan_mask, size_t n_samples, uint32_t rate_hz);
 
 // ---------------------------------------------------------------------------
@@ -388,7 +403,9 @@ adc_trig_result_t adc_capture_triggered(unsigned chan, size_t n_samples,
                                         adc_wait_poll_fn poll,
                                         uint16_t *out_base, size_t *out_trig);
 
-// Access the buffer filled by the last adc_capture().
+// Access the buffer filled by the last adc_capture(). adc_capture_rate() is the
+// rate the divider was programmed to, not the one requested (they differ where
+// the divider rounds or clamps -- adc_ring_math.h).
 const uint16_t *adc_capture_buffer(void);
 size_t          adc_capture_count(void);
 unsigned        adc_capture_mask(void);

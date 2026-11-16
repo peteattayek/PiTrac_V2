@@ -14,6 +14,8 @@ current (§3 rule 9), probe grounding and scope bandwidth (§8 "Probing"), the h
 build-stamp and doc-link-check commands (§4), an independent review before any safety-relevant
 firmware is handed over (§5 rule 8), and the PowerShell / MSVC / KiCad traps (§7). Updated for
 a change of model/harness on 2026-10-09: nothing here depends on the previous harness.
+**2026-10-20:** the image version, try-before-you-buy reflashing, the A/B partition table and
+what may never be loaded onto a board that has it (§4).
 
 This file holds what the other docs do *not*: how the work is done, the traps on this machine,
 and the lessons that cost real bench time. **It deliberately does not hold live status** — that
@@ -58,7 +60,8 @@ root** (generated from the KiCad netlist by `tools/netlist_report.py`).
 
 The netlist is `Hardware/The_Second_Board_To_Rule_Them_All/The_Second_Board_To_Rule_Them_All.net`.
 **When a doc and the netlist disagree, the netlist is right** — several real bugs came from
-hand-written hardware summaries that had drifted.
+hand-written hardware summaries that had drifted. The netlist is the design, though, not the
+copper: whether two pads actually connect on the board is a DRC question (§7).
 
 ---
 
@@ -73,11 +76,23 @@ explicit decision from the owner.
    When suggesting an optical block or baffle, say this explicitly.
 2. 🔴 **`PULSE_LIMIT_DISABLE` (GPIO27) stays 0.** Written in exactly one place, `safe_state()`. No
    CLI path, no config flag. It defeats the strobe's hardware pulse-width watchdog.
-3. 🔴 **No Pi 5 on J8 until Phase 7c.** An RP2354 reset is a hard power cut to the Pi.
+3. 🔴 **A Pi 5 on J8 only for Phase 8 and Phase 7c** (`BENCH_P8_PI.md` 8.0–8.5, 8.8, 8.9; 8.10,
+   live strobe current with a Pi, approved 2026-11-12 and passed on board 1 with image 1.11
+   the same day; and `BENCH_P5_P7_MIC_CAMERA.md` 7c, approved by the owner 2026-11-13,
+   `PROGRESS.md` §8). The owner relaxed
+   "not before Phase 7c" on 2026-11-09 (`PROGRESS.md` §8). An RP2354 reset is a hard power cut
+   to the Pi: SW2 taped over, no `reset force` or `bootsel force`, no SWD reset, and the Pi's
+   own USB-C unplugged. Every other phase runs with the Pi off the board unless its procedure
+   says otherwise; remove it with PSU and USB off.
 4. 🔴 **Never run the +5 V rail from USB.** Firmware enforces it twice; don't design around it.
 5. ⚠ **Beam duty: 25 % operating, 35 % is a destruction ceiling, not a setting** (CR-12 thermal:
    junction 123–133 °C at 30 % against 145 °C max). The beam powers up at 2 % by design.
-6. ⚠ **Do not connect J4 (camera)** — the Mira220 I/O is 1.8 V with no 3.3 V tolerance (CR-09).
+6. ⚠ **Never connect J4 to a camera directly.** The camera's trigger input and strobe output
+   are 1.8 V, with no 3.3 V tolerance (CR-09; confirmed by the owner, 2026-11-11). Only through
+   a TXS0108E level-shifter module, wired as `BRINGUP_NEW_BOARD.md` Step 13.4: its 1.8 V side
+   on the camera, its 3.3 V side on the board. A camera goes on J4 only for
+   `BENCH_P5_P7_MIC_CAMERA.md` 7c (owner, 2026-11-13); every other bench phase runs with J4
+   empty.
 7. **Power-command acknowledgements are not rail-state evidence.** Always check `stat`
    for **STANDBY / latch 0** after shutdown before adjusting the exposed fixture.
    A stale `on` request caused an unexpected restart on 2026-09-18; the active workaround
@@ -98,7 +113,8 @@ explicit decision from the owner.
    only by `BENCH_P6_STROBE.md` 6c, from its board-state table: FLIR on Q9/HS1, J3 connected or
    disconnected only with PSU **and** USB off, scope on TP4 and TP3. **Never raise a live limit
    to make a test pass** (`STROBE_LIVE_*`, `STROBE_CAL_*`, `BURST_CHARGE_MAX_MC`, the ceiling,
-   the staircase): a limit that blocks a test is a finding to report. Known gap: a zero-current
+   the staircase, the session cap's `STROBE_SESSION_CAP_A_PER_LEVEL`): a limit that blocks a
+   test is a finding to report. Known gap: a zero-current
    firing counts as "within limits", so with an open load the staircase climbs — the 6c Step 3
    "nothing by 30 %" stop rule covers it until the firmware fix (PROGRESS §9).
 
@@ -128,9 +144,21 @@ $env:PATH = "$env:USERPROFILE\.pico-sdk\ninja\v1.13.2;$env:USERPROFILE\.pico-sdk
 arm-none-eabi-size build\pitrac.elf
 ```
 
-**Host tests** (native, MSVC, separate `tests/build`; 102 cases as of 2026-10-12). Run them
-after any change to `power_fsm.c`, `strobe_plan.c`, `strobe_live.c`, `service.c` or
-`adc_ring_math.h`. A newly added test file or case needs a reconfigure
+**Host tests** (native, MSVC, separate `tests/build`; 299 cases as of 2026-11-12, image 1.11). Run
+them after any change to `power_fsm.c`, `strobe_plan.c`, `strobe_live.c`, `service.c`,
+`telemetry.c`, `config_store.c`, `cal_math.c`, `adc_ring_math.h`, `fw_update.c`, `link_frame.c`,
+`link_proto.c`, `sha256.c`, `cam_plan.c`, `strobe.c`, `camera.c`, `shot.c`, `cli.c`'s `gpio`,
+`reset` and `bootsel` commands, or any `.pio` file. The camera tests run the PIO
+programs themselves: the test build calls the SDK's `pioasm` (`%USERPROFILE%\.pico-sdk\tools\2.3.0\pioasm`)
+on the same `.pio` sources and runs the words in `tests/pio_sim.c`. Without pioasm the configure
+step warns and those tests are not built. `engine_test` also runs the unchanged `strobe.c`,
+`camera.c` and `shot.c` against a register model (`tests/sdk_standin/`), with the `gpio` command
+copied out of `cli.c` by a Python script at build time: no Python, no `engine_test`. The Pi's link tool has a Python suite, standard library only, any
+machine: `python -m unittest discover -s pi/tests -p test_pitrac_link.py` (23 tests). The Pi's
+shutdown hook has its own POSIX-shell test, which runs under WSL here (on the Pi: `sh
+pi/tests/test_shutdown_hook.sh`):
+`MSYS_NO_PATHCONV=1 wsl.exe -e sh /mnt/c/<repo>/Hardware/firmware/pi/tests/test_shutdown_hook.sh`.
+Git Bash rewrites the `/mnt/c/...` path without `MSYS_NO_PATHCONV=1`. A newly added test file or case needs a reconfigure
 (`cmake tests -B tests\build`) before the build:
 
 ```powershell
@@ -141,11 +169,66 @@ cd tests\build; & "$env:USERPROFILE\.pico-sdk\cmake\v4.3.4\bin\ctest.exe" -C Rel
 
 **The build stamp is the image's identity.** `id` prints `built : <__DATE__ __TIME__>` of the
 last `cli.c` compile, so **any rebuild that recompiles `cli.c` changes it**, and the docs then
-name the wrong image. After a firmware change: build, read the stamp from the binary (regex
+name the wrong image. The converse bites too (2026-11-10): a rebuild that does **not** recompile
+`cli.c` keeps the old stamp on a changed image, so touch `cli.c` before the build you hand over.
+After a firmware change: build, read the stamp from the binary (regex
 `[A-Z][a-z]{2} [ 0-9]\d \d{4} \d\d:\d\d:\d\d` over `build/pitrac.bin`), confirm **Release** with
 `%USERPROFILE%\.pico-sdk\picotool\2.3.0\picotool\picotool.exe info -a build\pitrac.uf2`, take
 the UF2's SHA256, and write all three into `PROGRESS.md` §0/§6/§10 and the bench doc's status
 box. Don't rebuild a handed-over image just to check it: a doc-only change needs no rebuild.
+
+**The image also has a version** (major.minor, from 1.1 on): `PITRAC_FW_VERSION_*` in
+`CMakeLists.txt`, written into the image's IMAGE_DEF. `id`, `upd` and `picotool info` show it;
+the boot ROM compares it between the two A/B partitions. **Bump the minor for every image that
+leaves this PC.** An image no newer than the running one still installs, but buying it erases
+the other partition's image whenever the old one would otherwise win the next normal boot: always for an older version, and for an equal one when the old image is in A (equal versions boot A). Then there is no fallback.
+`CMakeLists.txt` says **1.11** (2026-11-12). The minor is a number: 1.10 and 1.11 are above
+1.9.
+- 1.11 is 1.10 with V110-F1 fixed. `reset` and `bootsel` check again after their 50 ms
+  output wait, immediately before the reboot, and disarm the watchdog only then. They
+  refuse while the board is POWERING_ON. 299/299 host tests, 30/30 mutations.
+  **Independent confirm review PASS** for the sampled guard rules and prescribed workflow
+  (`PROGRESS.md` §10); V110-F1 closed, V111-N1/N2 nonblocking wording notes. Physical
+  reset/BOOTSEL and Pi/strobe acceptance still run by §8.10, with its Pi-off reset state.
+- 1.10 is 1.9 with V19-F1 fixed. Plain `reset`, `bootsel` and `cfg save` count a Pi's 3V3
+  sensed now as a Pi, through `power_pi_maybe_present()`; so do the telemetry save and an
+  update's install, which sit behind `cfg save`'s guard. The FSM itself is unchanged.
+  298/298 host tests, 25/25 mutations. **Confirm review NOT PASSED (V110-F1):** a Pi
+  can raise 3V3 during the reset commands' 50 ms wait after that check. Keep 1.10 off
+  every board; full V19-F1 closure remains incomplete (`PROGRESS.md` §10).
+- 1.9 is 1.8 with the strobe's Pi observed fresh (V18-F1): the 3V3 sensed now and the
+  power FSM's classification together, UNSETTLED when they disagree, which neither arms
+  live mode nor lets a session run on. Its new `strobe_fsm_test` links the real
+  `power_fsm.c`, `service.c` and `strobe.c`. **V18-F1/N1 confirmed closed, but overall
+  review NOT PASSED (V19-F1):** pre-existing plain reset/bootsel and config-save guards
+  still trust cached Pi presence. Keep 1.9 off every board (`PROGRESS.md` §10).
+- 1.8 is 1.7 with the strobe allowed to fire with a Pi powered. Live mode then arms no
+  watchdog (owner, 2026-11-12), and a live session ends if a Pi appears or goes away. It
+  also words `level` as an aiming aid (V17-N1). **Independent review NOT PASSED (V18-F1):**
+  cached Pi presence defeats the intended session/watchdog rule. Keep it off every board
+  (`PROGRESS.md` §10). §8.10 is owner-approved but blocked until a corrected candidate
+  passes independent review.
+- 1.7 is 1.6 without 1.6's all-phase `level`, back to 1.5's current-phase reading, and with
+  1.6 review's comment note.
+- It keeps the `cal demod` floor, the saved threshold restored at boot, and `cfg save` naming
+  its fix.
+- It is Board 4's next image; Board 4 shipped on 1.5.
+- **Its independent review passed** (2026-11-12; `PROGRESS.md` §10), with nonblocking
+  wording note V17-N1: use `level` relatively and the sweep for final acceptance.
+  This software review does not record a completed flash or hardware acceptance.
+- 1.6 failed its review (V16-F1) and never left this PC. 1.5 (2026-11-10) is Phase 7 after its
+  review's fixes; 1.2, 1.3 and the rejected 1.4 came the same day.
+- `build/` and `build_hang/` still hold r5 (1.1) for the other boards' §8.0b and §8.7: do not
+  rebuild them.
+- Later images are built apart, in `build_v<version>/`: `build_v1.2/`, `build_hang_v1.2/`,
+  `build_v1.3/`, `build_v1.5/`, `build_v1.6/` (rejected), `build_v1.7/`, `build_v1.8/` (rejected),
+  `build_v1.9/` (rejected), `build_v1.10/` (rejected) and `build_v1.11/`.
+  They are
+  gitignored (`PROGRESS.md` §6).
+A build folder reused for unreviewed work no longer holds what was reviewed: give the next image
+a new version and folder rather than rebuilding a reviewed one (`build_v1.4/` was removed for
+this, 2026-11-10). Configure one with
+`cmake -B build_v<x.y> -G Ninja -DPICO_BOARD=pitrac_ltb_v1 -DPICO_PLATFORM=rp2350-arm-s -DCMAKE_BUILD_TYPE=Release`.
 
 **Doc links:** `python tools/check_doc_links.py` checks every relative link and `#anchor` in the
 firmware docs (exit 1 on a break). Run it after moving or renaming sections.
@@ -158,7 +241,44 @@ Selecting Release may only reconfigure; **CMake: Build** must then finish. Check
 timestamp and `picotool info -a` build attributes as well as the cache before approving flash.
 
 **Flash:** type `bootsel` at the board's CLI (it disarms the watchdog itself), or hold SW1 and tap
-SW2. Drag `build/pitrac.uf2` onto the `RPI-RP2` drive.
+SW2. Drag `build/pitrac.uf2` onto the `RP2350` drive (the datasheet's name for it, §5.5; these
+docs said `RPI-RP2`, the RP2040's, until 2026-10-20). From the 2026-10-19 image on, **no USB
+path can reset the board**: `picotool … -f` and a 1200-baud open do nothing to a running board,
+and `picotool info`/`load` need it in BOOTSEL first.
+
+**If the PC blocks writes to the `RP2350` drive** (a policy restriction on the owner's PC, found
+2026-11-11), load with picotool instead. It uses the PICOBOOT interface, not the drive:
+- `picotool load -p <n> -v -x <file.uf2>`, where `<n>` is the partition that is **not**
+  running, from `upd`'s `layout` line: A = 0, B = 1. The first image after the table goes
+  into 1.
+- `-x` makes the reboot a flash-update boot, which is what lets a try-before-you-buy image run
+  on trial.
+- On Board 4, `picotool load` followed by `reboot -u` left the image `tbyb: not bought`, and
+  it never ran.
+- Confirmed on Board 4, 2026-11-11: r5 into B with `-p 1 -v -x` → `ON TRIAL: bought itself`.
+
+**From image 1.1 (2026-10-20) the image is try-before-you-buy and the flash can be split A/B:**
+- **Every reflash is a trial.** The boot ROM runs a just-loaded image on a flash-update boot;
+  the image buys itself at the end of its init (`upd` shows `ON TRIAL: bought itself`). One that
+  never gets there is not run again: the previous image comes back by itself within ~17 s.
+- **Once per board, the partition table** (`build/pitrac_pt.uf2`, from
+  `partition_table.json`), by `BENCH_P8_PI.md` §8.7. After it, each drag goes into the
+  partition that is not running, so reflashes alternate A and B. The first one after the table
+  goes into B: with nothing in B the boot ROM would boot A. The config sectors sit outside
+  both and are never touched.
+- 🔴 **Never load an image older than 1.1 onto a board with the table.** It does not know about
+  the partitions, bus-faults at its first config read, and its boot erases the good image.
+  Recovery: BOOTSEL and any 1.1+ UF2.
+- **SWD (`tools/flash_swd.sh`) refuses by default:** it writes at flash offset 0, over the
+  table, and a try-before-you-buy image never starts after an SWD reset.
+- **From a Pi on the board:** `pitrac-link update` (`pi/README.md`; `BENCH_P8_PI.md` §8.9). The
+  board's one reset comes after it has shut the Pi down.
+- **The update note and the telemetry mirror are a contract between images.** They sit in
+  no-init RAM: the image that installs an update writes them, and the image it installs reads
+  them at *its* addresses. Moved silently, an update into the new image is not reported and the
+  Pi is not powered back on. So the build stops if either moves or changes size
+  (`tools/check_retained.cmake`, `PITRAC_RETAINED` in `CMakeLists.txt`); the script says what to
+  do when a move is deliberate.
 
 **Serial:** USB CDC on J6. The port depends on the board and the PC: board 3 has been
 **COM11**; board 1 has been **COM5** (2026-10-06 onward). Logs in `captures/` are named
@@ -251,6 +371,7 @@ design respin would change it, it is done once.
 | **.NET file calls in PowerShell (`[IO.File]::ReadAllText("rel\path")`) resolve relative paths against the process directory, not the PowerShell location.** | Always pass absolute paths to `[IO.File]` methods. |
 | **Host tests build with MSVC `/W4 /WX`**: a runtime check on a compile-time constant (`CHECK(CONST_A <= CONST_B)`) is warning C4127 → error. | Use file-scope `_Static_assert` for relations between `board.h` constants; keep `CHECK` for computed values. |
 | **KiCad 10 `.kicad_pcb` syntax**: a pad's net is `(net "GND")` with no net number (older parsers expect `(net 12 "GND")`); pad `(at x y rot)` is relative to the footprint and must be rotated by the footprint's angle (positive = counter-clockwise on screen, y down). The JLC CPL CSV has **no test points** (TP1–TP6). | Parse footprints between `\n\t(footprint "` markers; read positions from the `.kicad_pcb`, not the CPL. Verify a pad position against one known part before trusting the rest. |
+| **The netlist says what should connect, not what the copper does.** J8.17 is on +3V3_Pi5 in the netlist but has no copper; a bench step built on the netlist failed (2026-10-30, `NEXT_BOARD_REV.md` CR-27). | Before telling the owner two pads connect, run `& "C:/Program Files/KiCad/10.0/bin/kicad-cli.exe" pcb drc --format json --severity-all -o <scratchpad>/drc.json <the .kicad_pcb>` (read-only) and check `unconnected_items`; on these boards J8.17 is the only one. The fab gerbers name each copper object's net (`%TO.N,<net>*%`). |
 | **The view tool / an editor can show stale content right after a write.** | Verify an edit with a search, not by re-reading the view. |
 
 ---
@@ -365,7 +486,7 @@ Every one of these produced a confident wrong answer at least once.
 | Mic / ADC captures from `scope.py`, and **Serial Monitor logs** (`COM<n>_<date>.txt`) | `Hardware/firmware/captures/` — gitignored |
 | Screenshots and scope photos | owner's `Downloads` folder, usually `Photos-1-001 (<n>)\`, supplied per question; they stay there (§6 entries record the folder) |
 | Instruments | listed in `PROGRESS.md` §0 "Bench equipment" (MSO54B 500 MHz, TDS 1002, Saleae Logic Pro 8, DMM, PSU, FLIR) |
-| Host analysis tools | `tools/scope.py` (captures), `tools/la_phase.py` (LA phase CSVs), `tools/pilot_analysis.py` (one triggered ADC5 pass: peak, FWHM, clipping — §3.7), `tools/netlist_report.py`, `tools/check_doc_links.py` |
+| Host analysis tools | `tools/scope.py` (captures), `tools/la_phase.py` (LA phase CSVs), `tools/pilot_analysis.py` (one triggered ADC5 pass: peak, FWHM, clipping — §3.7), `tools/netlist_report.py`, `tools/check_doc_links.py`, `tools/p8_cycles.ps1` (BENCH_P8_PI.md 8.5: the 20 Pi boot/shutdown cycles over the CLI) |
 
 ---
 

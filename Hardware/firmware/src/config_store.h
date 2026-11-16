@@ -6,7 +6,8 @@
 // to reacquire: demod_phase_ticks takes a 26 s sweep, the phase model takes
 // five of them, and scan carrier takes minutes of warm beam. Re-entering those
 // by hand after every reset is how they end up stale or wrong. The Phase 8 halt
-// telemetry counters ride on the same machinery.
+// telemetry counters ride on the same machinery (telemetry.h), written by
+// cfg_telemetry_service() as well as by `cfg save`.
 //
 // DUAL SLOT, ALTERNATING. Two 4 KB sectors, written alternately, newest `seq`
 // wins. That gives wear levelling, but the real reason is POWER-FAIL ATOMICITY:
@@ -70,10 +71,18 @@ typedef struct {
     // the board to defaults.
     float    cal_duty;
 
-    // ---- Phase 8 halt telemetry, reserved ----
+    // ---- Phase 8 halt telemetry (telemetry.h, TELE_WORDS) ----
+    // Written by `cfg save` and by cfg_telemetry_service(). An older record has
+    // zeros here, which telemetry_init() reads as "nothing saved yet".
     uint32_t telemetry[16];
 
-    uint8_t  reserved[124];
+    // 1 = written by cfg_telemetry_service() on a board that had never had a
+    // `cfg save`: every calibration field is the default. Carved out of
+    // `reserved` on 2026-10-19 like cal_duty, so the size and version stay: an
+    // older record reads 0, "the operator saved this".
+    uint8_t  telemetry_only;
+
+    uint8_t  reserved[123];
     uint32_t crc32;                // over the record up to this field
 } pitrac_cfg_t;
 
@@ -91,13 +100,58 @@ void  cfg_init(void);              // pick the newest valid slot, or defaults
 // Splitting it is the only way to make the ordering explicit rather than a
 // silent dependency on the order of two lines in main().
 void  cfg_apply_beam(void);
+
+// Push the saved comparator threshold into detect.c (image 1.6 on). Called
+// AFTER detect_init(), which starts the DAC at level 0, for the same reason as
+// cfg_apply_beam(). A saved level above DAC_TOP cannot come from `cfg save`, so
+// a record carrying one is corrupt but CRC-valid: the boot default 0 stays.
+//
+// Before 1.6 nothing restored it. `cfg` printed the saved level while the DAC
+// sat at 0, and a threshold tuned and saved in BENCH_P3_DETECT 3.7 was lost at
+// every reset -- the same "saved but never restored" class as the carrier and
+// phase (2026-08-14) and the phase model (2026-08-25).
+void  cfg_apply_threshold(void);
 const pitrac_cfg_t *cfg(void);
 pitrac_cfg_t       *cfg_mut(void); // mark dirty by writing through this
-bool  cfg_save(void);              // guarded; see below
+bool  cfg_save(void);              // guarded; see below. Saves the halt telemetry too
 void  cfg_defaults(pitrac_cfg_t *c);
-const char *cfg_source(void);      // "slot A" / "slot B" / "defaults"
+const char *cfg_source(void);      // "slot A" / "slot B" / "defaults", + "telemetry only"
 
 // Why cfg_save() would refuse right now, or NULL if it would proceed.
 const char *cfg_save_blocked_reason(void);
+
+// What the operator types to clear that refusal, or NULL when there is none.
+// The same tests in the same order as cfg_save_blocked_reason(), so the two
+// always describe the same blocker (image 1.6; before it the CLI only said
+// "Quiesce first", and on Board 4 the owner had to work out `beam off`).
+const char *cfg_save_unblock_hint(void);
+
+// The running image reaches into the config sectors (every write is refused).
+bool        cfg_image_overlaps(void);
+// Where the two config sectors are: a physical flash offset, and 8 KB. Outside
+// both A/B partitions (partition_table.json), so an update never touches them.
+uint32_t    cfg_flash_offset(void);
+uint32_t    cfg_flash_bytes(void);
+
+// Phase 8.6: the halt telemetry to flash, on its own. Call from the main
+// superloop ONLY -- never from pitrac_service(), which also runs inside blocking
+// commands. Writes once the counts have changed and the board has sat in
+// STANDBY for TELEMETRY_SAVE_QUIET_MS (so never with a Pi powered), under
+// cfg_save()'s guard, retrying a failed write after TELEMETRY_SAVE_RETRY_MS and
+// giving up for this boot after TELEMETRY_SAVE_MAX_FAILS.
+//
+// It writes the LAST SAVED record with new telemetry words. Calibration changed
+// in RAM since the last `cfg save` is NOT persisted by it -- that stays the
+// operator's decision.
+void cfg_telemetry_service(void);
+
+typedef struct {
+    uint32_t saves;          // automatic writes this boot
+    uint32_t failures;       // ...that did not verify
+    bool     retry_wait;     // the last one failed: waiting to retry
+    uint32_t retry_in_ms;
+    bool     gave_up;        // TELEMETRY_SAVE_MAX_FAILS reached: no more this boot
+} cfg_telemetry_stat_t;
+void cfg_telemetry_status(cfg_telemetry_stat_t *out);
 
 #endif // PITRAC_CONFIG_STORE_H

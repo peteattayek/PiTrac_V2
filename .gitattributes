@@ -16,6 +16,8 @@
 *.sh        text eol=lf
 *.cfg       text eol=lf
 *.py        text eol=lf
+# The Pi-side power-contract files: systemd units and drop-ins break on CRLF.
+Hardware/firmware/pi/** text eol=lf
 
 # ---------------------------------------------------------------------------
 # Source — normal text handling, diffs are useful

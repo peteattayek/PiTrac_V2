@@ -61,6 +61,10 @@ void detect_init(void);
 // ---------------------------------------------------------------------------
 
 void  detect_threshold_set_duty(float duty);   // 0..1, blocks for DAC_SETTLE_MS
+// A raw level, clamped to DAC_TOP, WITHOUT the settle wait. For the boot-time
+// restore of a saved threshold (cfg_apply_threshold()), where nothing reads the
+// comparator yet. Everything interactive uses the settling setters above.
+void  detect_threshold_set_level(uint16_t level);
 void  detect_threshold_set_volts(float v);
 float detect_threshold_duty(void);
 float detect_threshold_volts(void);            // duty x vref

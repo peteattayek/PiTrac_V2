@@ -1,0 +1,23 @@
+; SPDX-License-Identifier: GPL-3.0-or-later
+; Copyright (C) 2026 PiTrac contributors
+;
+; pulsegen.pio -- one delayed pulse pair per rising edge of the trigger (tools/pulsegen).
+;   IN pin 0     the trigger (J4.4)
+;   SET pins 0-1 the two strobe outputs (J4.7, J4.8), driven together
+; The CPU pushes the delay count before every shot, and clears IRQ 0 to end the hold.
+;
+; From the trigger's edge to the outputs: the input synchroniser (2 cycles), the wait (1),
+; the loop (x + 1), the set (1): x + 5 cycles, to within one.
+
+.program pulsegen
+.wrap_target
+    pull block          ; this shot's delay count
+    mov x, osr
+    wait 0 pin 0        ; the trigger low first: one shot per rising edge
+    wait 1 pin 0        ; its rising edge
+dly:
+    jmp x-- dly         ; x + 1 cycles
+    set pins, 3         ; both strobes high, together
+    irq wait 0          ; the CPU times the hold, then clears IRQ 0
+    set pins, 0         ; both low
+.wrap

@@ -5,6 +5,7 @@
 
 typedef struct {
     volatile uint32_t ctrl;
+    volatile uint32_t scratch[8];
 } watchdog_hw_t;
 
 extern watchdog_hw_t mock_watchdog_hw;

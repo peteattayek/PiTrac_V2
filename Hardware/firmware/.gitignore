@@ -1,4 +1,11 @@
 build/
+# The rollback test image (CMakeLists.txt, PITRAC_TEST_TRIAL_HANG; BENCH_P8_PI.md 8.7).
+build_hang/
+# Later images, built apart so build/ and build_hang/ keep r5 (1.1) for the other
+# boards' 8.0b and 8.7: build_v1.2/ and build_hang_v1.2/ (BENCH_P8_PI.md 8.9),
+# build_v1.3/ (the 10 s holdoff), and so on.
+build_v*/
+build_hang_v*/
 .vscode/
 *.uf2
 *.elf

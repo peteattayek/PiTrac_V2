@@ -66,6 +66,10 @@
 #define PIN_HANDSHAKE_1      7   // bidir spare                (J8.36 <-> Pi GPIO16, R37 1K)
 #define PIN_PI_3V3_SENSE    24   // in  : Pi 3V3 present. R45 10K / R44 100K divider
                                  //       -> 3.3 V * 0.909 = 3.0 V when the Pi is powered.
+                                 //       !! The Pi 5's header 3V3 does NOT fall at halt
+                                 //       (measured 2026-11-09, BENCH_P8_PI.md 8.1/8.2): this
+                                 //       shows power, not "the Pi is down". RPI5_ON is the
+                                 //       only down indicator that works (power_pi_is_down()).
 #define PIN_RPI5_SHUTDOWN   43   // out : shutdown request     (J8.37 -> Pi GPIO26, R39 1K)
 
 // --- External I2S microphone (J5) ------------------------------------------
@@ -142,6 +146,8 @@
 #define PIN_USB_ENABLE      32   // out : USB-A accessory VBUS switch (Q6 -> Q7)
 #define PIN_UART_TX         36   // out : UART1 -> Pi RXD  (J8.10, R30 220R)
 #define PIN_UART_RX         37   // in  : UART1 <- Pi TXD  (J8.8,  R31 220R)
+                                 // Both connected to UART1 only while a Pi is up
+                                 // (safe_state_pi_uart_lines()); the link is pi_link.c.
 
 // ===========================================================================
 // ADC CHANNELS  (RP2350B: ADC channel n == GPIO 40+n)
@@ -463,10 +469,16 @@
 //
 // What the number is: a VIR sag budget, Q = C x dV = ~670 uF x ~9 V (.md 13.1,
 // section 15), keeping headroom over the LED string Vf. It is not a thermal
-// limit, and the 670 uF effective bulk has never been measured.
+// limit.
 //
-// 🔴 UNVALIDATED on the real bank. 6a.3 confirms the interlock sheds at 10 m/s;
-// 6c is where it meets real current. Do not raise it to make a test pass.
+// MEASURED ON BOARD 1 (6c Steps 4b and 5, 2026-10-16; PROGRESS.md section 6):
+// the bank is ~600 uF, not the ~670 uF assumed (677 nominal). The boost goes
+// into hiccup after a 50 or 100 us pulse at 9 A, so a burst runs from the bank
+// alone apart from ~0.25 mC in its first ~0.3 ms. The 5.4 mC slow-ball burst
+// sagged VIR 8.8 V and left ~3.5 V across Q9 against its ~1-1.5 V need; a 6 mC
+// burst should leave ~2.5 V. The owner kept 6 mC (2026-10-16); the readback's
+// shape check is the guard if a weaker bank runs short. Do not raise it to make
+// a test pass.
 #define BURST_CHARGE_MAX_MC        6.0f
 #define BURST_PULSES_NOMINAL       10u    // S15 assumes 10 per burst, 9 gaps
 #define BURST_PULSES_MIN            3u    // .md 13.4: shed no further than this
@@ -506,16 +518,23 @@
 // The policy is in strobe_plan.c and the measurement in strobe_live.c, both
 // host-tested.
 //
-// THE ESTIMATE THE GUARDS ARE SIZED FROM -- NOT MEASURED; 6c measures it. There
-// is no analog servo: current = (TP3 - Vgs(Q9)) / (R65||R66 0.135 R + Q10's
-// Rds(on) ~0.02 R), so at most ~6 A per volt at TP3, less once Q9's own
-// transconductance is counted. One DAC level is 3.29 V x 3 / 1024 = 9.6 mV at
-// TP3, so at most ~0.06 A. The design expects TP3 ~4.5-6 V at 9 A.
+// THE ESTIMATE THE GUARDS WERE SIZED FROM. There is no analog servo: current =
+// (TP3 - Vgs(Q9)) / (R65||R66 0.135 R + Q10's Rds(on) ~0.02 R), so at most
+// ~6 A per volt at TP3, less once Q9's own transconductance is counted. One DAC
+// level is 3.29 V x 3 / 1024 = 9.6 mV at TP3, so at most ~0.06 A. The design
+// expected TP3 ~4.5-6 V at 9 A.
+// MEASURED ON BOARD 1 (6c Step 4, 2026-10-16): 9 A at level 439 (42.9 %, TP3
+// 4.233 V on the DMM), and ~0.049 A per level (~5.1 A/V) near 9 A.
 // ---------------------------------------------------------------------------
 
 // Gate ceiling while live: 717 of 1024 = 70.0 % (what `strobe gate 70` asks for)
-// -> TP3 ~6.9 V, above the 4.5-6 V the design expects at 9 A. `strobe cal`
+// -> TP3 ~6.9 V, above the 4.5-6 V the design expected at 9 A. `strobe cal`
 // fails at it rather than pass it.
+// It is the OUTER bound only. Board 1 reaches 9 A at TP3 4.23 V (42.9 %), so at
+// ~5 A/V the ceiling would ask for far more than the 10.8 A stop (2026-10-16).
+// What bounds the current is the per-firing OVERCURRENT checks, the staircase,
+// and -- once `strobe cal` has solved -- the session cap below (owner's option c,
+// 2026-10-16).
 #define STROBE_LIVE_GATE_CEILING      717u
 
 // THE STAIRCASE RULE. While live, the gate may be raised to at most this many
@@ -530,9 +549,20 @@
 // 3 % rounds to 30 or 31 levels.
 #define STROBE_LIVE_GATE_STEP_MAX      31u
 
-// Stop current: 1.2 x the 9 A design target (BENCH_P6 6c). A plateau above
-// I_STOP, or any single sample above I_PEAK_STOP, latches
-// FAULT_STROBE_OVERCURRENT and leaves live mode with the gate at 0.
+// Stop current: 1.2 x the 9 A design target (BENCH_P6 6c). Any of these latches
+// FAULT_STROBE_OVERCURRENT and leaves live mode with the gate at 0:
+//   - a plateau (a pulse's mean) above I_STOP;
+//   - a level above I_STOP held for two samples in a row (2026-10-15: a pulse
+//     that creeps up as Q9 heats can cross it with its mean still under);
+//   - two of ANY three consecutive samples above I_STOP, anywhere in the record
+//     (2026-10-15, the owner's decision on independent review's recommendation:
+//     repeated over-limit peaks -- ringing, an oscillating gate loop -- passed the
+//     two rules above whenever the mean stayed under and no two adjacent samples
+//     were both over, e.g. 9 / 12 A alternating; test policy_two_of_three);
+//   - any single sample above I_PEAK_STOP.
+// These are SAMPLED rules, 2 us apart -- not a guarantee about every 2 us of
+// current: an excursion can fall between samples. The scope on TP4 stays the
+// primary check for ringing (6c Step 3); the firmware is the backstop.
 #define STROBE_LIVE_I_STOP_A         10.8f
 #define STROBE_LIVE_I_PEAK_STOP_A    13.0f
 
@@ -608,12 +638,34 @@
 #define STROBE_LIVE_DMA_SPREAD_CYCLES    20u
 
 // Pulse detection, in ADC codes (0.806 mV = 6.0 mA at 135 mV/A):
-//   - a pulse is a run of samples more than max(DETECT_MIN, half the peak)
-//     above the baseline;
+//   - a pulse is a run of samples more than DETECT_MIN above the baseline: an
+//     ABSOLUTE floor. Until 2026-10-15 it was max(DETECT_MIN, half the record's
+//     peak), and on board 1 (2026-10-13, gate 24 %) a 3.3 A turn-on spike put
+//     that line at ~1.5 A: the 0.72 A pulse under it read as "no current". The
+//     same rule would have hidden a stuck-on current under any larger spike.
 //   - a baseline (the mean of the window before the first edge) above
-//     BASELINE_MAX means current was flowing BEFORE the pulse.
+//     BASELINE_MAX means current was flowing BEFORE the pulse. A constant
+//     current through the whole window lifts the baseline with it, so this
+//     absolute check is what sees one below ~BASELINE_MAX.
 #define STROBE_LIVE_DETECT_MIN_CODES     12u   // ~72 mA
 #define STROBE_LIVE_BASELINE_MAX_CODES   40u   // ~0.24 A
+
+// Pulse shape (the other half of the 2026-10-13 finding). A pulse of four or
+// more samples has a SETTLED level: the median of its samples less the two
+// edge samples. The firing is NOT CLEAN -- live mode ends, no fault latched,
+// the staircase does not move -- if any sample of a pulse is above
+// settled x (1 + TOL) + MARGIN (an overshoot), or any sample but the two edges
+// is below settled x (1 - TOL) - MARGIN (a dip, or a split plateau).
+//   TOL     25 %. 6c's pass criterion is "no ringing over ~20 % of the plateau",
+//           judged on the scope; the firmware is the backstop, a little wider.
+//   MARGIN  2 x DETECT_MIN (~0.14 A), so a pulse near the floor -- a few codes of
+//           signal on +-1-2 codes of noise -- cannot trip it.
+// Board 1 before its gate-drive rework: gate 21 % sampled a 53-code peak on a
+// 17-code settled level (bound 46); 24 % ~510 on ~120 (bound 174). After the
+// rework, 24 % peaks at 1.01-1.02x. At 9 A the bound is ~11.4 A, between I_STOP
+// and I_PEAK_STOP.
+#define STROBE_LIVE_SHAPE_TOL            0.25f
+#define STROBE_LIVE_SHAPE_MARGIN_CODES   (2u * STROBE_LIVE_DETECT_MIN_CODES)
 
 // Applied to EVERY live firing: current on for longer than this, still on at
 // the end of the window, or flowing before the pulse means the U5 clamp or Q10
@@ -639,6 +691,64 @@
 #define STROBE_CAL_CONFIRM_PULSES         3u
 #define STROBE_CAL_CONFIRM_TOL          0.05f  // +-5 % of the target
 #define STROBE_CAL_MAX_POINTS           160u
+
+// SESSION CAP (the owner's option c, 2026-10-16; firmware 2026-10-19). Once
+// `strobe cal` SOLVES, live gate levels are capped where the current could
+// first reach STROBE_LIVE_I_STOP_A, counted from the cal's first point at or
+// above its target (level l1, current a1):
+//
+//     cap = l1 + floor((STROBE_LIVE_I_STOP_A - a1) / STROBE_SESSION_CAP_A_PER_LEVEL)
+//
+// never below the solved level, never above STROBE_LIVE_GATE_CEILING. It clears
+// on re-arm, on leaving live mode and at the start of the next cal. RAM only.
+//
+// The slope is a BOUND, not a fit. ADC0 reads the voltage across R65||R66 and
+// divides by 0.135 R. That voltage can rise by at most what TP3 rises (Q9 is a
+// source follower, gain below 1, and Q10's drop is outside the sense), and one
+// level is 3.3 V x 3 / 1024 = 9.67 mV at TP3: at most 0.0716 A per level, on any
+// board and at any current. 0.075 adds ~5 % for the +3V3 and gain-resistor
+// tolerances. The cal's own slope is NOT used: near its target it understates
+// the slope higher up (board 1: ~0.040 A/level at 2 A, 0.049 at 9 A), so a cap
+// extrapolated from a 2 A cal would sit where board 1 draws ~12 A.
+//
+// Board 1's 2026-10-16 cal (440 -> 9.071 A): cap 463 (45.2 %), where its own
+// slope gives ~10.2 A -- ~0.6 A under the stop.
+#define STROBE_SESSION_CAP_A_PER_LEVEL  0.075f
+
+// ===========================================================================
+// CAMERA HANDSHAKE (Phase 7; cam_plan.h, camera.c, cam_handshake.pio)
+// ===========================================================================
+//
+// One handshake: D_Cam_Trigger (GPIO10) high, wait for both Cam_Strobe inputs
+// (GPIO8/9) high, FIRE the strobe engine at max(first delay, t_cam), hold the
+// trigger, drop it. No answer within the timeout: the trigger drops, FAULT_CAM_
+// TIMEOUT latches, and nothing fires. All of it runs in PIO1 (cam_handshake.pio).
+//
+// 🔴 J4 STAYS OFF A CAMERA until CR-09 (the Mira220's 1.8 V I/O) is settled.
+// These numbers are for the 7a loopback and the 7b generator, both at 3.3 V.
+//
+// The timeout is the .md's wait_both(..., 5 ms). t_cam is expected at 100-300 us
+// (7c measures the real one). The first delay comes from the beam-to-FOV geometry
+// and the ball speed, which nothing computes yet: `cam shot` takes it typed.
+#define CAM_TIMEOUT_US            5000u
+#define CAM_TIMEOUT_MIN_US          10u
+#define CAM_TIMEOUT_MAX_US       50000u
+#define CAM_FIRST_DELAY_MAX_US   50000u
+// The hold: FIRE -> trigger released. A shot holds for the whole burst plus a
+// margin (the burst starts 4-5 us after FIRE and its IRQ0 comes 8 us after the
+// last falling edge, so the burst's nominal duration already over-covers it).
+// The S15 schedule at 2 m/s is ~0.2 s long, hence the maximum.
+#define CAM_HOLD_MIN_US              1u
+#define CAM_HOLD_MAX_US         250000u
+#define CAM_HOLD_MARGIN_US          50u
+#define CAM_TRIG_HOLD_US          1000u   // `cam trig`: the handshake with no burst
+// How far past the PIO's own end times the CPU waits before calling the engine
+// stuck: FAULT_INTERNAL, everything stopped, the trigger dropped.
+#define CAM_ENGINE_MARGIN_US     20000u
+// `cam shot` defaults: the first delay, and the speed whose S15 schedule is the
+// burst (70 m/s: 14 us pulses, 610 us apart, 10 of them, ~5.5 ms).
+#define CAM_SHOT_FIRST_DELAY_US    200u
+#define CAM_SHOT_SPEED_MPS        70.0f
 
 // ===========================================================================
 // Pi 5 SOFT-SHUTDOWN -- polarity decision
@@ -672,16 +782,31 @@
 // level fails, but it is defence-in-depth, not a gate: every reset also opens
 // the +5V latch, so the Pi is losing power in the same instant. Optional: a 10K
 // pull-up from J8.37 to the always-on +3V3 (NEXT_BOARD_REV.md CR-04).
+//
+// THE LINE'S REST STATE (2026-10-19; PROGRESS.md section 9). Until then
+// safe_state_init() drove GPIO43 high from boot, so in STANDBY it pushed up to
+// ~2.7 mA through R39 into an unpowered Pi's GPIO26 clamp. Now the power FSM
+// drives it every step (pi_lines_service() in power_fsm.c):
+//   ASSERTED    the 200 ms shutdown request, latch closed;
+//   DEASSERTED  latch closed AND the Pi's 3V3 reads up (PIN_PI_3V3_SENSE);
+//   RELEASED    otherwise: input, no pulls, input buffer off.
+// Released, a powered Pi's own gpio-shutdown pull-up holds the line deasserted,
+// so a line the firmware forgot to drive cannot ask for a shutdown either.
 #define PI_SHUTDOWN_ACTIVE_LOW  1
 #define PI_SHUTDOWN_PULSE_MS   200
 
 // Guard times for the shutdown sequence.
 //   MIN_HOLDOFF: never drop the latch sooner than this after the request, even
 //     if the down-indicator says the Pi is already gone. A glitch on a 1K sense
-//     line must not be able to yank power mid-filesystem-sync. gpio-shutdown ->
-//     systemd -> halt is typically 5-15 s. Retune to ~2x the measured duration.
+//     line must not be able to yank power mid-filesystem-sync. A floor only:
+//     past it the latch still waits for the Pi to read down (up to MAX_WAIT).
+//     MEASURED 2026-11-09 (BENCH_P8_PI.md 8.1, a Pi 5 on Raspberry Pi OS Lite):
+//     RPI5_ON read low <= 2.5 s after the request. 15 s up to image 1.2; 10 s
+//     from 1.3 (owner, 2026-11-10): ~4x the measurement, margin for a busier Pi.
 //   MAX_WAIT: if the Pi never indicates down, cut power anyway and log a fault.
-#define PI_SHUTDOWN_MIN_HOLDOFF_MS  15000
+//   BOOT_TIMEOUT: from the latch closing to RPI5_ON high. MEASURED 2026-11-09:
+//     ~16 s on the same Pi (three cold starts, BENCH_P8_PI.md 8.3).
+#define PI_SHUTDOWN_MIN_HOLDOFF_MS  10000
 #define PI_SHUTDOWN_MAX_WAIT_MS     60000
 #define PI_BOOT_TIMEOUT_MS          90000
 #define RAIL_SETTLE_MS                250
@@ -703,10 +828,12 @@
 // asserts the jumpers BEFORE the button press, an ordering a real Pi can never
 // produce (it cannot raise 3V3 until after the rail it is powered by comes up).
 //
-// 3 s is a deliberately generous placeholder. The real number comes from Phase
-// 8.3 -- scope +5V at J8.2 against Pi 3V3 at J8.1 and measure the latency. The
-// only cost of an over-long window is that a no-Pi bench session waits this long
-// before the ring goes solid, which is also what makes POWERING_ON visible.
+// MEASURED 2026-11-09 (BENCH_P8_PI.md 8.3, two cold starts): the Pi 5's header
+// 3V3 crosses 2.54 V (what GPIO24 reads as high) 5.56 ms after the switched +5 V
+// edge, the same to one 3.2 us sample both times. 3 s is ~540x that, and is
+// kept: the only cost of an over-long window is that a no-Pi bench session
+// waits this long before the ring goes solid, which is also what makes
+// POWERING_ON visible.
 #define PI_DETECT_WINDOW_MS          3000
 
 // Debounce for LATE Pi detection (BENCH_RUNNING -> PI_BOOTING). The promotion is
@@ -717,5 +844,23 @@
 // PI_BOOTING, and if it then de-asserts we raise FAULT_NO_PI_DETECTED and
 // FORCE_OFF -- dropping the rail in the middle of, say, a beam ramp.
 #define PI_PRESENT_DEBOUNCE_MS        100
+
+// RUNNING: how long the Pi must read down (power_pi_is_down()) with no request
+// from the board before it counts as gone -- BENCH_P8_PI.md 8.6's
+// pi_down_unrequested. Long enough that a glitch on a 1K sense line is not a
+// halt; a real halt or reboot stays down for seconds. Counted and shown only:
+// the rail stays up (8.6, "log it and stay up is the safe default"). Coming
+// back up uses PI_PRESENT_DEBOUNCE_MS.
+#define PI_DOWN_DEBOUNCE_MS          1000
+
+// Halt telemetry (telemetry.h) goes to flash only after this long in STANDBY
+// with something new to save: never with a Pi powered, and at most once per
+// quiet spell, so a reset loop cannot wear the flash. A failed write waits
+// TELEMETRY_SAVE_RETRY_MS before the next try, and after TELEMETRY_SAVE_MAX_FAILS
+// in one boot the automatic writes stop -- a flash that will not verify should
+// not be erased every minute. `cfg save` still tries.
+#define TELEMETRY_SAVE_QUIET_MS     10000
+#define TELEMETRY_SAVE_RETRY_MS     60000
+#define TELEMETRY_SAVE_MAX_FAILS        3
 
 #endif // PITRAC_BOARD_H

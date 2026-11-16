@@ -21,7 +21,7 @@ economise by doing things in software:
 
 | Resource | Total | Committed (2026-10-05) | Free |
 |---|---|---|---|
-| **PIO blocks** | **3** (PIO0/1/2), 4 SMs each = 12 SMs | **2 in use** (strobe PIO0 SM0, detect PIO2 SM0) + 2 planned (camera PIO0 SM1, I²S PIO1 SM0) | **8 SMs** after the planned two |
+| **PIO blocks** | **3** (PIO0/1/2), 4 SMs each = 12 SMs; 32 instructions each | **3 in use** (strobe PIO0 SM0, camera PIO1 SM0 since 2026-11-10, detect PIO2 SM0) + 1 planned (I²S PIO0 SM1) | **8 SMs** after the planned one. Instructions: PIO0 13 of 32 used, PIO1 29, PIO2 8 |
 | PWM slices | 12 | **5** (5, 6, 7, 10, 11 — slice 6 belongs to the gate DAC since A7's fix) | **7** |
 | DMA channels | 16 | 3 in use (capture + ring + strobe burst), ~5 planned | 10 |
 | ADC | 1 SAR, 500 ksps, round-robin + DMA | **continuous 32 KB ring** (A1 ✅) | — |
@@ -49,8 +49,9 @@ Status column: **bench** = proven on hardware; **built** = implemented, not yet 
 | Comparator edge timing, GPIO46 | **PIO2 SM0** (`detect.pio`), A2 | zero | built — arm/disarm proven; edge timing not yet |
 | Panel LED brightness, GPIO11 | PWM slice 5B | see A4. GPIO12 (ready) is SIO on/off since **A7** | bench |
 | ADC block capture | DMA, `DREQ_ADC` | zero during transfer | bench |
-| Strobe burst train, GPIO25 | **PIO0 SM0** + DMA-fed schedule | zero during burst | built (6a) |
-| I²S mic, GPIO4/5/6 | **PIO1 SM0** + DMA | zero | **planned** — optional header path, no firmware |
+| Strobe burst train, GPIO25 | **PIO0 SM0** + DMA-fed schedule | zero during burst | bench (6a–6d) |
+| Camera handshake, GPIO8/9/10 | **PIO1 SM0** (`cam_handshake.pio`); its FIRE starts the strobe burst through PIO0's flag 4 (`strobe_gate.pio`) | zero | built 2026-11-10 (A3); 7a and 7b PASS on board 1, 2026-11-13 |
+| I²S mic, GPIO4/5/6 | **PIO0 SM1** + DMA (moved from PIO1 SM0 on 2026-11-10: the camera fills PIO1) | zero | **planned** — optional header path, no firmware |
 
 > **Slice numbers corrected 2026-07-31.** This table previously said 3B / 7B / 2A. RP2350B
 > has 12 slices and the mapping is not the RP2040 formula — for GPIO ≥ 32 it is
@@ -160,9 +161,15 @@ performance trade — an allocation that violates it fails to configure, and the
 
 | Block | GPIOBASE | SM0 | SM1 |
 |---|---|---|---|
-| PIO0 | 0 | strobe (GPIO25), Ph6 — **built** | camera handshake (GPIO8/9/10), Ph7 — *planned* |
-| PIO1 | 0 | I²S mic (GPIO4/5/6), Ph5 — *planned, optional* | free |
+| PIO0 | 0 | strobe (GPIO25), Ph6 — **built**; the camera gate (one instruction) just below it | I²S mic (GPIO4/5/6), Ph5 — *planned, optional* |
+| PIO1 | 0 | **camera handshake (GPIO8/9/10), Ph7 — built 2026-11-10** (29 instructions) | free |
 | PIO2 | **16** | **detect (GPIO46) — built** | free |
+
+> **2026-11-10: the camera moved from PIO0 SM1 to PIO1 SM0, and the mic from PIO1 to PIO0.**
+> The handshake program is 29 instructions; PIO0 had 20 free next to the strobe's 12. RP2350's
+> `irq prev` lets a state machine set a flag in the block numbered one below its own, so the
+> camera's FIRE still reaches the strobe engine in PIO0 with no CPU in between (A3). Both blocks
+> are base 0. `pio_alloc_init()` asserts that PIO1 is PIO0's next block.
 
 Two constraints that are easy to violate silently:
 
@@ -260,6 +267,11 @@ be the last thing it does before the burst, not the first.**
 > **requires the detector disarmed**, so there is no ch5/ch7 history to lose. The production
 > ordering rule above still governs `shot.c`'s `SHOT_FIRING` in Phase 7.
 >
+> **2026-11-10 — Phase 7's firing path does not touch the ADC yet.** A test shot (`cam shot`)
+> starts at the camera handshake and fires its burst DRY, so it never selects BURST. A detected
+> pass ends at `SHOT_ANALYSING` as "not implemented" (no ball speed). The rule above applies when
+> a detected pass first fires.
+>
 > **2026-10-12 — the BURST ring can start late.** On board 1, ~440 µs after the switch to BURST
 > the ring held only 122 ADC0 samples (≈ 244 µs). `adc_ring_freeze_copy()` sized its copy from
 > elapsed time, so the oldest 86 samples it returned were the IDLE ring's leftovers, and they
@@ -305,7 +317,48 @@ be the last thing it does before the burst, not the first.**
 
 ---
 
-### 🟡 A3 — The camera handshake should not be a busy-wait
+### 🟡 A3 — The camera handshake is a PIO state machine. Built 2026-11-10; image 1.5 (the review's fixes) passed its independent confirm review; 7a and 7b PASS on board 1 (2026-11-13)
+
+**What was built** (`src/cam_handshake.pio`, `src/camera.c`, `src/cam_plan.c`, `src/strobe_gate.pio`):
+
+- **PIO1 SM0, full system clock.** It raises D_Cam_Trigger, then polls both Cam_Strobe inputs
+  every 5 cycles (33.3 ns). The poll loop has one path, which is what makes the count a time.
+- **Both strobes from ONE sample** (independent review H7-F1, fixed in 1.5). `mov isr, ~pins`
+  reads GPIO8 and GPIO9 in the same clock (IN_BASE GPIO8, IN_COUNT 2); `in null, 30` keeps only
+  those two inverted bits, so the ISR is zero exactly when both were high in that sample. Image
+  1.4 read them with `jmp pin` and `mov y, pins` one clock apart, and took a hand-over from one
+  strobe to the other between the reads for "both exposing".
+- **It FIREs at max(first delay, t_cam)**: the .md's `delay_us(max(0, first_delay_us - t_cam))`,
+  done by the state machine itself. The first delay counts down while it polls. Strobes seen
+  inside it: it reports the count, waits out the rest, then FIREs. Seen after it: it FIREs 13
+  cycles later, so the delay clamps to zero and nothing underflows. The OSR is the phase flag
+  (`out x, 32` empties it), because X counts and Y holds the sample.
+- **FIRE is `irq prev set 4`**: flag 4 of PIO0. The strobe engine for a camera-gated burst starts
+  on `strobe_gate.pio`, one `wait 1 irq 4` loaded in the word just below the burst program, and
+  falls into the burst's first instruction. The burst program and its timing (6a) are unchanged.
+  The first edge comes 4–5 µs after FIRE, from the burst engine's 1 MHz tick.
+- **Timeout in PIO.** No strobes by the timeout: the trigger drops, a TIMEOUT word is pushed,
+  and there is no `irq` on that path, so the gate cannot open. The CPU then stops the strobe
+  engine -- GPIO25 to SIO low, the state machine disabled -- and only THEN reads its PC and IRQ0:
+  a PC still on the gate is the proof that nothing fired (the program never jumps back to it).
+  Only that proof certifies `CAM_TIMEOUT`; anything else is an engine fault. Every way a gated
+  burst ends records the same read-back (independent review H7-F2: 1.4 inferred it from the
+  outcome, and called a power abort mid-pulse "never opened").
+- **The CPU only orchestrates**: it sends three counts (the first delay, the late window, the
+  hold) and reads two words. It has a backstop deadline per state (`shot.c`).
+- **Proof before the bench:**
+  - `tests/cam_pio_test.c` runs the assembled programs (pioasm's own output) in a cycle-counting
+    PIO model (`tests/pio_sim.c`). It checks every constant in `cam_plan.h`, the 7a loopback and
+    timeout, the 7b delays, a cycle-by-cycle sweep across the first-delay boundary, the
+    gate-then-burst timing, strobes that hand over without overlapping at every poll phase, and
+    4000 waveforms against the rule "FIRE exactly when one sample saw both".
+  - `tests/engine_test.c` runs the unchanged `strobe.c`, `camera.c`, `shot.c` and the CLI's `gpio`
+    command against a register model (`tests/sdk_standin/`): the gate read-back on every way a
+    burst can end, and the trigger's rail rule.
+  - Deliberate mutations of every fix, timing constant and rule were all caught
+    (`captures/review_2026-11-10/`).
+
+**Original analysis (2026-08), kept:**
 
 .md §13.6 does:
 
@@ -326,6 +379,11 @@ both into ISR and mask.
 
 **Cost:** one more state machine. **Recommended for Phase 7b**, where the
 delayed-response simulation gives an easy way to verify it.
+
+(Neither suggestion survived contact with the timeout: `wait` cannot time out, so the program
+polls instead. Image 1.4 polled with `jmp pin` for one strobe and `mov y, pins` for the other,
+one clock apart, which the review showed is not "both at once" (H7-F1). 1.5 reads both in one
+`mov` -- the "read both into ISR and mask" above.)
 
 ---
 
@@ -433,11 +491,14 @@ a wiring fault.
 
 ---
 
-### 🟢 A5 — UART to the Pi must be DMA on both directions
+### 🟢 A5 — UART to the Pi must never block
 
-Not yet written, so this is a specification rather than a fix. At 921600 baud with
-framed binary packets, **both TX and RX go through DMA**, with RX into a ring and
-frame parsing done from the ring on core 0.
+Written 2026-10-20 (`pi_link.c`; under review). At 921600 baud with framed binary
+packets, **RX goes through DMA** into a 2 KB ring, and frame parsing is done from the
+ring on core 0. **TX is polled, not DMA:** the board answers one request at a time,
+each answer at most 261 bytes, and the superloop feeds the 32-byte FIFO only while it
+has room, so nothing ever waits on it. The specification asked for DMA both ways; what
+it was protecting is kept.
 
 Never `uart_putc()` in a loop — that is exactly the kind of blocking that must not
 exist on the core also running the power FSM.
@@ -479,11 +540,11 @@ which arms the watchdog itself, cannot reach it: its CLI allowlist refuses `capt
 | Panel LEDs | PWR 5B + 50 Hz timer; **RDY off PWM entirely** | 🟢 A4; ✅ **A7** (RDY is SIO) |
 | Strobe burst | **PIO0 SM0** (base 0) + DMA | ✅ written 2026-10-02 (dry-test only); bench check 6a |
 | **Comparator transit timing** | **PIO2 SM0 (base 16)** | ✅ **A2 done** — *not* PIO0; see below |
-| **Camera trigger/strobe handshake** | **PIO0 SM1** (base 0) | 🟡 A3 |
-| I²S mic | **PIO1 SM0** (base 0) + DMA | planned |
+| **Camera trigger/strobe handshake** | **PIO1 SM0** (base 0); FIRE → PIO0 flag 4 | 🟡 A3 built 2026-11-10; 7a and 7b PASS on board 1 (2026-11-13); 7c.0 next |
+| I²S mic | **PIO0 SM1** (base 0) + DMA | planned |
 | Detect + mic acquisition | ADC round-robin → **continuous DMA ring** | ✅ **A1 done** |
 | Strobe current capture | ADC ch0 → DMA, burst window | planned |
-| Pi UART | DMA both directions | 🟢 A5 |
+| Pi UART | RX DMA ring; TX polled without blocking | 🟡 A5, written 2026-10-20 |
 | Power FSM, CLI, calibration, reporting | **CPU — correctly** | ✅ |
 
 ⚠ **This table previously said comparator timing goes on PIO0 SM1. That is not

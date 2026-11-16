@@ -19,7 +19,7 @@
 // The RP2350 ADC clock is 48 MHz and a conversion takes 96 cycles -> 500 ksps,
 // reached with DIV = 0 (back to back), not DIV = 95 (see set_rate).
 #define ADC_CLK_HZ        48000000.0f
-#define ADC_MAX_RATE_HZ   500000u
+#define ADC_MAX_RATE_HZ   ADC_RATE_MAX_HZ   // 500000 (adc_engine.h)
 
 static adc_mode_t s_mode = ADC_MODE_OFF;
 
@@ -97,12 +97,30 @@ static uint mask_popcount(uint mask) {
     return n;
 }
 
+// The rate a programmed divider really runs at, to the nearest hertz.
+static uint32_t rate_of_div(uint32_t div) {
+    return (uint32_t)(adc_rate_for_div(ADC_CLK_HZ, div) + 0.5f);
+}
+
 // Set the sample rate (adc_ring_math.h, adc_div_for_rate). DIV is 16.8 fixed
-// point: a nonzero DIV starts a conversion every (DIV + 1) clk_adc cycles. The maximum is DIV = 0,
-// conversions back to back; a nonzero DIV below 96 makes the ADC ignore every
-// other trigger and HALVES the rate (2026-10-12).
-static void set_rate(uint32_t rate_hz) {
-    adc_hw->div = adc_div_for_rate(ADC_CLK_HZ, ADC_MAX_RATE_HZ, rate_hz);
+// point: a nonzero DIV starts a conversion every 1 + INT + FRAC/256 clk_adc
+// cycles. The maximum is DIV = 0, conversions back to back; a nonzero DIV below
+// 96 makes the ADC ignore every other trigger and HALVES the rate (2026-10-12).
+// false, with NOTHING written, for a rate the divider cannot make: callers
+// refuse rather than run at another rate under the requested one's label
+// (independent review 2026-10-15).
+static bool set_rate(uint32_t rate_hz, uint32_t *actual_hz) {
+    uint32_t div = 0u;
+    if (!adc_div_for_rate(ADC_CLK_HZ, ADC_MAX_RATE_HZ, rate_hz, &div)) return false;
+    adc_hw->div = div;
+    if (actual_hz) *actual_hz = rate_of_div(div);
+    return true;
+}
+
+uint32_t adc_capture_rate_for(uint32_t rate_hz) {
+    uint32_t div = 0u;
+    if (!adc_div_for_rate(ADC_CLK_HZ, ADC_MAX_RATE_HZ, rate_hz, &div)) return 0u;
+    return rate_of_div(div);
 }
 
 // Stop cleanly and drain. Doing this on EVERY mode change is not paranoia:
@@ -214,8 +232,12 @@ size_t adc_ring_written(void) {
 // fetch, no call, nothing that can stall between the readings except what the
 // bracket itself measures. The EVENT bracketed is a transfer ISSUE (WRITE_ADDR
 // advancing), not a completed write (review round 4). The ordering argument:
-//   - t_prev is read BEFORE the previous index read, which still saw no change,
-//     so the issue came after t_prev;
+//   - t_prev is read BEFORE an index read that still saw no change, so the issue
+//     came after t_prev -- on EVERY pass, the first included (independent review
+//     2026-10-15: the first pass used to lean on the synchronising read, which
+//     came before t_prev, so a second issue between the two -- DREQ credits can
+//     be serviced back to back -- was accepted with its instant outside the
+//     bracket);
 //   - t_after is read AFTER the index read that saw the change, so the issue
 //     came before t_after.
 // Volatile accesses to strongly-ordered peripheral space are issued in program
@@ -240,7 +262,17 @@ bool __not_in_flash_func(adc_ring_snapshot)(adc_ring_snap_t *s) {
     }
     if (k == ADC_SNAP_SPIN_MAX) return false;
 
-    uint32_t t_prev = *cvr;
+    // Establish the first lower bound: a timestamp, then an index read that still
+    // sees a0. If the index moved in between, adopt it and take both again.
+    uint32_t t_prev = 0u;
+    for (k = 0; ; k++) {
+        if (k == ADC_SNAP_SPIN_MAX) return false;
+        t_prev = *cvr;
+        const uint32_t a = *wa;
+        if (a == a0) break;
+        a0 = a;
+    }
+
     for (k = 0; k < ADC_SNAP_SPIN_MAX; k++) {
         const uint32_t t = *cvr;
         const uint32_t a = *wa;
@@ -434,7 +466,13 @@ void adc_engine_set_mode(adc_mode_t m) {
     // Start the sequence on a known channel so the interleave phase is defined.
     adc_select_input(mask_lowest_channel(mask));
     adc_set_round_robin(mask);
-    set_rate(rate);
+    // Every ring mode runs back to back, which set_rate() always accepts; were
+    // it ever refused, the ADC stays off rather than run at a stale divider.
+    if (!set_rate(rate, NULL)) {
+        adc_set_round_robin(0);
+        s_mode = ADC_MODE_OFF;
+        return;
+    }
     // dreq_en=true and threshold 1 so the DMA ring is fed. err_in_fifo=true: a
     // sample flagged with the error bit tells us the FIFO overran, which we
     // treat as a hard fault rather than letting the channel phase rotate.
@@ -630,7 +668,7 @@ uint16_t adc_read_avg(uint chan, uint n) {
     ring_stop();
     adc_quiesce();
     adc_select_input(chan);
-    set_rate(ADC_MAX_RATE_HZ);
+    (void)set_rate(ADC_MAX_RATE_HZ, NULL);       // back to back: always accepted
 
     uint32_t sum = 0;
     for (uint i = 0; i < n; i++) sum += adc_read();
@@ -760,6 +798,8 @@ size_t adc_capture(uint chan_mask, size_t n_samples, uint32_t rate_hz) {
     uint nch = mask_popcount(chan_mask);
     n_samples -= (n_samples % nch);
     if (n_samples == 0) return 0;
+    // A rate the divider cannot make is refused here, before the ring is touched.
+    if (adc_capture_rate_for(rate_hz) == 0u) return 0;
 
     // Bench command: deliberately disruptive. It takes the ADC for itself, so
     // the ring stops and is restarted by the set_mode(IDLE) at the end. While
@@ -770,7 +810,8 @@ size_t adc_capture(uint chan_mask, size_t n_samples, uint32_t rate_hz) {
     adc_quiesce();
     adc_select_input(mask_lowest_channel(chan_mask));
     adc_set_round_robin(chan_mask);
-    set_rate(rate_hz);
+    uint32_t actual_hz = 0u;
+    (void)set_rate(rate_hz, &actual_hz);        // accepted: checked above
     // dreq_en, threshold 1, err_in_fifo, no 8-bit shift (we want 12 bits).
     adc_fifo_setup(true, true, 1, true, false);
     fifo_clear_sticky();
@@ -818,7 +859,7 @@ size_t adc_capture(uint chan_mask, size_t n_samples, uint32_t rate_hz) {
 
     s_buf_count = n_samples;
     s_buf_mask  = chan_mask;
-    s_buf_rate  = rate_hz;
+    s_buf_rate  = actual_hz;    // what the divider runs at, not the request
     s_buf_start = 0;            // linear fill: the same modulo walk still works
     s_trig_off  = SIZE_MAX;     // "this one was not triggered"
 
@@ -848,6 +889,8 @@ adc_trig_result_t adc_capture_triggered(uint chan, size_t n_samples,
     size_t pre  = (size_t)(n_samples * pre_frac);
     size_t post = n_samples - pre;
     if (post == 0) return ADC_TRIG_ERROR;
+    // A rate the divider cannot make is refused here, before the ADC is touched.
+    if (adc_capture_rate_for(rate_hz) == 0u) return ADC_TRIG_ERROR;
 
     // Baseline BEFORE arming. Taking it from the ring afterwards would race the
     // wrap -- at 500 ksps the whole buffer is only 32.8 ms deep.
@@ -861,7 +904,8 @@ adc_trig_result_t adc_capture_triggered(uint chan, size_t n_samples,
     adc_quiesce();
     adc_select_input(chan);
     adc_set_round_robin(0);          // single channel: no interleave
-    set_rate(rate_hz);
+    uint32_t actual_hz = 0u;
+    (void)set_rate(rate_hz, &actual_hz);        // accepted: checked above
     adc_fifo_setup(true, true, 1, true, false);
     fifo_clear_sticky();
     dma_clear_errors((uint)s_dma_chan);
@@ -948,7 +992,7 @@ adc_trig_result_t adc_capture_triggered(uint chan, size_t n_samples,
         if (s_overran) fault_raise(FAULT_ADC_OVERRUN);
 
         s_buf_mask = (1u << chan);
-        s_buf_rate = rate_hz;
+        s_buf_rate = actual_hz;      // what the divider runs at, not the request
     }
 
     s_bench_capture = false;

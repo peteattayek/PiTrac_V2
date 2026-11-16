@@ -9,6 +9,7 @@
 #include "adc_ring_math.h"
 #include "adc_engine.h"
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -131,21 +132,58 @@ static bool v5in_phase_rotation(void) {
 // The ADC rate (2026-10-12, measured on board 1: every ring mode ran at half its
 // stated rate). DIV = 0 is the 500 ksps maximum; any nonzero DIV must be >= 96,
 // or the ADC ignores the triggers that land during a conversion.
+// The divider for a requested rate, or 0xDEADBEEF if it is refused.
+static uint32_t div_of(float clk, uint32_t max, uint32_t rate) {
+    uint32_t d = 0xDEADBEEFu;
+    return adc_div_for_rate(clk, max, rate, &d) ? d : 0xDEADBEEFu;
+}
+
 static bool adc_rate_div(void) {
     const float clk = 48000000.0f;
     const uint32_t max = 500000u;
-    CHECK(adc_div_for_rate(clk, max, 500000u) == 0u);          // the bug: was 95 << 8
-    CHECK(adc_div_for_rate(clk, max, 0u) == 0u);
-    CHECK(adc_div_for_rate(clk, max, 600000u) == 0u);
-    CHECK(adc_div_for_rate(clk, max, 250000u) == 191u << 8);   // 192 cycles
-    CHECK(adc_div_for_rate(clk, max, 100000u) == 479u << 8);
-    CHECK(adc_div_for_rate(clk, max, 1000u) == 47999u << 8);   // the datasheet's example
-    CHECK(adc_div_for_rate(clk, max, 499000u) == 96u << 8);    // would be 95.19: clamped
+    CHECK(div_of(clk, max, 500000u) == 0u);                    // the bug: was 95 << 8
+    CHECK(div_of(clk, max, 250000u) == 191u << 8);             // 192 cycles
+    CHECK(div_of(clk, max, 100000u) == 479u << 8);
+    CHECK(div_of(clk, max, 1000u) == 47999u << 8);             // the datasheet's example
+    CHECK(div_of(clk, max, 499000u) == 96u << 8);              // would be 95.19: clamped
     // No request may yield a nonzero DIV below 96.
     for (uint32_t r = 1000u; r < max; r += 997u) {
-        const uint32_t d = adc_div_for_rate(clk, max, r);
+        const uint32_t d = div_of(clk, max, r);
         CHECK(d == 0u || (d >> 8) >= 96u);
     }
+    return true;
+}
+
+// Independent review 2026-10-15: requests the divider cannot make are REFUSED,
+// never wrapped. `capture 1 32 100` used to program 0x0752ff00, of which the
+// 24-bit register kept 0x52ff00: 2259 Hz under a 100 Hz label.
+static bool adc_rate_range(void) {
+    const float clk = 48000000.0f;
+    const uint32_t max = (uint32_t)ADC_RATE_MAX_HZ;
+    CHECK(div_of(clk, max, 0u) == 0xDEADBEEFu);
+    CHECK(div_of(clk, max, max + 1u) == 0xDEADBEEFu);          // was silently the maximum
+    CHECK(div_of(clk, max, 600000u) == 0xDEADBEEFu);
+    CHECK(div_of(clk, max, 100u) == 0xDEADBEEFu);              // the review's case
+    CHECK(div_of(clk, max, 1u) == 0xDEADBEEFu);                // was undefined behaviour
+    // The documented range is exactly what the divider can make.
+    CHECK(div_of(clk, max, (uint32_t)ADC_RATE_MIN_HZ) != 0xDEADBEEFu);
+    CHECK(div_of(clk, max, (uint32_t)ADC_RATE_MIN_HZ - 1u) == 0xDEADBEEFu);
+    CHECK(div_of(clk, max, max) == 0u);
+    // A refused request leaves the output untouched.
+    uint32_t d = 0x12345u;
+    CHECK(!adc_div_for_rate(clk, max, 100u, &d) && d == 0x12345u);
+    // Every accepted divider fits the register's 24 bits, DIV.INT its 16, and the
+    // rate it really runs at is the request to within the 8-bit fraction -- except
+    // where the 96 floor clamps, just under the maximum.
+    for (uint32_t r = (uint32_t)ADC_RATE_MIN_HZ; r <= max; r += 1009u) {
+        const uint32_t dv = div_of(clk, max, r);
+        CHECK(dv != 0xDEADBEEFu && dv <= 0x00FFFFFFu);
+        const float got = adc_rate_for_div(clk, dv);
+        if (r <= 480000u) CHECK(fabsf(got - (float)r) <= 0.0001f * (float)r);
+    }
+    CHECK(fabsf(adc_rate_for_div(clk, 0u) - 500000.0f) < 0.5f);
+    CHECK(fabsf(adc_rate_for_div(clk, div_of(clk, max, 499000u)) - 494845.4f) < 1.0f);  // clamped
+    CHECK(fabsf(adc_rate_for_div(clk, div_of(clk, max, 250000u)) - 250000.0f) < 0.5f);
     return true;
 }
 
@@ -164,7 +202,7 @@ int main(int argc, char **argv) {
 #define TEST(name) {#name, name}
         TEST(v5in_fresh), TEST(v5in_rejects_hw_flags), TEST(v5in_rejects_conv_error),
         TEST(v5in_skips_newest_group), TEST(v5in_phase_rotation), TEST(v5in_bad_args),
-        TEST(adc_rate_div)
+        TEST(adc_rate_div), TEST(adc_rate_range)
 #undef TEST
     };
     if (argc == 2) {

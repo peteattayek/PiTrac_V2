@@ -1,0 +1,124 @@
+; SPDX-License-Identifier: GPL-3.0-or-later
+; Copyright (C) 2026 PiTrac contributors
+;
+; cam_handshake.pio -- Phase 7, ARCHITECTURE.md A3. PIO1 (GPIOBASE 0), state
+; machine PIO_SM_CAMERA, at the FULL system clock (no divider).
+;
+;   D_Cam_Trigger  GPIO10  SET pin                    J4.3/4 via R18 220R
+;   Cam_Strobe_0   GPIO8   IN base (bit 0)            J4.7   via R19 220R
+;   Cam_Strobe_1   GPIO9   IN base + 1 (bit 1)        J4.8   via R24 220R
+;
+; One handshake: raise the trigger, wait for both cameras' strobe outputs to be
+; high (both exposing), FIRE at max(first delay, t_cam), hold the trigger, drop it.
+; FIRE is `irq prev set 4`: flag 4 of PIO0, the block BELOW this one, which opens
+; the strobe engine's gate (strobe_gate.pio). No core spins, and t_cam comes back
+; as a measured number. If the strobes never come, the trigger drops and nothing
+; fires: there is no `irq` on that path.
+;
+; BOTH STROBES FROM ONE SAMPLE (independent review 2026-11-10, H7-F1). Image 1.4
+; read strobe 0 with `jmp pin` and strobe 1 with `mov y, pins` one clock later, so
+; strobe 0 falling and strobe 1 rising between the two reads was accepted as
+; "both exposing" although they never overlapped. Now one `mov isr, ~pins` reads
+; both pins in the same clock (IN_BASE GPIO8, IN_COUNT 2: bits 1:0 are strobe 1
+; and strobe 0, everything above is masked to 0, then inverted to 1). `in null,
+; 30` shifts the ISR left by 30, keeping only those two inverted bits, at the top.
+; So the ISR -- and Y, its copy -- is ZERO exactly when both strobes read high in
+; that one sample. (The result is the same whether the masking happens before or
+; after the inversion: only the two low bits survive the shift.)
+;
+; WHY PIO1 AND NOT PIO0 SM1 (where ARCHITECTURE.md had planned it): this program
+; is 29 instructions and PIO0 has 32, 13 of them the strobe's. RP2350's
+; `irq prev` reaches across blocks, so the camera gets its own block and the
+; FIRE still reaches the strobe engine with no CPU in between.
+;
+; CONTRACT (cam_plan.h has the arithmetic; tests/cam_pio_test.c proves it)
+;   TX, three words per handshake, all in 5-cycle loops:
+;     D  the first delay      T  the late window after it      H  the hold
+;   RX:
+;     at the poll that sees both strobes:   X (early phase) or ~X (late phase),
+;                                           the count left in that phase
+;     when the trigger drops after FIRE:    0xFFFFFFFF (END)
+;     instead of both, on timeout:          0x80000000 (TIMEOUT), as the trigger drops
+;
+; THE PHASE FLAG IS THE OSR. After `pull` the OSR is full; `out x, 32` both loads
+; the late window into X and empties it. `jmp !osre` then tells the two phases
+; apart with no spare register (X counts, Y holds the sample). Needs autopull
+; OFF, a pull threshold of 32, and the IN shift LEFT (cam_handshake_program_init).
+;
+; EVERY LOOP IS 5 CYCLES, and the poll loop has ONE path -- that is what makes the
+; counts mean time. Counted from the listing; cycle 0 is `set pins, 1`:
+;   poll:          mov, in, mov, jmp !y, jmp x--   = 5 (the sample is the first)
+;   delay, hold:   jmp x-- [4]                     = 5
+
+.program cam_handshake
+.pio_version 1
+
+.wrap_target
+    pull block              ; D
+    mov x, osr
+    pull block              ; T -- the OSR stays full: the early phase
+    set pins, 1             ; ==== D_Cam_Trigger HIGH. Cycle 0. ====
+poll:
+    mov isr, ~pins          ; ONE sample of both strobes, inverted
+    in null, 30             ; keep only those two bits, at the top
+    mov y, isr              ; Y == 0 <=> both strobes were high in that sample
+    jmp !y, both
+    jmp x--, poll           ; count on
+expired:
+    jmp !osre, late         ; the first delay is over: open the late window
+    set x, 1                ; the late window is over too: TIMEOUT
+    mov isr, ::x            ; 0x80000000
+    jmp release             ; trigger low, report it. Nothing fired.
+late:
+    out x, 32               ; X = T, and the OSR is now empty: the late phase
+    jmp poll
+both:
+    jmp !osre, early        ; BOTH exposing. Still in the first delay?
+    mov isr, ~x             ; late: report ~X (top bit set) ...
+    set x, 0                ; ... and fire with no further delay
+send:
+    push noblock
+delay:
+    jmp x--, delay [4]      ; the rest of the first delay
+    irq prev set 4          ; ==== FIRE: PIO0 flag 4 opens the strobe gate ====
+    pull block              ; H
+    mov x, osr
+hold:
+    jmp x--, hold [4]
+    mov isr, ~null          ; END
+release:
+    set pins, 0             ; ==== D_Cam_Trigger LOW ====
+    push noblock
+.wrap
+early:
+    mov isr, x              ; early: report X (top bit clear), then wait out the delay
+    jmp send
+
+
+% c-sdk {
+// Configure `sm` on `pio` (GPIOBASE 0) for the camera handshake. Does NOT take
+// the trigger pad: camera.c keeps GPIO10 SIO low and hands it to PIO only for a
+// handshake, after setting this SM's output latch low and its direction to out.
+// pin_strobe1 must be pin_strobe0 + 1: one IN window reads both.
+static inline void cam_handshake_program_init(PIO pio, uint sm, uint offset,
+                                              uint pin_trigger, uint pin_strobe0,
+                                              uint pin_strobe1) {
+    hard_assert(pin_strobe1 == pin_strobe0 + 1u);
+    pio_sm_config c = cam_handshake_program_get_default_config(offset);
+    sm_config_set_set_pins(&c, pin_trigger, 1);
+    sm_config_set_in_pins(&c, pin_strobe0);
+    sm_config_set_in_pin_count(&c, 2);           // `mov isr, ~pins` reads both strobes, once
+
+    // The phase flag: autopull OFF, threshold 32 (see the top of this file). The
+    // IN shift must be LEFT: `in null, 30` keeps the sample's two low bits.
+    sm_config_set_out_shift(&c, true, false, 32);
+    sm_config_set_in_shift(&c, false, false, 32);
+
+    // Full speed: one cycle = one system clock. The counts are in 5-cycle loops
+    // and cam_plan.c converts with the real clock_get_hz(clk_sys).
+    sm_config_set_clkdiv_int_frac8(&c, 1, 0);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, false);
+}
+%}

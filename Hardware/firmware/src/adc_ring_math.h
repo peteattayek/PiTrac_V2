@@ -44,13 +44,37 @@ static inline size_t adc_ring_copy_avail(uint64_t raw_time, size_t written, unsi
 // trigger was ignored: every ring mode ran at HALF its stated rate (BURST 250
 // ksps, measured on board 1 by `adc ringtest`, 2026-10-12). That was the
 // morning's "late ring start": 122 samples where the clock said ~218.
-//   rate 0 or >= the maximum : 0 (back to back, the maximum)
-//   otherwise                : clk / rate - 1, never below 96.0
-static inline uint32_t adc_div_for_rate(float clk_hz, uint32_t max_rate_hz, uint32_t rate_hz) {
-    if (rate_hz == 0u || rate_hz >= max_rate_hz) return 0u;
-    float div = clk_hz / (float)rate_hz - 1.0f;
-    if (div < 96.0f) div = 96.0f;
-    return (uint32_t)(div * 256.0f);
+//   rate == the maximum : *div = 0 (back to back)
+//   below it            : *div = clk / rate - 1, never below 96.0
+//   rate 0, above the maximum, or slower than the divider can count: false, and
+//   *div is untouched -- the caller must refuse the request. DIV.INT is 16 bits,
+//   so the longest period is 1 + 65535 + 255/256 cycles: ~732.4 Hz at 48 MHz
+//   (ADC_RATE_MIN_HZ). Independent review, 2026-10-15: `capture 1 32 100` was
+//   accepted, this returned 0x0752ff00, and the 24-bit register kept 0x52ff00 --
+//   2259 Hz, labelled 100 Hz; a slower request overflowed the float-to-integer
+//   conversion, which is undefined behaviour.
+static inline bool adc_div_for_rate(float clk_hz, uint32_t max_rate_hz, uint32_t rate_hz,
+                                    uint32_t *div) {
+    if (rate_hz == 0u || rate_hz > max_rate_hz) return false;
+    uint32_t d = 0u;
+    if (rate_hz < max_rate_hz) {
+        float f = clk_hz / (float)rate_hz - 1.0f;
+        if (f < 96.0f) f = 96.0f;
+        if (!(f < 65536.0f)) return false;          // DIV.INT is 16 bits (NaN fails too)
+        d = (uint32_t)(f * 256.0f);                 // < 2^24: the register's 24 bits
+    }
+    if (div) *div = d;
+    return true;
+}
+
+// The rate a DIV value really produces -- what capture metadata must report:
+// back to back, one conversion per 96 cycles, for DIV = 0; otherwise one per
+// 1 + INT + FRAC / 256 cycles. Differs from the request where the 96 floor
+// clamps (a 499 kHz request runs at 494.8 kHz) and, by under 0.01 %, where the
+// 8-bit fraction rounds.
+static inline float adc_rate_for_div(float clk_hz, uint32_t div) {
+    if (div == 0u) return clk_hz / 96.0f;
+    return clk_hz / (1.0f + (float)div / 256.0f);
 }
 
 // SysTick is a 24-bit DOWN-counter, free-running at the processor clock (set up

@@ -25,7 +25,7 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 | **CR-06** | Larger terminals for +5 V power input and strobe output | 🟡 Med | 2 parts + footprints | Cannot land the intended power and strobe wiring |
 | **CR-07** | 12 V shunt regulator burns ~40 mA at idle | 🟢 Low | Redesign | ~31 % of idle power, forever |
 | **CR-08** | No PGOOD or VIR sense | 🟢 Low | Needs a free ADC | Boost readiness stays open-loop timed |
-| **CR-09** | Mira220 1.8 V I/O translation | 🔴 **High — Q6 answered; translation still required** before J4 meets a camera | High | **Q6 ANSWERED**: I/O is 1.8 V, no 3.3 V tolerance. Both directions fail; 220 Ω fixes neither |
+| **CR-09** | Mira220 1.8 V I/O translation | 🔴 **High — confirmed 2026-11-11: the camera does not level-shift (1.8 V trigger in, 1.8 V strobe out). Owner: fix on the next revision** | High | Both directions fail; 220 Ω fixes neither. Until then, an external TXS0108E module on every camera (`BRINGUP_NEW_BOARD.md` Step 13.4) |
 | **CR-11** | Net `Strobe_GND` is not ground — rename it | 🟢 Low | Rename | A name that invites clipping a scope ground to Q11's drain |
 | **CR-13** | U15 comparator has no hysteresis → chatters on every slow edge | 🔴 High (respin) | 1 resistor | One ball gives several edge pairs; the comparator transit becomes a lower bound and the ADC path has to carry those passes (firmware coalesces and flags them) |
 | **CR-14** | U15's input common-mode ceiling (~3.5 V) is below what U12B drives (~5.2 V) | 🟡 Med | Supply/clamp change *or* part swap | Large returns can push the LM393 outside its valid input range, where some parts invert; ADC saturation is the early warning |
@@ -40,6 +40,11 @@ Cross-references to `Q<n>` are open questions in `PROGRESS.md` §3. `A<n>` are f
 | **CR-22** | Thermal relief on pads in copper pours | 🟡 Med — **both J3 joints were cold on board 1, 2026-10-13** | Zone settings + a DRC pass | Hand-soldered joints on pours stay suspect; on J3 the strobe ran open-circuit for a bench day |
 | **CR-23** | Q9's gate floats up for microseconds at each turn-on (the gate drive pulls down only after a dead-band delay), so every pulse overshoots | 🔴 **High — measured 2026-10-13: 3.3 A peak on a 0.72 A setting** | Rework: 1 µF at Q9's gate. Next board: + R_iso, − U7 (net cheaper) | The first ~10 µs of every strobe pulse is wrong (overshoot, then sag); at 9 A the overshoot could reach tens of amps |
 | **CR-24** | Test-point plan for the next board (consolidates CR-17, CR-21, CR-23's test points) | 🟡 Med — every bench phase has probed component pads; a probe sparked at R61 (board 2); TP2/TP3 sit 1.9/0.6 mm from 36 V/12 V copper | Layout only (test points cost no parts) | Soldered leads and pad-probing on every new board; the same spark and pickup risks |
+| **CR-25** | The VIR boost (LM5157) goes into hiccup on 9 A pulses of 50 µs and longer, and VIR stays down ~125 ms | 🟡 Med — **measured on board 1, 2026-10-16** | A MODE resistor and/or C6, after a +5 V budget decision | No boost help in slow-ball bursts; each such shot leaves VIR ~2 V low for ~125 ms |
+| **CR-27** | J8.17 (the Pi's second 3V3 pin) has no copper | 🟢 Low — **found on board 1, 2026-10-30** | 1 trace | Nothing with a Pi seated; J8.17 is not a bench 3.3 V point |
+| **CR-26** | A seated, board-powered Pi cannot recover an RP2354 whose firmware no longer talks on the link | 🟢 Low — **firmware covers the normal case** (updates from the Pi with rollback, 2026-10-20) | Hold the latch through a reset, plus RUN and BOOTSEL to Pi GPIOs | An image that passes its trial but breaks the link needs a USB cable |
+| **CR-28** | A temperature sensor at the beam LED (D11) | 🟡 Med — requested 2026-11-11 (owner) | 1 I2C sensor + 2 pull-ups on spare GPIOs | The beam's thermal margin is visible only to a FLIR at bring-up; in the field a blocked vent or a hot enclosure goes unseen, and so does the LED-temperature part of detection drift |
+| **CR-29** | The board measures itself: a guided calibration without a scope, LA, DMM or FLIR | 🟡 Med — requested 2026-11-12 (owner) | An I2C ADC (two for every signal), a reference, 2 timing pins and CR-28's sensor, all on spare GPIOs | Every board needs a scope, LA, DMM and FLIR, and an operator who knows the board. This revision's five boards are brought up by hand |
 
 *CR-10 was never assigned.*
 
@@ -265,6 +270,13 @@ is **~34 kΩ**, and a real Pi's ~50 kΩ pull-up would see **1.34 V** — below R
 6.8 kΩ balances the margins (+0.51 / −0.52) if preferred. **Must go to +3V3, not the switched
 +5 V** — the entire point is holding the line while the MCU is not running.
 
+**Or to J8.1, the Pi's own 3V3 (2026-10-16).** A pull-up to the always-on +3V3 also feeds
+~0.3 mA into an unpowered Pi's GPIO26 whenever the board sits in STANDBY. J8.1 is up in the
+only case this item exists for, an MCU reset with the Pi running, and at 0 V when the Pi is
+off. **Prefer J8.1 (2026-10-19):** the firmware now releases J8.37 whenever no Pi's 3V3 is
+sensed, so a pull-up to the always-on +3V3 would be the only thing left feeding an unpowered
+Pi.
+
 ### Honest priority note
 
 This is **defence-in-depth, not a fix for a live hazard.** Every RP2354 reset *also* opens the
@@ -448,8 +460,37 @@ Either free an ADC channel, or bring the LM5157's PGOOD (if available in the cho
 to a spare digital input. A VIR tap through a large divider would also let the strobe code
 verify headroom before firing rather than assuming it.
 
+**Chosen 2026-10-16 (owner, with CR-25): an ADC tap on VIR, through a divider that draws
+little current.**
+- **PGOOD alone is not enough.** It goes low only below 90 % of VIR (~32.3 V; LM5157
+  datasheet), so it misses a single shot's ~2 V hiccup dip. It would still catch a deep
+  burst sag or a dead boost.
+- **A sketch, to be checked against the RP2354's ADC input leakage:**
+  - 1 MΩ from VIR to the pin, 82 kΩ to GND, and 100 nF at the pin;
+  - 36 V reads 2.73 V, and full scale is ~43.5 V, above the boost's ~39.5 V OVP;
+  - it draws **~33 µA (~1.2 mW)**. For scale, the 12 V shunt already takes ~5 mA from VIR
+    (CR-07), ~150× more.
+  - The 100 nF holds the pin for the ADC's sampling charge (τ ≈ 7.6 ms). That is fast enough
+    to read VIR before a firing and to follow the ~125 ms hiccup recovery, but not the sag
+    inside a pulse, which is not needed.
+  - A higher resistance would cut the drain further, but pin leakage starts to matter: 1 µA
+    into ~76 kΩ is ~1 V at VIR.
+- **An ADC channel has to be freed:** all eight are allocated today. Three carry digital
+  signals on ADC pins: GPIO43 (RPI5_SHUTDOWN), GPIO44 (Threshold_PWM) and GPIO46
+  (D_Comparator). Moving one of them to a spare GPIO frees its channel; check the PWM slice
+  map for GPIO44.
+- **What the firmware gains:**
+  - VIR before each firing: wait out a recovery, or refuse on a low rail.
+  - VIR before and after each burst. With the readback's measured charge that gives the
+    bank's capacitance every burst, which would show a weak or ageing bank against the 6 mC
+    limit.
+
 Note this competes for the same scarce resource as everything else analog. Listed so the
 tradeoff is visible at layout time, not as a recommendation.
+
+**CR-29 (2026-11-12) offers a second home for the tap:** a channel on an I2C housekeeping
+ADC needs no RP2354 channel freed, and is fast enough for VIR before a firing and before and
+after a burst. Owner's call at layout.
 
 ---
 
@@ -520,16 +561,34 @@ from a local 1.8 V regulator.
 ⚠ **Running the RP2350's bank 0 at 1.8 V is not an option** — it is a single IOVDD domain and
 the rest of the board is 3.3 V.
 
-### The one thing still unknown
+### ✅ Answered by the owner, 2026-11-11: the camera does not level-shift
 
-**Whether the camera board mates raw sensor pins to J4, or already level-shifts.** The
-analysis above is definitive for a *bare* Mira220. `BENCH_P5_P7_MIC_CAMERA.md` records that
-the sensors hang off the Pi's CSI and J4 carries only trigger/strobe — so J4 lands on the
-camera board's own header, and that board's schematic governs. **Get it before connecting
-anything**, because if the module already translates, this CR may reduce to nothing.
+**The camera takes a 1.8 V trigger in and puts a 1.8 V strobe out.** The translation is
+needed, and **the owner wants it fixed on the next board revision.**
+- **Until then:** an external **TXS0108E** module between J4 and the camera (the owner has
+  them). Its A side is on the camera's 1.8 V, and its B side on the board's 3.3 V.
+- **J4 carries no supply.** The camera board has 1.8 V and 3.3 V output pins (owner).
+  - **VA comes from the camera's 1.8 V.**
+  - **VB comes from the board's 3.3 V, J5.2 (+3.3VA)**, the only 3.3 V on one of the board's
+    headers. J8.1 and J8.17 are the Pi's 3V3, under the Pi's plug.
+  - Not the camera's 3.3 V. The board can be on with the camera off, but not the reverse, so
+    each side of the module must be powered by the side it talks to.
+  - With VB on the camera's 3.3 V, a trigger high into an unpowered camera would back-power
+    its 3.3 V rail through the module.
+- The wiring is in `BRINGUP_NEW_BOARD.md` Step 13.4.
 
-**Until then the rule stands: do not connect J4 to a camera**, and in particular never drive
-`D_Cam_Trigger` high with the camera unpowered.
+**For the next layout:**
+- the translator on the board, for all three signals;
+- its 3.3 V side on +3V3;
+- the trigger held low through boot, whatever translator it is: GPIO10 is undriven for the
+  first 140.6 ms after power-on, its pad reset with only the internal pull-down (measured
+  2026-11-13, `PROGRESS.md` §6). A translator powered in that window, with pull-ups of its
+  own, would lift it. An external pull-down sized for that translator settles it;
+- its 1.8 V side from a VDDIO pin added to J4, or a local 1.8 V regulator;
+- the TXS0108E the owner already uses would do: push-pull, low speed, auto-direction.
+
+**The rule stands: never connect J4 to a camera directly**, and never drive `D_Cam_Trigger`
+high with the camera unpowered. Through the TXS0108E, an unpowered side isolates.
 
 ---
 
@@ -727,6 +786,9 @@ against a true ~104 °C. **Sanity rule: D11 must read hotter than the heatsink i
 
 Also record the **base → heatsink gradient** — that is the number that tells you whether the
 vias/interface work paid off, and it is the stage this document previously got wrong by 4×.
+
+With a sensor at D11 (CR-28), the plateau test runs without a FLIR, on every board and in the
+field.
 
 ---
 
@@ -1061,10 +1123,13 @@ already sits near the negative one. Both extremes rail, which is the `4095 / 2` 
 Saturation does not stay contained in the TIA:
 
 1. The demodulator receives a **full-scale square wave** instead of a small signal.
-2. The 4th-order LPF is built from OPA4323 sections whose slew rate is ~1.5 V/µs. A 5 V step
-   needs ~3.3 µs against a 9.6 µs carrier period, so **the filter op-amps slew-limit**.
-3. **A slew-limited filter stops filtering.** It passes large signals through as triangles
-   rather than attenuating them.
+2. **Correction, 2026-11-03:** the original explanation here used an OPA4323 slew rate of
+   1.5 V/µs and inferred slew limiting from a 3.3 µs full-scale transition. That part
+   specification was wrong: TI's OPAx323 datasheet specifies 33 V/µs typical. The measured
+   clipping/carrier feedthrough remains evidence, but the claimed slew-limiting mechanism
+   was not established by that calculation.
+3. Once the TIA clips, small-signal filter calculations alone do not establish the
+   downstream large-signal waveform; measure it rather than assuming the mechanism.
 4. Measured result: **313 mV p-p of carrier on ADC5**, where the small-signal prediction
    (66 dB of rejection at 104 kHz) says ~18 mV. The 18× discrepancy *is* the slew limiting.
 
@@ -1174,6 +1239,12 @@ just buys headroom.
 > Cf = **1.96 pF** against the 1.85 pF wanted, i.e. maximally flat. That is the change to make
 > if the TP7 edge still peaks.
 >
+> **2026-11-03 correction to that historical sizing argument:** OPA4323's nominal GBW is
+> **20 MHz**, not 8 MHz (TI datasheet). With the same unverified Cin = 20 pF estimate,
+> the formula below gives about **1.17 pF at 116 kohm**, not 1.85 pF. The older numerical
+> compensation ratios and "maximally flat" claim above are superseded. The observed ringing
+> is not retracted; actual compensation still needs the same-instrument edge measurement.
+>
 > **MEASURED 2026-08-25**, and every quality gate passed (sat 0 %, quad null 0.0,
 > h3 0.101 against an intrinsic 0.111, PURE DELAY, model within 3.5 ticks of `cal demod`):
 >
@@ -1216,13 +1287,17 @@ longer than the light pulse at low duty - so at 2 % only ~56 % of the amplitude 
 Drop to 100 kOhm and tau falls to ~50 ns, so even a 192 ns pulse settles fully.
 
 ⚠ **But it changes the compensation, and C68/C70 must be revisited in the same change.**
-Stability wants roughly `Cf >= sqrt(Cin / (2*pi*Rf*GBW))`. With ~20 pF of input capacitance and
-the OPA4323's 8 MHz GBW:
+The rough sizing estimate is `Cf ~= sqrt(Cin / (2*pi*Rf*GBW))`. **Corrected 2026-11-03:**
+use OPA4323's **20 MHz typical GBW**, not the 8 MHz previously quoted here
+([TI datasheet](https://www.ti.com/lit/ds/symlink/opa4323.pdf)). Cin remains an estimate at
+20 pF, so this is not a measured optimum or a guaranteed stability boundary.
 
-| Rf | Cf required | Cf fitted |
+| Rf | Cf estimate, Cin 20 pF / GBW 20 MHz | Cf fitted / proposed |
 |---|---|---|
-| 470 kOhm | ~0.9 pF | **0.5 pF** - already marginal |
-| 100 kOhm | ~2.0 pF | 0.5 pF - **badly under-compensated** |
+| 470 kOhm | ~0.58 pF | **0.5 pF**, stock |
+| 116 kOhm | ~1.17 pF | **0.99 pF**, board 3's existing rework |
+| 120.475 kOhm | ~1.15 pF | **1.5 pF**, CR-19 existing-board target; acceptance pending |
+| 100 kOhm | ~1.26 pF | 0.5 pF would be well below this estimate |
 
 The board may already be under-compensated at 470 kOhm. **Scope TP7 for ringing on the pulse
 edges before changing anything** - if it peaks today, that is worth knowing independently.
@@ -1384,6 +1459,15 @@ The current schematic uses C68 and C70 in series for the feedback capacitance. C
 updated capacitor topology and component allocation when implementing the 1.5 pF target;
 do not apply that value to both existing capacitors without checking the resulting
 feedback capacitance.
+
+### Existing-board rework with the owner's available parts
+
+[REWORK_ORIGINAL_BOARDS.md](REWORK_ORIGINAL_BOARDS.md) gives the step-by-step plan:
+**162 kohm in parallel with R80 470 kohm gives 120.475 kohm**; add **2 pF C0G/NP0 in parallel
+with each original 1 pF C68/C70**, making two 3 pF sections in series, **1.5 pF total**.
+Keep the original three parts; remove incompatible earlier parallel rework first.
+This approximates the requested 120 kohm / 1.5 pF target with the available inventory;
+the exact assembly is **not yet bench-accepted**. The same plan includes CR-23's gate hold.
 
 ### Firmware impact
 
@@ -1768,7 +1852,7 @@ current-mode loop would remove it, and that brings option E's problems.
 ### Firmware impact
 
 - The readback fix (`PROGRESS.md` §9, "Half-peak threshold") is still required. It is
-  independent of this change.
+  independent of this change. It was written 2026-10-15 and is under review.
 - **`DAC_SETTLE_MS` (20 ms, sized for the 2.62 ms ladder):**
   - With C_hold behind R63, the gate follows the setpoint with an extra ~50 µs (rework) to
     ~100 µs (R_iso 100 Ω), well inside 20 ms.
@@ -1784,7 +1868,11 @@ current-mode loop would remove it, and that brings option E's problems.
   - **Measured on board 1, 2026-10-15** (1 µF 50 V X5R, C_eff ~0.5-0.8 µF; U7 fitted; from 30 %):
     - the gate tracks TP3 within ±3 mV;
     - < 1.0 V at 2.8 ms, **0.35 V at 20 ms**, < 0.1 V at ~69 ms.
-    - The current at that gate voltage is still to be confirmed on TP4.
+    - **Confirmed 2026-10-16: no current at that gate voltage.** The staircase read nothing above
+      ADC0's 72 mA floor, and nothing on the Saleae, with the gate up to 1.78 V (18 %). Q9's
+      fitted threshold is ~2.06 V. The 20 ms dry-pulse interlock is safe on board 1 from any
+      level: ~0.4 V at 20 ms after zeroing from 100 % (estimated). `PROGRESS.md` §6, gate
+      settling.
 - **Board-1 stage 1 verified, 2026-10-15** (`PROGRESS.md` §6):
   - at 24 %, 0.690-0.712 A from 0.1 µs (before: 3.3 A for ~2.5 µs);
   - a ~20 ns rise;
@@ -1923,3 +2011,441 @@ anything.
   GND test point within 5 mm.
 - **On the first board:** a 10X probe with a ground spring reaches every signal/GND pair, and
   strobe bring-up (6a–6c) needs no soldered leads.
+
+---
+
+## CR-25 — 🟡 The VIR boost goes into hiccup on 9 A pulses of 50 µs and longer
+
+### Why
+
+Measured on board 1, 2026-10-16 (`PROGRESS.md` §6, 6c Step 4b):
+- **After a 9 A × 100 µs pulse VIR does not refill.** It sinks a further ~0.9 V at ~7 V/s (the
+  R15/D4 bleed) for **~125 ms**, then snaps back.
+  - On DC coupling: 36.2 V, then 34.2 V at the lowest, then 36.2 V again, with no overshoot.
+- **The setting:** U1 is an LM5157 with MODE = R6 ∥ R7 = 37.5 kΩ, which the datasheet defines as
+  "hiccup enabled, spread spectrum enabled".
+- **The timing:**
+  - 64 cycles of current limit stop the boost for 32 768 cycles (~31 ms at ~1.05 MHz), with SS
+    pulled low.
+  - C6's 1 µF soft start then needs ~94 ms to climb past FB before switching resumes.
+- **Which shots trip it** (Step 5, 2026-10-16): a 9 A load holds the ~0.8 A boost in current
+  limit.
+  - The boost refills ~0.25 mC in the first ~0.3 ms, then trips if more is still owed.
+  - 20 µs pulses (0.18 mC each) never trip it: bursts of them keep VIR flat.
+  - 50 µs and 100 µs pulses trip it on the first pulse, and the rest of the burst runs from
+    the bank (~600 µF).
+
+### Options (decide together; none is free)
+
+- **Keep hiccup, as now.**
+  - Slow-ball bursts run from the bank alone. The bank is sized for that: the slow-ball burst
+    sags ~8.8 V (measured) against ~11 V of headroom.
+  - VIR is back ~130 ms after a shot.
+  - It also caps what the boost takes from +5 V. Document it as the design.
+- **Disable hiccup** (MODE 100 kΩ: hiccup off, spread spectrum still on).
+  - VIR would refill at the current limit, ~0.8 A out, so ~1 ms after a 100 µs pulse.
+  - But the boost then pulls ~7 A from +5 V for that time. That is past a 3 A bench limit, and
+    it comes from the rail the Pi shares.
+  - Only with a +5 V budget for it, or an input current limit.
+- **LM51571** (minimum ILIM 4.33 A instead of 6.5 A): about two thirds of the +5 V peak, and a
+  slower refill.
+- **A faster restart:** a smaller C6 shortens the ~94 ms.
+  - The floor is start-up into ~680 µF. The soft start must stay long enough that the boost is
+    not still current-limited when it ends, or it hiccups at power-up.
+- **A VIR tap for the firmware** (`PROGRESS.md` Q13) would let it see the sag and wait for the
+  recovery.
+
+### Verify
+
+- Scope VIR (DC) after a 9 A × 100 µs pulse: the chosen recovery time, and no overshoot.
+- Scope +5 V during the refill: within the budget chosen above, and no UVLO restart.
+- Start-up from an empty bank: no hiccup loop.
+
+### Decision (owner, 2026-10-16)
+
+**Keep hiccup (option 1), and add the VIR monitor (option 5, CR-08) with a low-drain
+divider.** Options 2–4 are not taken up.
+
+**Measured on +5 V the same day** (`PROGRESS.md` §6):
+- The outage is hiccup, not UVLO. +5 V never came near the 4.25–4.72 V UVLO trip.
+- **Every refill at the current limit dips +5 V by ~0.30–0.33 V for ~0.28 ms:** once per
+  slow-ball shot, and after every pulse of a fast-ball burst (ten in 7.7 ms). The minimum
+  was ≈ 4.85 V without a Pi.
+- **The Pi shares this rail.** With its own load the dips approach the Pi 5's ~4.63 V
+  under-voltage flag. For the next board, consider:
+  - local bulk capacitance on the boost input;
+  - a lower-impedance 5 V feed (and a PSU that holds its output through ~7 A steps);
+  - or a lower switch current limit (the LM51571), giving smaller but longer refills.
+  - Phase 8 measures it with the Pi running (`BENCH_P8_PI.md`, first seating).
+
+### Firmware and docs impact
+
+- None for hiccup itself.
+- If the refill becomes fast, the burst budget (`BURST_CHARGE_MAX_MC`) and the Step 5
+  predictions change.
+
+---
+
+## CR-26 — 🟢 Recovering the RP2354 from a seated Pi
+
+### Why
+
+Any RP2354 reset opens the +5 V latch (R12 pulls Q2's gate low), so a Pi powered by the board
+loses its power the moment the RP2354 resets. SWD from a seated Pi and the boot ROM's BOOTSEL
+and UART paths all end in a reset, and RUN and BOOTSEL are not on J8 anyway.
+
+Since 2026-10-20 the firmware covers the normal case (`PROGRESS.md` §6, 2026-10-20;
+`DEVELOPER_GUIDE.md` §9.4): the Pi sends a new image over the serial link, the board installs it
+into the other A/B partition after shutting the Pi down, and the boot ROM rolls back an image
+that never buys itself. What it cannot cover:
+- **an image that buys itself and then cannot talk on the link** (a broken protocol, a hang
+  after init);
+- a failed install whose partition the board cannot clear (`INSTALL FAILED: CLEANUP`). That
+  needs flash that refuses both programming and erasing.
+
+Only USB recovers such a board today.
+
+### What to change (for a field unit without USB access)
+
+1. **Hold the latch through an RP2354 reset:** a latching gate driver or a small supervisor that
+   keeps Q2 closed until the firmware either re-asserts GPIO15 or a timeout releases it. This
+   weakens the fail-safe that R12 gives today (the rail opens if the MCU dies), so the hold must
+   be bounded in time.
+2. **Wire RUN and BOOTSEL (QSPI_SS) to two spare Pi GPIOs**, each through a series resistor,
+   so a seated Pi can force BOOTSEL and flash the RP2354 with picotool over its own USB or SWD.
+
+Neither is needed for the update path that exists. Both together are what a board sealed in a
+product would want.
+
+### Verify
+
+- With a Pi seated and running, an RP2354 reset (SW2) does not drop the Pi's +5 V, and the latch
+  releases by itself if the firmware never comes back.
+- From the Pi: BOOTSEL via the new lines, then `picotool load -x`, with the Pi still running.
+
+### Firmware impact
+
+- Boot: re-assert the latch early, within the hold time, when a Pi was powered before the
+  reset.
+- The `reset`/`bootsel` guards in `cli.c` could then relax. The telemetry's "power cut" count
+  would need the hold's own signal to tell a held reset from a cut.
+
+---
+
+## CR-27 — 🟢 J8.17 (the Pi's second 3V3 pin) has no copper
+
+### Why
+
+The schematic puts J8.1 and J8.17, the Pi header's two 3V3 pins, on net `+3V3_Pi5`, which feeds
+the Pi-presence divider R45/R44 into GPIO24. The layout routes only J8.1: one F.Cu track from
+J8.1 to R45 pin 1. Pad 17 has no track, via or zone.
+- `kicad-cli pcb drc` on the `.kicad_pcb` reports it as the board's **only** unconnected item.
+- The fab gerbers in `jlcpcb/` (the same content as the zip that was sent) flash pad 17 on all
+  four layers, with nothing touching it. Every board of this order has it.
+
+Found 2026-10-30 on board 1: a shunt from J8.15 to J8.17, meant to feed RPI5_ON from the bench
+3.3 V on J8.1, left J8.15 at about 0 V (`PROGRESS.md` §6, 2026-10-30).
+
+### Impact
+
+- **With a Pi seated: none.** The Pi's two 3V3 pins are the same rail on the Pi, so J8.1 alone
+  carries the presence sense.
+- **On the bench:** J8.17 is not a 3.3 V point, even with J8.1 fed. Simulate the Pi from J5.2
+  (`BENCH.md` Phase 1b).
+
+### The change
+
+Route J8.17 to J8.1 or to R45 pin 1, on any layer. Before ordering, run the DRC and get
+**0 unconnected items**.
+
+### Verify
+
+Bare board: continuity from J8.1 to J8.17. The DRC report shows 0 unconnected items.
+
+### Firmware impact
+
+None.
+
+---
+
+## CR-28 — 🟡 A temperature sensor at the beam LED (D11)
+
+Requested by the owner on 2026-11-11, during Board 4's §6.4.
+
+### Why
+
+**D11 is the hottest part on the board, and it runs closest to its rating.** At 25 % duty its
+base reaches 87.5–98 °C, so the junction is at 104–122 °C against a 145 °C maximum (CR-12).
+
+| Board | LED base | Heatsink |
+|---|---|---|
+| 1 | 87.5 °C | — |
+| 2 | 98 °C at 10 min | — |
+| 4 | **92.9 °C at the 20-minute plateau** | 68.1 °C |
+
+**That margin depends on things that vary from unit to unit and in the field:**
+- the thermal pad and clamping;
+- the heatsink's airflow;
+- the enclosure ambient. At 40 °C every figure shifts +17 °C (CR-12).
+
+**Today nothing on the board can see it.**
+- The only checks are a FLIR at bring-up (`BRINGUP_NEW_BOARD.md` Step 6.4) and the firmware's
+  duty ceiling, which assumes a bench environment.
+- A blocked vent, a failed fan (if CR-12 adds one) or a hot enclosure goes unnoticed until the
+  LED degrades.
+- A board shipped to someone without a FLIR, as Board 4 is, has no thermal check at all.
+
+**It also matters for detection.**
+- Radiant efficiency falls ~0.3–0.6 %/K, so cold to hot costs 25–45 % of the light (CR-12).
+- Detection sensitivity therefore drifts with LED temperature.
+- The calibration's "warm" state is a 5-minute timer (Step 9.1), not a measurement. Board 4
+  took 20 minutes to plateau: 88.2, 91.5, 92.1, 92.9 °C at 5, 10, 15, 20 min.
+
+### The change
+
+**A digital temperature sensor on I2C, preferred over an NTC.**
+- **Every ADC input is already in use** (`board.h`): GPIO40–47 are channels 0, 1, 2, 5 and 7
+  (analog), and 3, 4 and 6 (digital functions).
+- **An NTC would need two changes:**
+  - one of those digital functions moved to a spare GPIO. GPIO43 `RPI5_SHUTDOWN`, a plain
+    output, is the easiest. CR-08 wants that freed channel too, for VIR sense;
+  - a sixth channel in the ADC round robin. That changes the interleave every other channel is
+    timed against: the 500 ksps engine, with its coverage proof.
+- **A digital sensor stays outside the ADC engine entirely.** I2C-capable spare pins exist:
+  GPIO16/17 (I2C0) or GPIO22/23 (I2C1), all unconnected today.
+- **CR-29 puts a housekeeping ADC on the same bus** (2026-11-12). With both, bring-up needs
+  no FLIR, scope, LA or DMM.
+
+**Parts:**
+- an I2C sensor rated to **125 °C or more** (D11's base reached 104 °C at 30 % on board 1),
+  ±1 °C class;
+- 2 × 4.7 kΩ pull-ups to +3V3;
+- the sensor powered from the always-on +3V3, so it reads with the rail down too.
+
+**Placement:**
+- as close to D11's thermal pad as the layout allows, on copper thermally tied to D11's
+  island. D11's pad is on +5V, so the sensor sits beside it, or on the bottom-side pour that
+  the vias feed (CR-12).
+- If CR-12 separates R73/R74 from D11's island, keep the sensor on D11's side.
+- **It reads board copper near the base, not the junction.** Junction ≈ reading + offset +
+  6–9 K/W × P(D11), where P(D11) is 2.74 W at 25 %. Establish the offset once per design
+  against a FLIR reading of the base from the side.
+
+### Firmware impact
+
+A driver: an I2C read at ~1 Hz, and a temperature line in `stat` and `beam`. Then, in order of
+value:
+1. **Bring-up without a FLIR:** Step 6.4's plateau, read from the sensor.
+2. **A hard beam limit:** `beam off` and a fault above a set reading.
+   - Prefer off to a duty derate. The demod phase depends on the duty (`cal_duty`;
+     `phase_ticks = t_chain − (duty/2)·(TOP+1)`), so a derate would need the phase
+     recomputed.
+   - The duty ceiling stays the primary control.
+3. **Calibration:** "warm" becomes a measured condition, e.g. under 0.5 °C of change in the
+   last minute, instead of a 5-minute timer. Record the temperature with `cal demod` and
+   `cal model`.
+4. **Halt telemetry:** the peak temperature.
+
+### Verify
+
+1. **Bring-up Step 6.4 at 25 %:**
+   - read the sensor and the FLIR (base, from the side) every 5 minutes to the plateau;
+   - record the offset and the time constant.
+2. **The firmware limit:**
+   - restrict the heatsink's airflow, or run at the worst-case ambient;
+   - check that the limit trips at its set point, with the beam off and the fault readable in
+     `stat`.
+
+---
+
+## CR-29 — 🟡 The board measures itself: a guided calibration without a scope, LA, DMM or FLIR
+
+Requested by the owner on 2026-11-12.
+- **The guided calibration script waits for this revision.** This revision's five prototype
+  boards are brought up by hand with `BRINGUP_NEW_BOARD.md`.
+- The script's plan is recorded here, under "The guided calibration", because what it can
+  automate depends on this hardware.
+
+### Why
+
+**Bring-up needs instruments a user will not have, and an operator who knows where to put
+them.** `BRINGUP_NEW_BOARD.md` covers only per-board work (its Background A), yet it needs:
+- **a scope or LA:** Step 5.4 (the latch through a reset), 6.2 and 6.3 (TP5, the U9 clamp),
+  and 12.2 part 6 (U5's clamp dry, on soldered leads). Step 2.2 is already optional
+  (Background E);
+- **a FLIR:** Step 6.4;
+- **a DMM:** Steps 2.1, 4.2, 5.2–5.5, 7.1, 12.2 parts 1 and 5, and 12.3.
+
+**Some of those points take no hand-held tip on a powered board:** TP3, TP6, TP9 and TP10
+(`HANDOFF.md` §3 rule 8). Without soldered leads they cannot be read at all.
+
+**Every hand reading can be misread or mistyped.** Board 4's TP3 was typed as 8.94 V instead
+of 4.94 V, and that started a fault analysis (2026-11-11).
+
+**What varies from board to board is slow, or is already measured another way.**
+- DC levels, clamp widths around 120 µs and temperatures need no fast converter.
+- The 340–600 ns chain delay comes from the lock-in phase (`cal demod`), not from sampling.
+- So the board can measure all of it itself.
+
+**Not proposed, and why:**
+- **Ringing checks.** Ringing is set by layout and part values, so every board of a revision
+  rings the same unless a part is wrong. Check it once per revision with a scope (Board 5's
+  role), not per board.
+- **A high-speed ADC.** A 1–3 MSPS part is only 2–6× ADC0, and still blind to MHz ringing.
+  Capturing ringing needs tens of MSPS on 8 or more pins.
+- **More RAM.** Each reading is a few bytes. Image 1.7 leaves about 100 KB of the 520 KB
+  free, and 288 KB of the rest is the update staging buffer (`fw_update.h`).
+
+### The change
+
+All three parts use spare pins.
+- **13 GPIOs are unconnected:** 13, 16, 17, 20–23, 26, 29, 30, 34, 35 and 38.
+- None of them reaches the RP2354's ADC, whose eight pins are all in use (CR-08).
+
+**1. A housekeeping ADC on I2C, with a precision reference.** It goes on CR-28's bus (GPIO16/17
+or 22/23).
+
+| Priority | Signal | Replaces |
+|---|---|---|
+| 1 | **VIR** (36 V), with CR-08's divider rechecked against this ADC's input | Steps 2.1 and 12.3 (the J3 screw); CR-08's VIR sense |
+| 2 | **The latched +5 V** (J8.2's net) | the DMM watching the rail in Steps 5.2, 5.3 and 5.5. ADC1 sees only +5V_IN, before the latch |
+| 3 | **+5V_IN** | the DMM at J1 in Step 4.2: a second converter on a second reference |
+| 4 | **+12 V** (TP2) | Step 2.1 |
+| 5 | **TP3**, Q9's gate setpoint | Step 12.2 part 5 |
+| 6 | **TIA_Out** (TP7) | Step 7.1 |
+| 7 | **+2V5** (TP6) | Steps 2.1 and 7.1 |
+| 8 | **D11's average current** (TP5 through an RC) | Step 6.2, together with the lock-in |
+| 9, 10 | **TP9, TP10** | Step 7.1. Lowest priority: `cal demod` already reports a clipping stage as `saturated` |
+
+- **The first eight fit one 8-channel part.** A second part at another address on the same
+  bus takes 9 and 10.
+- **Why I2C, rather than an analog MUX into an RP2354 ADC pin:**
+  - **§4 keeps an independent check.** On the RP2354's own ADC, the +5 V safety reading would
+    be checked against the same converter and reference it is calibrated with. A second
+    converter cross-checks it at every boot, not only at bring-up. It also checks the PSU's
+    5.20 V before anything is calibrated.
+  - **Nothing moves.** A MUX needs an ADC pin freed (GPIO43, the one CR-08 wants) and a
+    channel added to the ADC engine's round robin (CR-28's reason for I2C).
+- **The reference:** its error has to be a small fraction of the §4 margin. The latch needs
+  5.05 V from a 5.20 V supply, about 3 %. Aim for the 0.1 % class, with a separate reference
+  part if the ADC's own is looser.
+- **Tap only low-impedance nodes** (op-amp outputs and rails). Put a series resistor at each
+  node, so a tap's capacitance or a failed part cannot disturb the circuit.
+  - **Never C81 or the TIA input.** HOLD leakage of 50–250 pA already matters there (Step
+    7.2). An ADC input or a switch leaks that much, more when warm.
+  - Keep the taps' traces away from D12 and the TIA input.
+- **VIR's divider:** two resistors in series on the 36 V side, so one shorted resistor cannot
+  put 36 V on the ADC.
+- **Power it from the always-on +3V3,** like CR-28's sensor, so it reads with the rail down.
+
+**2. Two timing pins into PIO: U5's Q and U9's output.**
+- PIO times a pulse to one system clock, 6.7 ns at 150 MHz. The ADC resolves 2 µs.
+- They measure U9's clamp (Step 6.3, 109–136 µs) and U5's (Step 12.2 part 6, 118–137 µs) on
+  every board. They can also check U5's clamp on every live pulse.
+- U5's Q is the pulse at R61 pad 1 today (CR-21). U9 is a 74LVC1G123 (`BENCH_P2_BEAM.md`).
+  Confirm U5's part and both supplies at layout, and divide if either is above 3.3 V.
+- Put a series resistor at each tap. Choose the pins against the PIO and PWM slice maps
+  (`ARCHITECTURE.md` A2).
+
+**3. CR-28's temperature sensor, on the same bus.** One side-by-side run against a FLIR per
+revision gives its offset (CR-28's Verify). From then on it replaces Step 6.4's FLIR.
+
+### What still needs the user
+
+The script asks for each of these, then checks the result itself:
+- **the PSU:** set it, and switch it off for Step 5.5;
+- **J2 and J3:** fit and remove each when asked;
+- **the baffle** (§8) and **the calibration card** (§9). If the enclosure fixes where a
+  reflector sits, calibrating inside it removes the card search;
+- **a look at the pour joints** (Step 1.2, CR-22).
+
+Step 0.1 (R80, the TIA variant) exists for this revision's reworked boards. With CR-19's values
+on every board, it goes.
+
+**SW2 is not in the user's flow.** Owner, 2026-11-12: SW2 is never pressed in normal
+operation, only by developers. Step 5.4 stays in `BRINGUP_NEW_BOARD.md` as a developer check.
+- **Its per-board part is R12,** which holds Q2's gate off while GPIO15 is high-Z in reset
+  ("Not solved by anything on this list", above).
+- **A self-test with no button, to check at design time:**
+  - with no Pi: `on`, then a firmware reset. Every reset source opens the latch (the same
+    section);
+  - at boot, before the firmware drives GPIO15, read the latched rail twice ~20 ms apart.
+    Falling means R12 alone held the latch off. With no Pi, Board 4's rail fell from 5.26 V
+    to 1.0 V in 260 ms;
+  - **what it cannot see:** a glitch shorter than the gap between the reads. That stays a
+    scope check, once per revision.
+
+### The guided calibration
+
+**A host script, `tools/pitrac_cal.py`** (Python 3 and pyserial), runs over USB. The Pi link
+cannot carry it: its allowlist has no calibration commands (`link_proto.h`).
+
+| Stage | From `BRINGUP_NEW_BOARD.md` | The user | The script and the board |
+|---|---|---|---|
+| 1. Unpowered | 1.2 | looks at the J1 and J3 joints | — |
+| 2. USB only | 1.3, 1.4, 3.1, 5.1 | plugs in USB | flashes with picotool; `id`, `pins`; no latch on USB |
+| 3. Rails and the +5 V scale 🔴 | 2.1, 2.3, 4 | sets the PSU to 5.20 V / 2 A; fits and removes J2 | reads +5V_IN on both converters, then VIR, +12 V and +2V5; trims and saves the scale |
+| 4. Latch 🔴 | 5.2, 5.3, 5.5; the self-test for 5.4 | presses the panel button; switches the PSU off when asked | reads the latched rail through each |
+| 5. Beam | 6.1, 6.3, 6.4, 6.5 | — | PWM readback; U9's clamp; 25 % until the sensor plateaus |
+| 6. Detect chain | 7.1, 7.2 | — | the DC levels; `hpf test` |
+| 7. Baffle | 8.2 | fits the baffle | the duty sweep |
+| 8. Demod phase | 9.1–9.5 | moves the card as told | "warm" by measurement (CR-28); `cal demod` until 50–70 %; `cal model`; `cfg save` |
+| 9. Threshold | 10.1–10.7 | — | all of it, with 10.3's phase search and the vref/Vos solve |
+| 10. Strobe | 12.2–12.4 | connects J3 | TP3's setpoints; U5's clamp; the first current; `strobe cal 9` |
+| 11. Hand-off | 11 | — | `cfg` checked against the measurements; the report |
+
+**How it behaves:**
+- **One action per prompt,** in physical units.
+  - The pass bands live in one table in the script, each tagged with its
+    `BRINGUP_NEW_BOARD.md` step.
+  - Extend `check_doc_links.py` to catch a stale tag.
+- **It can send only listed commands.**
+  - No `gpio` writes, `wdog`, `bootsel` or `pisim`.
+  - `reset` only for the 5.4 self-test.
+  - A beam duty over 25 % is refused in code.
+  - The strobe runs only in its own stage, under the firmware's live guards.
+- **`stat` and `fault` before every stage.** A Pi present, a latched fault or an unexpected
+  state stops it.
+- **On any failure, Ctrl-C or a lost port:** `strobe live off`, `beam duty 2`, `beam off`,
+  `off`, then a check for `STANDBY`. It never retries a failed safety gate and never changes
+  a limit.
+- **Records** go in `captures/cal_<UID>_<date>/`:
+  - every byte to and from the board;
+  - `report.md`, the sign-off column with `BRINGUP_NEW_BOARD.md`'s row names;
+  - `report.json`.
+
+  `--resume` continues after the last passed stage.
+- **Results the script reads:** one `key=value` line per result.
+  - These lines are added in the same image as this revision's drivers, so the script does
+    not parse prose.
+  - The script is tested against recorded sessions in a replay mode, with no board.
+
+**Open, for when it is built:** whether the strobe stage is in the first version, or follows
+once the rest is proven.
+
+### Firmware impact
+
+- An I2C driver for the ADC and the sensor: ~1 Hz housekeeping, and readings on demand during
+  calibration. A line in `stat`.
+- **The +5V_IN cross-check at boot.** It sits on the 🔴 latch path. It needs an owner decision
+  first: how far apart the two converters may read, and what the board does when they disagree
+  (refusing to latch is the obvious answer).
+- VIR before each firing (CR-08).
+- PIO pulse-width programs for the two timing pins (`pio_alloc.c`).
+- **The 5.4 self-test:** the boot reads happen before GPIO15 is driven. They run only when a
+  flag set before the reset asks for them.
+- The result lines for the script.
+- **Every item touches a safety path:** the latch, the strobe or the beam. Each gets an
+  independent review, as usual (`HANDOFF.md` §5 rule 8).
+
+### Verify
+
+On the first board of the revision (Board 5's role):
+1. **Everything side by side.** Run the full `BRINGUP_NEW_BOARD.md` with a scope, LA, DMM and
+   FLIR, then the script, on the same board.
+   - Every reading agrees within the instruments' accuracy.
+   - The timing pins match the LA within 1 µs.
+2. **The +5V_IN cross-check trips** on a disagreement injected in a test build.
+3. **The 5.4 self-test catches a missing R12.** With no Pi on J8 and R12 lifted, the test
+   fails. With R12 refitted, it passes.
+4. **The sensor's offset** against the FLIR (CR-28's Verify).

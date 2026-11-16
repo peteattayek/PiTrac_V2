@@ -96,9 +96,12 @@ void pitrac_abort_clear(void);
 // linear-mode FET is a genuinely different risk. Live strobe mode arms it
 // (strobe_live_arm(), 2026-10-07) and disarms it again when live mode ends --
 // unless it was already armed, or the operator typed `wdog on` while live, in
-// which case it stays armed. `wdog off` is refused while live. `stat` shows the
-// state. Phase 8 should re-evaluate the Pi-present rule next to the FSM
-// transitions it depends on, in power_fsm.c.
+// which case it stays armed. NOT with a Pi powered (image 1.8, owner
+// 2026-11-12): there a reset is a hard power cut to the Pi, and U5 and the PIO
+// already bound every pulse and burst. "Pi powered" is the strobe's fresh
+// observation (strobe_pi_observe(), image 1.9), and a live session ends if it
+// changes or is unsettled. `wdog off` is refused only while a session armed
+// without a Pi is live. `stat` shows the state.
 //
 // This was left as a comment in main() until 2026-08-28 and is implemented
 // here now because pitrac_service() is the one function guaranteed to run on

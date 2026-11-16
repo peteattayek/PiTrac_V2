@@ -10,7 +10,27 @@ anything.
 
 ---
 
-> ## FIRMWARE STATUS, 2026-10-12 (bench 2026-10-15) — 6a/6b dry tests PASS; readback fix on board 1; 6c Steps 1–2 PASS, Step 3 up to 24 %; 6d PASS
+> ## FIRMWARE STATUS, 2026-10-16 — board 1 runs `Oct 15 2026 22:09:11` (live readback fix); dry and live re-checks PASS (2026-10-16). 6a/6b PASS; 6c Steps 1–2 PASS, Step 3 up to 24 %; 6d PASS
+>
+> **2026-10-30: board 1 now runs r5** (`Oct 20 2026 14:59:52`, flashed for the Phase 8 no-Pi
+> checks, `PROGRESS.md` §6). The `id` lines below that name `Oct 15 2026 22:09:11` predate it.
+> **2026-11-10: board 1 runs 1.2** (`Nov 10 2026 09:47:13`), r5's code with only the version
+> changed, installed from the Pi (`BENCH_P8_PI.md` §8.9; `PROGRESS.md` §6).
+> **2026-11-10: 6c complete on board 1**: the session-cap check PASS and Step 6 (Step 4 below).
+> With them Phase 6 is complete on board 1.
+>
+> 🟡 **Image r5, 2026-10-20: r2 plus the Pi serial link and firmware updates from the
+> Pi, with the r3 and r4 reviews' update findings fixed; confirm review PASS, flashed on board 1 2026-10-30.**
+> Release `Oct 20 2026 14:59:52`, 224720 text / 0 data / 422112 bss, `pitrac.uf2` SHA256
+> `AC5F4493…C272ACF7`; 228/228 host tests, 83/83 mutations caught (`PROGRESS.md` §6, "Phase 8 prep firmware written",
+> "Review findings fixed", 2026-10-20, "r4" and "r5"). None of it touches the
+> strobe. Its first boot is a trial (`upd`), and once a board has the partition table
+> (`BENCH_P8_PI.md` §8.7) reflashes alternate partitions.
+> - **For 6c it adds the session cap:** once `strobe cal` solves, `strobe gate` above the cap is
+>   refused. The cap is `l1 + floor((10.8 A − a1) / 0.075 A per level)`, from the cal's first
+>   point at or above its target. Board 1: ~463 (45.2 %).
+> - Everything else in it is Phase 8 (J8.37, the USB reboot paths, halt telemetry).
+> - After the reflash, 6c changes in one place: Step 4's cap check.
 >
 > 🔴 **Never fire live on the `Oct  7` image** (any board still on it). Its ADC0 readback can
 > return stale IDLE-ring data as the pre-pulse baseline (the copy was sized by elapsed time, not
@@ -41,6 +61,38 @@ anything.
 > **Board 1 ran `Oct  7 2026 08:07:33`** until 2026-10-12, when it was reflashed with the fix
 > image above.
 >
+> 🔴 **Current image, handed over 2026-10-16. REFLASH FIRST on any board not yet on it.** It is
+> the live readback fix (`PROGRESS.md`
+> §6, "Live readback fix written", and the three review rounds after it).
+> - Release `Oct 15 2026 22:09:11`, 198840 text / 0 data / 123220 bss, `pitrac.uf2` SHA256
+>   `FCC1AF662923537ECEE27ACB697683E592E8795139277A68E526818518195B57`.
+> - 117/117 host tests; 28 deliberate mutations, 27 caught and 1 equivalent by construction.
+> - Independent review (Sol): round 1 found four issues, all fixed; rounds 2 and 3 PASS.
+> - `id` ends `+ live readback: fixed floor, pulse shape check, two-sample overcurrent` /
+>   `(2026-10-15)`.
+> - **Board 1: reflashed 2026-10-16. The dry checks PASS** (`adc ringtest 100`: 200/200
+>   covered, brackets 14 cycles).
+>   - ✅ **The live re-check passed**: 6c Steps 1–2, then Step 3 up to 24 %. 21 % read 0.107 A and
+>     24 % read 0.702 A, against the Saleae's 0.114 / 0.704 A (`PROGRESS.md` §6, step 9).
+>   - The readback fix is bench-verified, so Step 3 above 24 % may go ahead, with the FLIR.
+> - Pulses are found against a fixed ~72 mA floor, no longer half the record's peak.
+> - A spike or dip beyond ±25 % (+0.14 A) of a pulse's settled level ends live mode. It prints
+>   `NOT CLEAN: pulse N OVERSHOOT|DIP`, and the exit reads "the current was not one clean pulse
+>   per pulse fired".
+> - **OVERCURRENT** (the firing prints which rule fired):
+>   - two of any three samples in a row over 10.8 A, which includes two in a row;
+>   - a plateau over 10.8 A;
+>   - one sample over 13 A.
+> - An unusable record prints `NO MEASUREMENT`, never "no current".
+> - `capture` and `capture trig` accept 733–500000 Hz only. The CSV header's `rate=` is the rate
+>   the ADC was programmed to; below ~733 Hz it used to wrap silently.
+> - **New printed wording:**
+>   - `floor N codes`, was `threshold`;
+>   - `no current pulse above the ~72 mA floor`, was `no current above the ~72 mA detection
+>     floor`.
+>
+>   The expected outputs below use the new wording.
+>
 > **The `Oct  7` image:** Release `Oct  7 2026 08:07:33`, 184440 text / 0 data / 122720 bss, SHA256
 > `DE0C6676…2DE80BC2`, 78/78 host tests (`tests/`, see `BENCH.md` "Host regression tests"). It is
 > the 2026-10-05 image plus the 6c/6d live mode, the "before 6c" backlog items and two fixes from
@@ -60,7 +112,7 @@ anything.
 > | A7 — ready LED off the gate DAC's PWM channel | ✅ ready LED is SIO on/off; `strobe_init()` panics if GPIO12 is ever on PWM |
 > | Ramping Gate_PWM | ✅ `strobe gate <pct>` |
 > | Firing with current (6c), ADC0 plateau per shot, watchdog arming | ✅ **written 2026-10-07** — live mode, `strobe live on confirm` (6c below) |
-> | Current LUT | ✅ `strobe cal [A]` — solves the level for 2–9 A, 3 confirmation pulses; RAM only (`cfg` has no field for it yet) |
+> | Current LUT | ✅ `strobe cal [A]` — solves the level for 2–9 A, 3 confirmation pulses; RAM only (`cfg` has no field for it yet). From the 2026-10-19 image, a solved cal also sets the session cap |
 > | Clamp verification with current (6d) | ✅ `strobe clamptest <us>` in live mode, only at a level that measured 0.5–2.5 A — **PASS on board 1, 2026-10-15: 135 µs at 0.70 A** |
 >
 > **Two modes.** LED-bank current needs Q9's gate (setpoint) **and** Q10's gate (pulse).
@@ -72,9 +124,10 @@ anything.
 >   gate rises only while **no pulse can start**. So with live mode off, nothing can command
 >   strobe current, whatever is on J3. **J3 stays disconnected for 6a and 6b.**
 > - **LIVE (`strobe live on confirm`, from gate 0 only):** relaxes exactly that one rule, under
->   the guards tabled at the top of 6c — staircase, 70 % ceiling, ADC0 readback and verdict on
->   every firing, overcurrent and stuck-on faults, pacing and charge budget, watchdog, CLI lock,
->   idle timeout.
+>   the guards tabled at the top of 6c — staircase, 70 % ceiling (and, from the 2026-10-19
+>   image, the session cap once `strobe cal` has solved), ADC0 readback and verdict on every
+>   firing, overcurrent and stuck-on faults, pacing and charge budget, watchdog, CLI lock, idle
+>   timeout.
 >
 > Every pulse in either mode also requires: rail ready, no latched fault, no Pi, GPIO27 provably
 > SIO output driven 0 (read only — it is still written in exactly one place), GPIO12 off PWM.
@@ -189,8 +242,8 @@ the board still contains 36 V and stored charge. Keep conductive objects clear o
 connect probes only with the rail down, and use true board GND, not TP5 (`Strobe_GND`,
 which is a switched node). Everything proved here is something not debugged at 9 A.
 
-The current build is **`Oct 12 2026 14:43:50`** (2026-10-12: the 6c/6d live mode plus the ADC0
-readback fix; see the status box at the top). 6a/6b passed on board 1 on the earlier
+The current build is **`Oct 15 2026 22:09:11`** (2026-10-16: the 6c/6d live mode with the live readback
+fix; see the status box at the top). 6a/6b passed on board 1 on the earlier
 `Oct  5 2026 11:13:55`, which board 3 still runs. On any board, **reflash first** with the
 current build. Everything below needs it.
 
@@ -198,7 +251,7 @@ current build. Everything below needs it.
 
 | | |
 |---|---|
-| Firmware | `id` → `built    : Oct 12 2026 14:43:50` |
+| Firmware | `id` → `built    : Oct 15 2026 22:09:11` |
 | **J3 (LED bank)** | 🔴 **DISCONNECTED.** This is what makes 6a safe. |
 | PSU | 5.2 V, **limit 3 A** |
 | Rail | **up** for the measurements; **down** while connecting probes |
@@ -274,7 +327,7 @@ strobe pulse 20
 
 **Expect:**
 
-- `id`: `built    : Oct 12 2026 14:43:50`.
+- `id`: `built    : Oct 15 2026 22:09:11`.
 - `pins`: **`PULSE_LIMIT_DIS(27)  0`** and **`STROBE_PULSE(25)  0`**.
   🔴 **If GPIO27 is 1, stop.** Nothing in phases 0–6c has any reason to set it.
 - `strobe` shows:
@@ -483,8 +536,9 @@ admitted. These must all be **refused**, and fire nothing:
 = 1 mm blur ÷ v, rounded **down** and clamped to 5–100 µs; period = 42.67 mm spacing ÷ v,
 rounded to nearest; gap = period − width, at least 150 µs; 10 pulses, **shed one at a time
 with the spacing kept** while the burst charge at 9 A exceeds 6.0 mC, never below 3.
-The design's first-pulse delay is **not** computed: it needs t_cam and the beam-to-FOV
-geometry, which belong to Phase 7.
+The design's first-pulse delay is **not** computed. From image 1.5 the camera handshake
+applies max(first delay, t_cam) in PIO (`BENCH_P5_P7_MIC_CAMERA.md` 7a/7b), but the first delay
+itself still needs the ball speed and the beam-to-FOV geometry, which nothing computes yet.
 
 ✅ **Already verified on the host** (`tests/strobe_plan_test.c`; 11 tests when 6a ran, 16 since
 the 2026-10-06 live-policy tests): every row below, the shedding, bad-speed rejection, the PIO
@@ -715,14 +769,14 @@ boring.** Do not start it at the end of a session.
 
 | | |
 |---|---|
-| **Firmware** | the **2026-10-12 fix build** — `id` → `built : Oct 12 2026 14:43:50` and the `fw` lines end `+ ADC at true 500 ksps (DIV 0), synchronised snapshots`. 🔴 Not the `Oct  7` image (stale-baseline bug, §6 2026-10-12) |
+| **Firmware** | the **2026-10-16 handover build**: `id` → `built : Oct 15 2026 22:09:11`, and the `fw` lines end `+ live readback: fixed floor, pulse shape check, two-sample overcurrent` / `(2026-10-15)`. 🔴 Not the `Oct  7` image (stale-baseline bug, §6 2026-10-12) |
 | **Prerequisites on this board** | 6a and 6b **passed on this board**, and **TP3 at a static setpoint passed** (6b exit criteria: scope or LA analog, gate 0/50/90, no oscillation) — 🔴 not optional: an oscillating gate loop with current flowing is exactly what this step must never meet first |
 | **J3 (LED bank)** | **CONNECTED** — for the first time. Connect it with the **PSU and USB both off** |
 | PSU | **5.20 V, current limit ~3 A.** The pulses come from the VIR bulk caps; the PSU only sees the average |
 | Rail | **up** (`on`) |
 | GPIO27 | **0** (`strobe` → `U5 pulse limiter armed`) |
 | Beam / detector / Pi | **off** / **disarmed** / **not connected** |
-| Probes — attach every one with the board **unpowered** (rule 6) | **TP4** (CurrentSense, **135 mV/A**: 0.27 V at 2 A, 1.215 V at 9 A) on the scope: a **1× probe** (TP4 is the 0.135 Ω node, so 1× loading is nil, and there is no compensation to skew a 20 µs plateau; a TDS 1002 P2220 is ~6 MHz at 1×), or 10× only after PROBE CHECK. The channel's Probe menu must match the switch. Ground on a **wire soldered to R66's GND pad** (the pad farther from Q10) — that measures straight across the sense resistors. **Not TP1**: it is 72 mm away across the boost and picked up ±70–85 mV of spikes (≈ ±0.6 A apparent on TP4) on 2026-10-07. **TP3** (Q9 gate setpoint) on a second channel, ground on the second R66 wire. All leads: the table below. The LA analog channel (±10 V) is an acceptable substitute on TP4 and TP3 — **never** on TP2 (12.3 V) or Q10's gate |
+| Probes — attach every one with the board **unpowered** (rule 6) | **TP4** (CurrentSense, **135 mV/A**: 0.27 V at 2 A, 1.215 V at 9 A) on the scope: a **1× probe** (TP4 is the 0.135 Ω node, so 1× loading is nil, and there is no compensation to skew a 20 µs plateau; a TDS 1002 P2220 is ~6 MHz at 1×), or 10× only after PROBE CHECK. The channel's Probe menu must match the switch. Ground on a **wire soldered to R66's GND pad** (the pad farther from Q10) — that measures straight across the sense resistors. **Not TP1**: it is 72 mm away across the boost and picked up ±70–85 mV of spikes (≈ ±0.6 A apparent on TP4) on 2026-10-07. **The gate node** (Q9's gate; on board 1 the lead used on 2026-10-15) on a second channel, ground on the second R66 wire. Since the 1 µF rework it is the voltage that sets the current. **TP3** is optional on board 1, a diagnostic for when the gate moves. On a board without the rework, use TP3, which is the same node at µs scale there (`PROGRESS.md` §6, 2026-10-16). All leads: the table below. The LA analog channel (±10 V) is an acceptable substitute on TP4 and TP3 — **never** on TP2 (12.3 V), Q10's gate or the J3 screws (36 V). On board 1 (1 µF rework), the LA alone covers Steps 1–4 (`PROGRESS.md` §6, 2026-10-16); VIR needs a scope |
 | FLIR | **on and pointed at Q9 and HS1 before the first pulse**, with tape or paint patches on Q9's tab and HS1 (bare metal reads falsely cool) |
 | Nothing conductive near **D12 (36 V)** | |
 
@@ -776,8 +830,10 @@ with no load, and the gate-0 Step 2 pulse proved nothing about Q9 with VIR appli
 `STROBE_SENSE_V_PER_A`. Scope: DC, 10 µs/div, **Single Seq** per firing. **100 mV/div up to ~5 A,
 200 mV/div above** (on an 8-bit scope that is 4 / 8 mV per level — under 2 % of TP4 at 2 A and
 < 1 % at 9 A). Read the plateau with cursors, not the Mean measurement (Mean averages the whole
-record, including the off-time). Trigger on TP4 rising at ~50 mV — or on the LA's GPIO25 wire if
-it is still on R33.
+record, including the off-time). Trigger on TP4 rising at ~50 mV, or from the U5 Q wire on R61.
+U5 Q is the pulse Q10 receives: the current follows it within ~75 ns, and below the ~135 µs clamp
+it equals GPIO25. R61 alone is enough for timing. R33 (GPIO25) is diagnostic: add it back if a
+firing shows a pulse nobody commanded.
 
 **Bandwidth limit: 20 MHz for every plateau reading** (measured 2026-10-08). At full bandwidth
 each ~1 MHz boost edge rings the probe ground lead at ~450 MHz, ±15–40 mV on TP3 — about
@@ -786,15 +842,16 @@ each ~1 MHz boost edge rings the probe ground lead at ~450 MHz, ±15–40 mV on 
 ~150 ns for turn-on overshoot (the 6b gate-0 baseline predicts edge coupling there); pickup
 rings that are also there with no pulse are not overshoot.
 
-**With the MSO54B (available again 2026-10-08):** CH1 TP4, CH2 TP3 on the soldered leads,
-grounds on the R66 leads; trigger from the GPIO25 wire on R33 into **Aux Trig** (BNC-to-clip
-lead, ~1.6 V), or on CH1 rising ~50 mV with the 20 MHz limit on. The Saleae keeps GPIO25 and
-U5 Q as digital timing, ground on an R66 lead.
+**With the MSO54B (available again 2026-10-08):** CH1 TP4, CH2 the gate node (TP3 on a board
+without the rework) on the soldered leads, grounds on the R66 leads. Trigger from the U5 Q wire
+on R61 (or GPIO25 on R33) into **Aux Trig** (BNC-to-clip lead, ~1.6 V), or on CH1 rising ~50 mV
+with the 20 MHz limit on. The Saleae keeps U5 Q as digital timing, ground on an R66 lead.
 
 **With a TDS 1002 + Saleae Logic Pro 8 (2026-10-07 kit):** the scope's two channels are **CH1 TP4**
-and **CH2 TP3**; take the trigger from the GPIO25 wire on R33 into the scope's **EXT TRIG**
-(3.3 V logic, trigger level ~1.6 V). That keeps both channels for analog and triggers before the
-first edge. The Saleae keeps **GPIO25 (R33) and U5 Q (R61)** as digital timing. Put a
+and **CH2 the gate node** (TP3 on a board without the rework). Take the trigger from the U5 Q
+wire on R61 (or GPIO25 on R33) into the scope's **EXT TRIG** (3.3 V logic, trigger level ~1.6 V).
+That keeps both channels for analog and triggers within ~75 ns of the edge. The Saleae keeps
+**U5 Q (R61)** as digital timing, and GPIO25 (R33) if the lead is on. Put a
 third Saleae channel, in analog, on **TP4** too — **required with this kit for Step 5**: the
 TDS's 2500-point record over a 21 ms burst is 10 µs per sample, too coarse for a 20 µs plateau: a 12-bit record of every firing to set against
 ADC0 and `strobe wave` — with that channel's ground lead on an R66 ground wire as well, or it sees
@@ -876,15 +933,15 @@ last     : LIVE 1 x 20 us -- completed, IRQ0 seen
            at gate level 0 (0.00 %, TP3 nominal 0.00 V); 0.18 mC booked
            ...
 ADC0     : ~200 samples at 500 ksps, 76 before the edge; baseline <10 codes
-           (<0.06 A); threshold ... Verdict: within limits
+           (<0.06 A); floor ... Verdict: within limits
            ring: first sample +.. us, 100 ready +... us after the switch;
            enable->post: ~125 samples, ~37500 cycles, brackets ../.. (<= 40), residual +..
              vs 300/sample, window +-..: covered
            baseline split by clock ~76, by DMA count ~78 (the smaller is used,
            >= 50 needed)
-           no current above the ~72 mA detection floor
+           no current pulse above the ~72 mA floor
 ```
-**Pass:** verdict `within limits`, `no current above`; `covered`; the two splits within a few
+**Pass:** verdict `within limits`, `no current pulse`; `covered`; the two splits within a few
 samples of each other; **TP4 flat (< 10 mV)** on the scope; `strobe wave` all ~10 codes, start to end (no
 2055 / 3038 — the IDLE channels). TP3 shows
 only the ±0.3–0.4 V edge coupling already recorded in 6b. ❌ Any current at gate 0 → `strobe live
@@ -902,9 +959,17 @@ off`, `off`, and stop: Q9 is conducting with its gate at 0 V.
 > - ✅ **Board 1, 2026-10-15:** the rework is fitted and verified. At 24 % the current is flat
 >   at 0.69-0.71 A from 0.1 µs, against a 3.3 A spike before.
 >   - Step 3 resumes on board 1 up to 24 %, and 6d runs there (✅ 6d PASS 2026-10-15, below).
->   - **Above 24 %** waits for the readback fix. Other boards need the same rework first.
-> - Stop rule until then: stop at any turn-on peak above 2× the settled current, or above
->   2 A, on the Saleae or the scope. ADC0's summary line cannot be trusted for this.
+>   - **Above 24 %** waited for two things. The readback fix is ✅ on board 1 and bench-verified
+>     (2026-10-16). The FLIR is still required. Other boards need the same rework first.
+> - **Stop rule, on the scope or the Saleae** (corrected 2026-10-16):
+>   - **Up to 24 %** (the re-climb): stop at any turn-on peak above 2× the settled current,
+>     or above 2 A.
+>   - **Above 24 %:** stop at a turn-on peak more than ~20 % above the settled current, Step
+>     3's ringing criterion. The 2 A cap was for the sub-1 A re-climb; above 24 % it would stop
+>     the climb at 2 A.
+>   - With the fix (board 1 since 2026-10-16), the firmware also ends live mode on a spike over
+>     1.25 × settled + 0.14 A (SHAPE). On the `14:43:50` image, ADC0's summary line cannot be
+>     trusted for this.
 
 ```
 strobe gate 3
@@ -932,7 +997,8 @@ guards assume ≤ ~6 A per volt at TP3; less is normal). On-time **20 µs ± 2 �
 2026-10-12; `PROGRESS.md` §6). It is harmless while Q10 is off. Note its sign, size and recovery
 time in the table's notes column. **Stop** if it rings, if it has not recovered ~20 µs after the
 pulse, or if a similar upward kick appears at the **start** of the pulse. That last would show as
-a hump over the first ~5 µs of TP4's plateau.
+a hump over the first ~5 µs of TP4's plateau. **Board 1 since the 1 µF rework:** the kick is gone
+(2026-10-15). Watch the gate node for the same signs, and TP3 only if the gate moves.
 
 Record every step:
 
@@ -940,8 +1006,9 @@ Record every step:
 |---|---|---|---|---|---|---|
 
 **Pass, per step:** verdict `within limits`; ADC0 and TP4 agree within **±5 % or ±0.1 A**, whichever
-is larger; TP4's plateau flat after a rise of ≲ 1–2 µs, no ringing over ~20 % of the plateau; TP3
-holds its DC level through the pulse (any dip recovers within the pulse).
+is larger; TP4's plateau flat after a rise of ≲ 1–2 µs, no ringing over ~20 % of the plateau; the
+gate node (TP3 on a board without the rework) holds its DC level through the pulse (any dip
+recovers within the pulse).
 
 🔴 **Stop the ramp at the first step that measures 0.5–2.5 A and run 6d there** (below), then
 come back. The clamp is proven with current at ~2 A before anything higher is fired.
@@ -951,7 +1018,8 @@ the LED current, and 6d is a one-off.
 
 🔴 **Stop altogether** — `strobe live off`, then think — if: any `*** LIVE MODE ENDED ***`; ADC0
 and TP4 disagree outside the band above; the current **jumps by more than ~2 A** in one 3 % step;
-TP4 rings or oscillates; TP3 does not hold. The firmware stops at **> 10.8 A** on its own; do not
+TP4 rings or oscillates; the gate node (TP3 without the rework) does not hold. The firmware stops
+at **> 10.8 A** on its own; do not
 let it be the thing that stops you.
 
 🔴 **Stop if nothing is detected by gate 30 %** (TP3 ≈ 3.0 V, well past Q9's 1.0–2.0 V threshold):
@@ -986,16 +1054,133 @@ CAL: solving the gate level for 9.00 A -- one 20 us pulse per step from gate 0,
 SOLVED: level 503 (49.12 %, TP3 nominal 4.85 V) for 9.00 A.
   confirmation mean 9.010 A (+0.1 %) over 3 pulses: every pulse within 5 % -- PASS
   Gate left at level 503. RAM only -- nothing is saved.
+  Session cap: level 527 (51.46 %, TP3 nominal 5.08 V). No raise above it until
+  the next cal or re-arm: it is where the current could first reach the
+  10.8 A stop, at 0.075 A per level -- the steepest any board can have.
 ```
-(The level and TP3 above are illustrative; the measurement is the point.)
+(The level and TP3 above are illustrative; the measurement is the point. The `Session cap`
+lines come from the 2026-10-19 image on.)
 
-**Pass:** `SOLVED … PASS`; on the confirmation pulses **TP4 = 1.215 V ± 5 %**; TP3 on the DMM at
+**Pass:** `SOLVED … PASS`; on the confirmation pulses **TP4 = 1.215 V ± 5 %**; TP3 (or the gate
+node, the same at DC) on the DMM at
 the solved level — record it, and compare it with the design's **4.5–6 V** at 9 A (outside that is a
 finding, not a failure). `strobe` → `cal      : 9.00 A -> level …` keeps it until a reset.
+
+**The session cap (2026-10-19 image on)**, straight after a SOLVED cal, with nothing fired:
+- `strobe live` → a `cap      : level N` line. Board 1 should read **~463 (45.2 %)**: its
+  first point at or above 9 A was level 440 at 9.071 A on 2026-10-16.
+- `strobe gate 46` (level 471) → `REFUSED: over this session's cap from 'strobe cal' ...`, gate
+  unchanged.
+- **Do not fire above the solved level to "test" the cap.** The refusal is the check.
+
+**Board 1, 2026-11-10: PASS** (`PROGRESS.md` §6).
+- `strobe cal 9` solved **level 439** again (42.87 %, TP3 nominal 4.24 V), with a confirmation
+  mean of 9.013 A.
+- Session cap **463** (45.21 %), as predicted. `strobe live` → `cap : level 463`.
+- `strobe gate 46` (level 471) was refused, with the gate unchanged at 439.
+- Before that, with the Pi still seated, `strobe live on confirm` answered `REFUSED: a Pi is
+  present`: the interlock, seen with a real Pi.
 
 `CAL FAILED: CEILING` means 9 A was not reached by 70 % (TP3 ≈ 6.9 V): record the highest current
 and **stop** — do not raise the ceiling to get a pass. `OVERSHOOT` means one 0.5 % step jumped
 past 10.8 A, far steeper than assumed: record it and stop.
+
+### Step 4b — VIR, its sag and the headroom at 9 A (`PROGRESS.md` §3 Q13)
+
+Single pulses at the solved 9 A level, with a scope on **VIR** and **VIR_RTN**. This measures:
+- what the VIR bank can deliver: its capacitance, its ESR, and the boost's refill current;
+- **how much headroom Q9 has.**
+
+Then each Step 5 burst's sag is predicted **before it fires**. The slow-ball burst (6 × 100 µs at
+9 A, 5.4 mC) would sag ~8 V with no boost refill, close to the estimated headroom. Run this
+first, in the same session.
+
+**Board state:** as Step 4 (live mode armed, gate at the solved level, FLIR on Q9, HS1 and D4),
+plus:
+
+| | |
+|---|---|
+| Scope | MSO54B (preferred), or the TDS 1002 — **10X probes on CH1 and CH2**, the channel menus set to 10X to match, after PROBE CHECK |
+| CH1 | **VIR**: tip on **J3 pin 1** (clip the screw head or the wire under it) |
+| CH2 | **VIR_RTN**: tip on **J3 pin 2** |
+| TP4 | MSO54B CH3; on the TDS keep it on the Saleae |
+| Trigger | U5 Q (the R61 wire) into Aux Trig / EXT TRIG, rising, ~1.6 V. On the TDS, a plain BNC-to-clip lead (1X; 1.19 V worked on 2026-10-12). A 10X probe there would deliver only ~0.33 V |
+| Grounds | 🔴 **every probe ground on the R66 GND wire, never on J3 pin 2.** The scope's ground is mains earth. A ground clip on pin 2 joins the LED return to ground, bypassing Q9 and Q10, and the bank would light from the bulk caps with nothing in the path. |
+| Attach | everything with the PSU **and** USB off; nothing conductive near D12 |
+| Bandwidth | 20 MHz limit on CH1 and CH2 (boost-edge pickup) |
+
+**Settings:**
+- **CH1 (VIR):** AC coupling, which shows the change, 200 mV/div (500 mV/div for 100 µs). With a
+  10X probe the AC corner is ~1 Hz, fine for windows up to ~5 ms.
+  - At 1X the TDS's AC corner is up to 10 Hz, and the 5 ms recovery trace would droop by up to
+    ~27 %. Keep CH1 at 10X.
+- **CH2 (VIR_RTN):** DC, 5 V/div, no offset. It swings between ~VIR and ~10–13 V.
+  - **On the TDS** (no offset control), put CH2's ground marker on the **bottom** graticule
+    line. The screen then spans 0–40 V, with 36 V 0.8 div below the top. Centred, everything
+    above 20 V is off-screen.
+- **Probe compensation:** check both probes on PROBE COMP first (square corners). A
+  mis-adjusted 10X probe adds an error that fades over ~100 µs, the length of these pulses. On
+  CH2's ~23 V step, 5 % off is ~1 V of error in the headroom.
+- **Horizontal:** 20 µs/div with the trigger at ~20 % for the pulse, and 500 µs/div for the
+  recovery.
+- **Acquisition:** High Res on the MSO54B; average 16 on the TDS.
+
+**Commands** (the gate stays at the solved level; pacing is automatic):
+```
+strobe pulse 20
+strobe pulse 50
+strobe pulse 100
+strobe pulse 100
+```
+Capture the first three at 20 µs/div, and the last at 500 µs/div. Save each as CSV, and keep
+the scrollback.
+
+**Optional confirmation shots** (added 2026-10-16, after the hiccup finding):
+- **VIR, DC-coupled:**
+  - CH1 DC, 5 V/div, ground marker on the bottom line, 100 ms/div, single sequence;
+    `strobe pulse 100`.
+  - Expect ~35.9 V, a ~1.4 V drop at the pulse, a further ~0.9 V slide over ~125 ms, and a
+    snap back to ~35.9 V with no overshoot.
+  - One ADC step is 0.2 V at this setting.
+- **+5 V during the pulse (hiccup or UVLO):**
+  - Move CH2's tip to **J8.2**, the latched +5 V. Turn the PSU and USB off to move it; the
+    ground stays on R66.
+  - DC, 1 V/div, with the position set so that 5 V sits near the centre. 50 µs/div, then
+    500 µs/div; `strobe pulse 100`.
+  - If +5 V stays above ~4.75 V, UVLO is ruled out (it trips at ~4.5 V, 4.25–4.72 V over
+    tolerance), and the cause is hiccup.
+  - Lower than that: stop and send it.
+  - **On the logic analyser instead** (fine: +5 V is inside its ±10 V range):
+    - A spare analog input on **J8.2**, with its ground on R66, attached with the PSU and USB
+      off. Use a hook tip: J8.4 (+5 V) and J8.6 (GND) are right beside it.
+    - Keep A1 (gate), A2 (TP4) and D3 (U5 Q). Analog at ~3 MS/s, ~300 ms after the D3
+      trigger, so one capture holds both the dip and the restart ~125 ms later.
+    - Fire, one capture each: `strobe pulse 100`, then `strobe sched 50 fire` (the boost
+      refills after every pulse), then `strobe sched 10 fire`.
+    - The same pass line, ~4.75 V. It also clears the Pi 5's ~4.63 V under-voltage flag.
+
+**What to expect** (estimates, not pass criteria):
+- **VIR (36.0 V before)** steps down at the edge by 9 A × the bank's ESR (~0.1–0.3 V). It then
+  falls about linearly at ~9 A / C: ~0.27 / 0.68 / 1.36 V for 20 / 50 / 100 µs if C ≈ 660 µF and
+  the boost adds little in that time. Afterwards it climbs back at the boost's refill rate:
+  ~0.6 V/ms at the design's 0.4 A.
+  - **Measured on board 1 (2026-10-16), after a 100 µs pulse: it does not climb back.** The
+    LM5157 goes into hiccup. VIR stays down and sinks at ~7 V/s for ~125 ms, then snaps back
+    within a few ms (`PROGRESS.md` §6). 20 µs pulses do not trip it (Step 5).
+  - On AC coupling the snap-back shows a false overshoot that decays over ~0.5 s.
+- **VIR_RTN (Q9's drain)** drops during the pulse to VIR minus the strings, their ballast
+  (~1.8 V) and the harness. At 4.5 A per string the design guesses 21–23 V of string, so ~11–13 V.
+- **Q9's headroom** is VIR_RTN − TP4 − Q10's drop (~0.18 V). The design estimate is 9–11 V. Q9
+  needs ~1–1.5 V of it at 9 A (its gate overdrive), and the rest is what a burst may sag.
+- **A 100 µs pulse** is ~0.9 mC and ~10 mJ in Q9. Read the FLIR after it.
+
+**Pass:**
+- no fault, every firing `within limits`, ADC0 and TP4 within ±5 %;
+- the current flat through 100 µs: no DIP and no `NOT CLEAN`. A plateau that sags late in the
+  pulse means the headroom ran out: stop and send it.
+
+The step is a measurement: send the CSVs and the scrollback. C, the ESR, the refill and the
+headroom are derived from them, and each Step 5 burst is predicted before it fires.
 
 ### Step 5 — bursts at the solved level
 
@@ -1021,6 +1206,37 @@ dumps the last record (the 10 m/s burst) as `# capture … # end` CSV (~11 000 l
 is the plateau-across-a-burst evidence. Take it from the **scrollback**, with the line limit raised
 above that first: the Serial Monitor file log can reorder chunks (`HANDOFF.md` §4).
 
+**Scope, and each burst's sag predicted before it fires** (from Step 4b, 2026-10-16;
+`PROGRESS.md` §6):
+- **Settings:**
+  - CH1 VIR and CH2 VIR_RTN, both **DC, 5 V/div**, with the ground markers on the bottom line.
+  - Single sequence, trigger on R61 as in Step 4b, and **Peak Detect**, so that each pulse's
+    minimum is caught.
+  - Timebase: 200 µs/div for the first burst, 1 ms/div for the second, and 2.5 ms/div for the
+    last two.
+- **What the predictions assume:**
+  - The boost goes into hiccup in the first pulse, so **each burst runs from the bank alone**
+    (C ≈ 680 µF).
+  - On top of that come the ~0.15 V step at each edge and ~7 V/s of bleed.
+
+| Burst | Charge | VIR sag by the end | VIR_RTN at the last pulse's end | Q9's V_DS there |
+|---|---|---|---|---|
+| `strobe burst 20 500 4` | 0.72 mC | ~1.2 V | ~12.7 V | ~11.3 V |
+| `strobe sched 50 fire` | 1.80 mC | ~2.9 V | ~11.0 V | ~9.6 V |
+| `strobe sched 20 fire` | 4.50 mC | ~6.9 V | ~7.0 V | ~5.6 V |
+| `strobe sched 10 fire` | 5.40 mC | ~8.3 V | ~5.6 V | ~4.2 V |
+
+- Each value is good to about ±1 V (C ±10 %, plus the photo readings).
+- VIR is back at ~36 V about 130 ms after the first pulse.
+- **Measured on board 1 (2026-10-16; `PROGRESS.md` §6):**
+  - `burst 20 500 4` and `sched 50` stayed flat: the boost keeps up with 20 µs pulses.
+  - `sched 20` sagged 7.4 V, and `sched 10` 8.8 V. The bank is ~600 µF, not 680 µF.
+  - At `sched 10`'s last pulse, VIR_RTN was ~5.0 V, leaving ~3.5 V across Q9.
+  - Every plateau was within limits, first → last within −0.4 %.
+- **Stop rule:** after `sched 20`, read VIR_RTN at the end of its last pulse. If it is more
+  than 1 V below ~7.0 V, stop and send it before `sched 10`. Q9 needs ~1–1.5 V, and `sched 10`
+  goes ~1.4 V further.
+
 **Pass:** no fault; every plateau within limits; ADC0 and TP4 agree on the first and last pulse;
 **record** the first → last change and Q9's and HS1's temperature after each burst. HS1 must warm
 with Q9: a hot Q9 over a cold heatsink means TIM1 is not coupling.
@@ -1028,7 +1244,10 @@ with Q9: a hot Q9 over a cold heatsink means TIM1 is not coupling.
 ⚠ **The first → last change is not the VIR droop** (corrected 2026-10-15). Q9 holds the current
 flat until its headroom runs out, so a flat plateau shows only that the margin was not used up,
 not how much was left. VIR itself is measured on the scope, before and during these bursts:
-`PROGRESS.md` §3 Q13.
+`PROGRESS.md` §3 Q13. 🔴 **VIR and VIR_RTN (the J3 screws) are 36 V: use the MSO54B, or the TDS
+1002 with 10X probes. Never the logic analyser**, whose analog inputs are ±10 V (12 V absolute
+max). Probe grounds on the R66 GND wire only, **never on J3 pin 2** (VIR_RTN). The scope's
+ground is mains earth, so a ground clip there joins the LED return to ground, bypassing Q9 and Q10.
 
 ### Step 6 — leave
 
@@ -1039,6 +1258,8 @@ off
 Expect `live OFF: gate 0, engine stopped, GPIO25 low. Watchdog now off.` Disconnect J3 only with the
 PSU and USB off.
 
+**Board 1, 2026-11-10: done**, as expected, with no fault (`PROGRESS.md` §6).
+
 ### What to watch for
 
 | Symptom | Meaning |
@@ -1047,9 +1268,10 @@ PSU and USB off.
 | Plateau **sags across a burst** | bulk caps depleting; shorten pulses or shed count |
 | Rise slower than ~1–2 µs | harness inductance higher than expected |
 | ADC0 and TP4 disagree | trust TP4; suspect the R32 path or ADC scaling |
-| `*** LIVE MODE ENDED: OVERCURRENT -- fault latched ***` | a plateau over 10.8 A (or a sample over 13 A). Keep the log, `strobe wave` for the record, then `fault clear`. Do not re-arm until it is understood |
+| `*** LIVE MODE ENDED: OVERCURRENT -- fault latched ***` | a plateau over 10.8 A, two of any three samples in a row over it, or a sample over 13 A. From the readback-fix image, the firing's `OVERCURRENT (...)` line names the rule. Keep the log, `strobe wave` for the record, then `fault clear`. Do not re-arm until it is understood |
 | `*** LIVE MODE ENDED: CURRENT OUTSIDE THE PULSE -- fault latched ***` | current before the edge, after the window, or on > 200 µs: **Q10 or U5 is not ending the pulse.** `off`, power down, and check GPIO27/Q8/U5/Q10 before anything else |
-| `*** LIVE MODE ENDED: ADC0 readback unusable ***` | no usable record, or **more current pulses than were fired** (a U5 retrigger, ringing, or an oscillating gate loop splitting the plateau). Nothing is assumed safe without a reading, and the staircase does not move. `strobe wave` shows which |
+| `*** LIVE MODE ENDED: ADC0 readback unusable ***` | no usable record: too little baseline, or the record not proven complete (a `record:` line names why). Nothing is assumed safe without a reading, and the staircase does not move. Run `adc ringtest` and send it. (On `14:43:50`, more current pulses than fired also ended this way.) |
+| `*** LIVE MODE ENDED: the current was not one clean pulse per pulse fired ***` (from the readback-fix image) | The firing's `NOT CLEAN:` line gives the pulse, the sample, the settled level and the bound. **OVERSHOOT** at a pulse's first sample: a turn-on spike, the CR-23 gate-drive problem; check the rework. **DIP** at a pulse's second sample: a rise slower than ~3 µs (harness inductance). **DIP** mid-pulse: a split plateau (gate-loop oscillation, a bad joint) or VIR headroom running out. **MORE CURRENT PULSES THAN WERE FIRED**: a U5 retrigger, ringing, or current between burst pulses (Q10 not fully off). No fault is latched and the staircase does not move. Keep `strobe wave`, compare with TP4, then decide |
 | `REFUSED: too soon after the last live firing` / `rolling charge budget is used up` | pacing, by design: wait 0.1 s / up to 10 s |
 
 ### ⚠ Thermal — the FLIR's most important job on this board
@@ -1064,6 +1286,12 @@ only instrument that works.
 
 Emissivity: Q9's tab and the heatsink are metal and read **falsely cool**. Tape or paint a
 patch on both before trusting any number.
+
+**D4 (the 12 V zener) runs ~40 °C whenever VIR is up** (board 1, 23 °C ambient, 2026-10-16).
+That is normal. It sinks the ~3.5 mA of R15's ~5 mA that the +12 V loads do not use, ~45 mW in
+a SOD-123. It is the warmest part nearby while the strobe idles, and a warm D4 means the rail is
+regulating. **If D4 drops toward room temperature with VIR up,** the +12 V loads are taking
+R15's current: measure TP2 (12.3 V normal; 11.4–12.7 V is the zener's window).
 
 Never run repeated bursts faster than the energy interlock allows.
 
@@ -1111,7 +1339,7 @@ scope shows the same width, not 1 ms**; the plateau matches the 20 µs pulse's; 
 > - Firmware, two runs: `0.687 / 0.689 A plateau`, `on 134 us (67 samples)`, `within limits`.
 > - Scope (CSV): U5 Q high **134.98 µs**. TP4's current is **135.0 µs** wide at 0.70 A, with
 >   nothing after it to the end of the window (+360 µs).
-> - The plateau matches the 20 µs pulses' 0.682/0.684 A within 1 %.
+> - The plateau matches the 20 µs pulse fired just before it (0.678 A) within 2 %.
 
 🔴 **If TP4 shows ~1 ms, or the firmware prints `*** LIVE MODE ENDED: CURRENT OUTSIDE THE PULSE ***`,
 stop immediately: `off`, power down.** The hardware clamp is not working, and every later step
@@ -1256,13 +1484,33 @@ firing at THIS gate level that measured 0.5-2.5 A`).
       **Bench verification is the items below.** **2026-10-12:** the first live pulse found the
       stale-baseline readback bug; fix image `Oct 12 2026 14:43:50` (102/102), six review rounds and an ADC-rate bench fix,
       flashed on board 1 2026-10-12.
-- [ ] First live pulses: gate 0 → no current; 3 % staircase with ADC0 and TP4 agreeing (6c Steps 1–3)
+- [x] First live pulses: gate 0 → no current; 3 % staircase with ADC0 and TP4 agreeing (6c Steps 1–3)
+      — **board 1, 2026-10-16** (readback-fix image). No current from 0 to 18 %. 0.11 A at 21 %,
+      0.70 A at 24 %, 1.685 A at 27 %, 2.915 A at 30 %. ADC0 against the Saleae: within 0.5 %
+      from 0.7 A up, and −7 mA at 0.1 A. No overshoot (`PROGRESS.md` §6).
 - [x] **6d: U5 clamps with current** — `strobe clamptest 1000` at ~2 A ends at the clamp on TP4 —
       **board 1, 2026-10-15, at 24 % (0.70 A):** U5 Q 134.98 µs, TP4 135.0 µs, ADC0 134 µs; no
       current after it; no fault (`PROGRESS.md` §6).
-- [ ] Strobe current LUT built (`strobe cal 9` SOLVED, confirmation within 5 %), ADC0 agrees with TP4
-- [ ] Bursts at 9 A: plateau first → last recorded; no fault (6c Step 5)
-- [ ] TP3 steady with no ringing during bursts (6c Step 5). **Baseline at gate 0
+- [x] Strobe current LUT built (`strobe cal 9` SOLVED, confirmation within 5 %), ADC0 agrees with TP4
+      — **board 1, 2026-10-16:** four runs solved level 439 (42.87 %; once 438), and the
+      confirmations read 8.973–9.023 A. TP3 4.233 V on the DMM, under the design's 4.5–6 V
+      (a finding). The Saleae read 8.98 A, −0.4 % against ADC0. RAM only: re-run after a reset
+      (`PROGRESS.md` §6). **Re-run 2026-11-10:** level 439 again, mean 9.013 A; session cap
+      463, and a raise past it refused.
+- [x] VIR and Q9's headroom measured at 9 A (6c Step 4b) — **board 1, 2026-10-16:** C ≈ 680 µF,
+      a ~0.15 V step at the edge, and ~12.4 V across Q9 at the start of a 9 A pulse; 100 µs
+      pulses held a flat 9.06 A. The boost goes into hiccup for ~125 ms after each shot
+      (`PROGRESS.md` §6, `NEXT_BOARD_REV.md` CR-25).
+- [x] Bursts at 9 A: plateau first → last recorded; no fault (6c Step 5) — **board 1,
+      2026-10-16:** every burst `within limits`; first → last +0.1 / +0.1 / −0.3 / −0.4 %; VIR
+      sags 0 / 0 / 7.4 / 8.8 V; ~3.5 V left across Q9. ADC0 and TP4 (Saleae) agree
+      within ~1 % on the first and last pulse (`PROGRESS.md` §6).
+- [x] TP3 steady with no ringing during bursts (6c Step 5). **Board 1, 2026-10-16, on the gate
+      node (Saleae): PASS.** Between pulses it stays within ±1 mV through the 20/50/100 µs
+      bursts; the dips of 3.6–8.8 mV recover in ~100 µs; no ringing (`PROGRESS.md` §6).
+      **On board 1 (1 µF rework), use
+      the gate node,** per the probe table: it sets the current. TP3's stability with the hold
+      capacitor passed on 2026-10-15. **Baseline at gate 0
       (board 1, 2026-10-06):** Q10's edges couple into TP3 — ±0.3–0.4 V for ~150 ns at each
       edge, and a **−0.3 V step after turn-off that recovers in ≈ 5 µs**. Most likely path: Q10's
       Cgd → the shared Q9-source / Q10-drain node → Q9's large Cgs → TP3, with U7 (an unbiased
@@ -1271,8 +1519,15 @@ firing at THIS gate level that measured 0.5-2.5 A`).
       on TP3 and TP4.** **6c, board 1, gate 3 (2026-10-12):** the post-pulse kick is
       **+0.1–0.2 V**, with the same ≈ 5 µs recovery. The conducting NPN stops downward kicks only
       (`PROGRESS.md` §6).
-- [ ] Q9 and HS1 thermals sane, heatsink demonstrably coupling
-- [ ] `PULSE_LIMIT_DISABLE` still 0, still with no CLI path
+- [x] Q9 and HS1 thermals sane, heatsink demonstrably coupling — **closed by the owner,
+      2026-10-16:** thermals sane; coupling cannot be shown with these loads (`PROGRESS.md` §8).
+      **Board 1, 2026-10-16:** no
+      change on the FLIR after any burst, up to 5.4 mC. Coupling cannot be shown with these
+      loads: a 5.4 mC burst puts only ~45 mJ into Q9. The owner decides whether "sane" closes
+      this.
+- [x] `PULSE_LIMIT_DISABLE` still 0, still with no CLI path — **2026-10-16:** GPIO27 is written
+      only in `safe_state.c` (low); `gpio` refuses it (`cli.c`). Every live firing checks it
+      is low before firing (`strobe.c`), so each burst above confirms it.
 
 ---
 

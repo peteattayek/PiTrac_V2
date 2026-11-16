@@ -87,14 +87,27 @@ Family must be `rp2350-arm-s`. Anything else means the platform/board flags didn
 
 
 ### USB BOOTSEL
-Hold **SW1** (BOOTSEL), tap **SW2** (RUN), release SW1. A drive named `RPI-RP2` appears — drag
-`build/pitrac.uf2` onto it. Or:
+Hold **SW1** (BOOTSEL), tap **SW2** (RUN), release SW1. A drive named `RP2350` appears — drag
+`build/pitrac.uf2` onto it. Or, with the board in BOOTSEL:
 ```powershell
-picotool load -f build\pitrac.uf2
+picotool load -x build\pitrac.uf2
 ```
+From the 2026-10-19 image on, `picotool … -f` cannot reboot a running board into BOOTSEL: the
+firmware has no USB reset path (`BENCH_P8_PI.md` §8.0). Use `bootsel` at the CLI, or SW1 + SW2.
+
+From image 1.1 (2026-10-20) every reflash is a **trial**: the image buys itself at the end of its
+init, and one that never gets there is replaced by the previous image within ~17 s. A board with
+the A/B partition table (installed once, `BENCH_P8_PI.md` §8.7) puts each drag into the partition
+that is not running. **Never load an image older than 1.1 onto such a board** (HANDOFF §4).
+
+### From a Pi on the board
+`pitrac-link update build/pitrac.bin` on the Pi: `pi/README.md`. Needs the partition table.
 
 ### SWD from a Pi 5 (flying leads — Pi NOT seated on J8)
 See `tools/openocd_pi5.cfg` and `tools/flash_swd.sh`, and §4 of `PROGRESS.md` for the wiring.
+From image 1.1 the script refuses unless told otherwise: SWD writes at flash offset 0, over the
+partition table, and a try-before-you-buy image never starts after an SWD reset. It remains
+only for a `-DPITRAC_TBYB=OFF` build on a board without the table.
 
 ---
 

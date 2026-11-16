@@ -488,18 +488,17 @@ Scope **TP5** and measure the **LOW** width — remember TP5 is inverted, low = 
 
 > 🔴 **When you are done here, type `beam duty 2` before anything else.**
 >
-> `beam clamp` writes the duty to **50 %** and it *persists*. The 35 % ceiling is checked
-> only inside the `beam duty` command — `beam freq`, `beam clamp` and `beam sweep` all call
-> `beam_configure()` directly and skip it. So a bare `beam freq 104167` after this step
-> gives you **104 kHz at 50 % duty**: ~1.6 A average against a 0.95 A design point, and
-> ~5.25 W in D11 against 3.15 W.
+> `beam clamp` writes the duty to **50 %**, and it *persists*.
+> - **Since commit 2ec1c0e**, `beam_configure()` enforces the 35 % ceiling on the *effective*
+>   duty, after U9's clamp (`beam.h`, "DUTY CEILING"), so every path is checked. A bare
+>   `beam freq 104166` after this step is therefore cut back to 35 %, not left at 50 %.
+>   *(Until then the ceiling lived only in `beam duty`, and that command gave 104 kHz at 50 %:
+>   ~1.6 A average against a 0.95 A design point, ~5.25 W in D11.)*
+> - **35 % is still above the 25 % that CR-12 allows for sustained running** (30 % puts the
+>   junction at 123–133 °C, against 145 °C). U9 cannot help either: it clamps pulse *width*,
+>   and a high phase at 104 kHz is microseconds, nowhere near the clamp.
 >
-> **U9 will not save you.** Its one-shot clamps pulse *width* (~86 µs); a 50 % high phase
-> at 104 kHz is 4.8 µs, nowhere near the clamp. Nothing in hardware or firmware stops this.
->
-> Step 2d below happens to be safe because it opens with `beam duty 30`. Any other path out
-> of 2c is not. The permanent fix is to move the ceiling into `beam_configure()` — see
-> `PROGRESS.md` §9.
+> So type `beam duty 2` first, then change the frequency (corrected 2026-11-10).
 
 - .md claims **113 µs**
 - 0.7 · R68 · C57 = 0.7 · 56 kΩ · 2.2 nF = **~86 µs**

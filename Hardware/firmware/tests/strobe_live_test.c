@@ -36,6 +36,14 @@ _Static_assert(STROBE_CAL_FINE_STEP < STROBE_CAL_COARSE_STEP, "fine step not fin
 // ceiling -- still fits the point table.
 _Static_assert(1u + STROBE_LIVE_GATE_CEILING / STROBE_CAL_FINE_STEP + 1u <= STROBE_CAL_MAX_POINTS,
                "cal point table too small");
+// The session cap's slope is a bound: at least one TP3 level (3.3 V x 3 / 1024)
+// over the 0.135 R sense, the steepest the reported current can rise.
+_Static_assert(STROBE_SESSION_CAP_A_PER_LEVEL >= 3.3f * 3.0f / 1024.0f / STROBE_SENSE_V_PER_A,
+               "session cap slope below the physical bound");
+// The highest cal target's abort sits at the stop, so a SOLVED cal's last point
+// is under it and the cap has room to exist.
+_Static_assert(STROBE_TARGET_CURRENT_A * STROBE_CAL_ABORT_RATIO <= STROBE_LIVE_I_STOP_A + 1e-4f,
+               "cal can solve above the stop");
 
 // One ADC code is 6.0 mA through the 0.135 R sense.
 #define AMP_TOL 0.01f
@@ -81,8 +89,11 @@ static bool single_pulse(void) {
     CHECK(!m.pulse[0].short_run);
     CHECK(fabsf(m.charge_mc - 0.18f) < 0.001f);   // 9 A x 20 us
     CHECK(!m.on_at_end);
-    // The threshold sits half-way up the pulse.
-    CHECK(m.threshold_code > 3u + 700u && m.threshold_code < 3u + 800u);
+    // The threshold is the absolute floor, not half-way up the pulse (2026-10-15).
+    CHECK(m.threshold_code == 3u + STROBE_LIVE_DETECT_MIN_CODES);
+    CHECK(fabsf(m.pulse[0].settled_a - 9.0f) < AMP_TOL);
+    CHECK(fabsf(m.pulse[0].held_a - 9.0f) < AMP_TOL && fabsf(m.max_held_a - 9.0f) < AMP_TOL);
+    CHECK(m.shape == STROBE_SHAPE_CLEAN);
     return true;
 }
 
@@ -164,8 +175,12 @@ static bool dips_merge(void) {
     put_pulse(100, 30, 9.0f, 3);
     buf[115] = 3; buf[116] = 3;
     strobe_live_measure(buf, 300, 80, 1u, &m);
-    CHECK(m.verdict == STROBE_VERDICT_OK && m.n_pulses == 1u);
+    CHECK(m.n_pulses == 1u);
     CHECK(m.pulse[0].width_us == 60u);
+    // ... but not a clean one (2026-10-15): 4 us at zero inside 9 A is a dip,
+    // not noise, and it ends live mode.
+    CHECK(m.verdict == STROBE_VERDICT_SHAPE && m.shape == STROBE_SHAPE_DIP);
+    CHECK(m.shape_at_us == 230u && m.shape_pulse == 0u);
     // ... a 3-sample one is two -- which, for one fired pulse, is not a clean firing.
     buf[117] = 3;
     strobe_live_measure(buf, 300, 80, 1u, &m);
@@ -342,8 +357,10 @@ static bool no_data(void) {
 }
 
 static bool verdict_texts(void) {
-    for (int v = STROBE_VERDICT_OK; v <= STROBE_VERDICT_NOISY; v++)
+    for (int v = STROBE_VERDICT_OK; v <= STROBE_VERDICT_SHAPE; v++)
         CHECK(strcmp(strobe_verdict_text((strobe_verdict_t)v), "?") != 0);
+    for (int s = STROBE_SHAPE_CLEAN; s <= STROBE_SHAPE_DIP; s++)
+        CHECK(strcmp(strobe_shape_text((strobe_shape_t)s), "?") != 0);
     return true;
 }
 
@@ -673,6 +690,475 @@ _Static_assert(STROBE_LIVE_RING_READY_SAMPLES * STROBE_LIVE_SAMPLE_US >= STROBE_
                "the ring wait does not cover the baseline window");
 _Static_assert(STROBE_LIVE_RING_TIMEOUT_US > STROBE_LIVE_PRE_US, "ring timeout shorter than PRE");
 
+// --- 2026-10-13: the half-peak threshold hid current -------------------------
+//
+// Until 2026-10-15 a pulse was a run above max(12 codes, half the record's
+// peak). Board 1, before its gate-drive rework, overshot at turn-on. At gate
+// 21 % the threshold sat over most of the ~0.1 A pulse: firings printed "no
+// current" or "0.240 A plateau, peak 0.317 A, on 4 us (2 samples), short". At
+// 24 % a 3.3 A spike put it at 266 codes, and the 0.72 A, 20 us pulse under it
+// printed "no current" -- which the staircase counted as a pass. The same rule
+// would have hidden a stuck-on current under any larger spike.
+
+// What the old rule made of a record: its threshold, and how many samples
+// cleared it. Kept here only to show each replay reproduces the bench.
+static float old_threshold(const strobe_live_meas_t *m) {
+    float rel = 0.5f * ((float)m->peak_code - m->baseline_code);
+    if (rel < (float)STROBE_LIVE_DETECT_MIN_CODES) rel = (float)STROBE_LIVE_DETECT_MIN_CODES;
+    return m->baseline_code + rel;
+}
+
+static size_t count_above(const uint16_t *s, size_t n, float thr) {
+    size_t c = 0;
+    for (size_t i = 0; i < n; i++) if ((float)s[i] > thr) c++;
+    return c;
+}
+
+// `strobe wave` of a gate-21 % firing that day (gate level 215), as printed:
+// 220 samples, the first 76 the baseline; the pulse at +164 us.
+static const uint16_t k_wave_g21[220] = {
+    11, 11, 11, 11, 11, 11, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 10, 10,
+    11, 11, 10, 11, 11, 10, 11, 11, 10, 10, 11, 10, 11, 11, 11, 11, 11, 11, 10, 11,
+    11, 11, 11, 11, 11, 11, 10, 11, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
+    11, 10, 11, 11, 11, 11, 11, 11, 10, 11, 11, 12, 11, 11, 11, 11, 11, 11, 11, 11,
+    11, 10, 64, 38, 25, 19, 24, 29, 28, 28, 29, 28, 11, 11, 11, 11, 11, 11, 11, 11,
+    11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 10, 10, 11, 11, 10, 11, 10, 11, 11,
+    11, 10, 11, 11, 11, 11, 12, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
+    11, 10, 11, 11, 11, 11, 11, 11, 10, 11, 11, 10, 11, 10, 11, 10, 11, 11, 11, 11,
+    11, 11, 11, 11, 10, 10, 11, 11, 11, 11, 11, 10, 11, 11, 11, 10, 11, 11, 11, 11,
+    11, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
+    11, 11, 11, 11, 10, 11, 11, 11, 11, 11, 11, 11, 11, 11, 12, 11, 11, 11, 10, 11,
+};
+
+static bool replay_2026_10_13_g21(void) {
+    strobe_live_meas_t m;
+    strobe_live_measure(k_wave_g21, 220u, 76u, 1u, &m);
+    // Then: the old threshold, 37 codes, cleared by 2 samples -- a 4 us "short" pulse.
+    CHECK((uint16_t)old_threshold(&m) == 37u);
+    CHECK(count_above(k_wave_g21, 220u, old_threshold(&m)) == 2u);
+    // Now: the whole 20 us pulse above the 22-code floor...
+    CHECK(m.threshold_code == 22u);
+    CHECK(m.detected && m.n_pulses == 1u);
+    CHECK(m.pulse[0].samples == 10u && m.pulse[0].width_us == 20u && m.pulse[0].start_us == 164u);
+    CHECK(fabsf(m.pulse[0].settled_a - 0.1024f) < 0.002f);   // median 28 codes
+    CHECK(fabsf(m.pulse[0].amps - 0.0994f) < 0.002f);        // mean, edges dropped
+    CHECK(fabsf(m.pulse[0].peak_a - 0.3173f) < 0.002f);      // 64 codes
+    // ...and its 3.1x turn-on overshoot is a finding, not a pass.
+    CHECK(m.shape == STROBE_SHAPE_OVERSHOOT && m.shape_pulse == 0u && m.shape_at_us == 164u);
+    CHECK(fabsf(m.shape_limit_a - 0.2713f) < 0.002f);        // 17.2 x 1.25 + 24 codes
+    CHECK(m.verdict == STROBE_VERDICT_SHAPE);
+    return true;
+}
+
+// Gate 24 %, the same day. No `strobe wave` was kept, so this is a
+// RECONSTRUCTION: the printed threshold (266 codes on a ~10.7-code baseline)
+// puts the highest sample at ~523 codes (3.06 A); the scope showed 3.3 A for
+// ~2.5 us, a sag to ~0.34 A, then 0.72 A; the timing is the 21 % record's.
+static void fill_2026_10_13_g24(void) {
+    for (size_t i = 0; i < 220u; i++) buf[i] = (uint16_t)((i % 10u) < 7u ? 11u : 10u);
+    static const uint16_t pulse[10] = { 523u, 211u, 67u, 67u, 71u, 131u, 131u, 131u, 131u, 131u };
+    for (size_t k = 0; k < 10u; k++) buf[82u + k] = pulse[k];
+}
+
+static bool replay_2026_10_13_g24(void) {
+    strobe_live_meas_t m;
+    fill_2026_10_13_g24();
+    strobe_live_measure(buf, 220u, 76u, 1u, &m);
+    // Then: threshold 266, one sample over it -- no run, "no current".
+    CHECK((uint16_t)old_threshold(&m) == 266u);
+    CHECK(count_above(buf, 220u, old_threshold(&m)) == 1u);
+    // Now: the pulse is found, settled at ~0.72 A whatever the spike did to the
+    // mean, and the spike ends live mode.
+    CHECK(m.detected && m.n_pulses == 1u && m.pulse[0].width_us == 20u);
+    CHECK(fabsf(m.pulse[0].settled_a - 0.718f) < 0.005f);
+    CHECK(m.pulse[0].amps < m.pulse[0].settled_a);           // the sag pulls the mean down
+    CHECK(m.shape == STROBE_SHAPE_OVERSHOOT && m.shape_at_us == 164u);
+    CHECK(fabsf(m.shape_a - 3.058f) < 0.01f);
+    CHECK(fabsf(m.shape_limit_a - 1.041f) < 0.01f);
+    CHECK(m.verdict == STROBE_VERDICT_SHAPE);
+    return true;
+}
+
+// The safety half of the finding: a current that persists below half of a
+// larger spike was invisible to every stuck-on check.
+static bool stuck_under_spike(void) {
+    strobe_live_meas_t m;
+    // A 9 A turn-on spike, then 0.5 A that never stops.
+    fill(400, 3);
+    put_pulse(100, 2, 9.0f, 3);
+    put_pulse(102, 298, 0.5f, 3);
+    strobe_live_measure(buf, 400, 80, 1u, &m);
+    CHECK(count_above(buf, 400u, old_threshold(&m)) == 2u);  // all the old rule saw
+    CHECK(m.on_at_end);
+    CHECK(m.verdict == STROBE_VERDICT_STUCK_ON);
+    // The same current stopping after 250 us in all: longer than U5 allows.
+    fill(400, 3);
+    put_pulse(100, 2, 9.0f, 3);
+    put_pulse(102, 123, 0.5f, 3);
+    strobe_live_measure(buf, 400, 80, 1u, &m);
+    CHECK(!m.on_at_end && m.max_width_us == 250u);
+    CHECK(m.verdict == STROBE_VERDICT_STUCK_ON);
+    // Current in the baseline window, under a later 12 A spike (under I_PEAK_STOP).
+    fill(400, 3);
+    put_pulse(70, 4, 0.5f, 3);
+    put_pulse(100, 1, 12.0f, 3);
+    put_pulse(101, 9, 0.5f, 3);
+    strobe_live_measure(buf, 400, 80, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_STUCK_ON);
+    return true;
+}
+
+// I_STOP is checked on the level held for two samples in a row as well as the
+// plateau: a pulse that creeps up as Q9 heats can cross it with its mean under.
+static bool held_overcurrent(void) {
+    strobe_live_meas_t m;
+    fill(300, 3);
+    for (size_t k = 0; k < 20u; k++) buf[100u + k] = code_for(9.5f + 0.1f * (float)k, 3);  // to 11.4 A
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.max_amps < STROBE_LIVE_I_STOP_A);
+    CHECK(m.max_held_a > STROBE_LIVE_I_STOP_A && m.max_peak_a < STROBE_LIVE_I_PEAK_STOP_A);
+    CHECK(m.shape == STROBE_SHAPE_CLEAN);                    // a 20 % creep is not a spike
+    CHECK(m.verdict == STROBE_VERDICT_OVERCURRENT);
+    // One sample at 12 A on 9 A is not held, so no fault -- but it is a spike.
+    fill(300, 3);
+    put_pulse(100, 10, 9.0f, 3);
+    buf[104] = code_for(12.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.max_held_a < STROBE_LIVE_I_STOP_A && m.max_peak_a < STROBE_LIVE_I_PEAK_STOP_A);
+    CHECK(m.verdict == STROBE_VERDICT_SHAPE && m.shape == STROBE_SHAPE_OVERSHOOT);
+    // Two in a row over I_STOP: held, so OVERCURRENT, which outranks SHAPE.
+    buf[105] = code_for(11.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_OVERCURRENT);
+    // Held at either end of the run counts too -- the first pair and the last,
+    // edge samples included (11 A is inside the shape bound on a 9 A plateau).
+    // The held LEVEL is checked, not only the verdict: since two of three
+    // (policy_two_of_three) any two in a row also fault through that rule.
+    fill(300, 3);
+    put_pulse(100, 10, 9.0f, 3);
+    buf[108] = code_for(11.0f, 3);
+    buf[109] = code_for(11.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(fabsf(m.max_held_a - 11.0f) < AMP_TOL && fabsf(m.pulse[0].held_a - 11.0f) < AMP_TOL);
+    CHECK(m.shape == STROBE_SHAPE_CLEAN && m.verdict == STROBE_VERDICT_OVERCURRENT);
+    fill(300, 3);
+    put_pulse(100, 10, 9.0f, 3);
+    buf[100] = code_for(11.0f, 3);
+    buf[101] = code_for(11.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(fabsf(m.max_held_a - 11.0f) < AMP_TOL && fabsf(m.pulse[0].held_a - 11.0f) < AMP_TOL);
+    CHECK(m.shape == STROBE_SHAPE_CLEAN && m.verdict == STROBE_VERDICT_OVERCURRENT);
+    return true;
+}
+
+// The shape bounds exactly: settled x 1.25 + 24 codes above, settled x 0.75 -
+// 24 codes below, both strict; the lower bound skips the two edge samples, the
+// upper does not. Baseline 0 and a 400-code (2.39 A) plateau: bounds 524 and 276.
+static bool shape_bounds(void) {
+    strobe_live_meas_t m;
+    fill(300, 0);
+    for (size_t k = 100; k < 120; k++) buf[k] = 400;
+    buf[105] = 524;                        // on the upper bound: clean
+    buf[110] = 276;                        // on the lower bound: clean
+    buf[100] = 100;                        // a slow first sample...
+    buf[119] = 30;                         // ...and last: edges may be low
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.shape == STROBE_SHAPE_CLEAN && m.verdict == STROBE_VERDICT_OK);
+    CHECK(fabsf(m.pulse[0].settled_a - strobe_code_to_amps(400.0f)) < 1e-4f);
+    buf[105] = 525;                        // one code over
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_SHAPE && m.shape == STROBE_SHAPE_OVERSHOOT);
+    CHECK(m.shape_at_us == 210u);
+    CHECK(fabsf(m.shape_limit_a - strobe_code_to_amps(524.0f)) < 1e-4f);
+    buf[105] = 524;
+    buf[110] = 275;                        // one code under
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_SHAPE && m.shape == STROBE_SHAPE_DIP);
+    CHECK(m.shape_at_us == 220u);
+    CHECK(fabsf(m.shape_limit_a - strobe_code_to_amps(276.0f)) < 1e-4f);
+    buf[110] = 276;
+    // An edge sample is not exempt from the upper bound: a turn-on spike is one.
+    buf[100] = 525;
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.shape == STROBE_SHAPE_OVERSHOOT && m.shape_at_us == 200u);
+    buf[100] = 100;
+    // The first violation in time is the one reported: here a dip before a spike.
+    buf[103] = 200;
+    buf[112] = 600;
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.shape == STROBE_SHAPE_DIP && m.shape_at_us == 206u);
+    // The median, not the mean, sets the level: a spike over 3 of 10 samples
+    // leaves the bounds where the plateau is.
+    fill(300, 0);
+    for (size_t k = 100; k < 110; k++) buf[k] = 400;
+    buf[101] = 1200; buf[102] = 1200; buf[103] = 1200;
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(fabsf(m.pulse[0].settled_a - strobe_code_to_amps(400.0f)) < 1e-4f);
+    CHECK(m.shape == STROBE_SHAPE_OVERSHOOT && m.shape_at_us == 202u);
+    // Near the floor the margin keeps noise from tripping it: a 20-code (0.12 A)
+    // pulse with a one-sample dip to the baseline and a sample at 44 is clean.
+    fill(300, 0);
+    for (size_t k = 100; k < 110; k++) buf[k] = 20;
+    buf[104] = 0;
+    buf[106] = 44;
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.n_pulses == 1u && m.shape == STROBE_SHAPE_CLEAN && m.verdict == STROBE_VERDICT_OK);
+    // A short run (< 4 samples) has no interior to settle on and is not judged.
+    fill(300, 0);
+    buf[100] = 40; buf[101] = 900; buf[102] = 40;
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.n_pulses == 1u && m.pulse[0].short_run && m.verdict == STROBE_VERDICT_OK);
+    return true;
+}
+
+// What board 1 read after the rework (2026-10-15): flat pulses of 0.100 A over
+// 10 samples at 21 %, 0.682-0.690 A over 10 and 25 at 24 %, and the 6d clamp
+// test's 67 samples creeping ~3 % as Q9 warms. Records shaped like those, with
+// +-1 code of noise, must stay clean, whole and right.
+static void put_ramp(size_t start, size_t samples, float a0, float a1, float base) {
+    for (size_t k = 0; k < samples; k++) {
+        float a = a0 + (a1 - a0) * (float)k / (float)(samples - 1u);
+        int noise = (int)((k * 7u) % 3u) - 1;              // -1, 0, +1
+        buf[start + k] = (uint16_t)lroundf(base + strobe_amps_to_code(a) + (float)noise);
+    }
+}
+
+static bool clean_pulses_2026_10_15(void) {
+    static const struct { float a0, a1; size_t samples; } cases[] = {
+        { 0.100f, 0.100f, 10u }, { 0.682f, 0.684f, 10u }, { 0.689f, 0.690f, 25u },
+        { 0.680f, 0.700f, 67u },
+    };
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        strobe_live_meas_t m;
+        for (size_t i = 0; i < 400u; i++) buf[i] = (uint16_t)(i % 3u == 0u ? 11u : 10u);
+        put_ramp(82u, cases[c].samples, cases[c].a0, cases[c].a1, 10.33f);
+        strobe_live_measure(buf, 400u, 76u, 1u, &m);
+        CHECK(m.verdict == STROBE_VERDICT_OK && m.shape == STROBE_SHAPE_CLEAN);
+        CHECK(m.n_pulses == 1u && m.pulse[0].samples == cases[c].samples);
+        CHECK(m.pulse[0].start_us == 164u);
+        float mid = 0.5f * (cases[c].a0 + cases[c].a1);
+        CHECK(fabsf(m.pulse[0].amps - mid) < 0.01f);
+        CHECK(fabsf(m.pulse[0].settled_a - mid) < 0.01f);
+    }
+    return true;
+}
+
+// A lone sample over the floor is still not a pulse -- but it is reported, so
+// "no current" is never printed over a sample nobody explained.
+static bool lone_sample_reported(void) {
+    strobe_live_meas_t m;
+    fill(300, 10);
+    buf[150] = 60;
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.verdict == STROBE_VERDICT_OK && !m.detected);
+    CHECK(m.peak_code == 60u && m.peak_us == 300u);
+    CHECK((float)m.peak_code > m.baseline_code + (float)STROBE_LIVE_DETECT_MIN_CODES);
+    CHECK(fabsf(m.max_peak_a - strobe_code_to_amps(50.0f)) < 1e-4f);
+    return true;
+}
+
+// The floor does not move with the record: the same 12 codes at 0.1 A and 9 A.
+static bool floor_is_absolute(void) {
+    strobe_live_meas_t m;
+    static const float amps[3] = { 0.1f, 0.7f, 9.0f };
+    for (size_t k = 0; k < 3u; k++) {
+        fill(300, 10);
+        put_pulse(100, 10, amps[k], 10);
+        strobe_live_measure(buf, 300, 80, 1u, &m);
+        CHECK(m.threshold_code == 10u + STROBE_LIVE_DETECT_MIN_CODES);
+        CHECK(m.verdict == STROBE_VERDICT_OK && m.pulse[0].samples == 10u);
+    }
+    return true;
+}
+
+// A small current between burst pulses -- Q10 not fully off, or a retrigger --
+// is a run of its own now. Under half of a 9 A peak it was invisible.
+static bool residual_between_pulses(void) {
+    strobe_live_meas_t m;
+    fill(600, 3);
+    put_pulse(100, 10, 9.0f, 3);
+    put_pulse(150, 3, 0.2f, 3);
+    put_pulse(200, 10, 9.0f, 3);
+    strobe_live_measure(buf, 600, 80, 2u, &m);
+    CHECK(m.n_pulses == 3u);
+    CHECK(m.verdict == STROBE_VERDICT_NOISY);
+    return true;
+}
+
+// 2026-10-15: the clamp width was taken over STORED runs only. Sixteen pulses
+// fired and a 17th conduction 300 us long -- a U5 that stopped clamping -- read
+// as NOISY, with no STROBE_CLAMP.
+static bool long_run_beyond_stored(void) {
+    strobe_live_meas_t m;
+    fill(3000, 3);
+    for (size_t k = 0; k < STROBE_BURST_MAX_PULSES; k++) put_pulse(100u + k * 80u, 4u, 1.0f, 3);
+    put_pulse(100u + STROBE_BURST_MAX_PULSES * 80u, 150u, 1.0f, 3);
+    strobe_live_measure(buf, 3000, 80, STROBE_BURST_MAX_PULSES, &m);
+    CHECK(m.n_pulses == STROBE_BURST_MAX_PULSES + 1u);
+    CHECK(m.max_width_us == 300u);
+    CHECK(m.verdict == STROBE_VERDICT_STUCK_ON);
+    // Likewise the held level: a 17th run at 11.5 A (over I_STOP, under
+    // I_PEAK_STOP) is OVERCURRENT, not merely NOISY.
+    fill(3000, 3);
+    for (size_t k = 0; k < STROBE_BURST_MAX_PULSES; k++) put_pulse(100u + k * 80u, 4u, 1.0f, 3);
+    put_pulse(100u + STROBE_BURST_MAX_PULSES * 80u, 10u, 11.5f, 3);
+    strobe_live_measure(buf, 3000, 80, STROBE_BURST_MAX_PULSES, &m);
+    CHECK(m.max_held_a > STROBE_LIVE_I_STOP_A && m.max_peak_a < STROBE_LIVE_I_PEAK_STOP_A);
+    CHECK(m.verdict == STROBE_VERDICT_OVERCURRENT);
+    // And the plateau (independent review 2026-10-15): a 17th run alternating
+    // 10.5 / 11.7 A has a mean of 11.1 A but no two samples in a row over
+    // 10.8 A and none over 13 A. Stored, it was OVERCURRENT; as run 17 it read
+    // as NOISY, because its mean was never computed.
+    fill(3000, 3);
+    for (size_t k = 0; k < STROBE_BURST_MAX_PULSES; k++) put_pulse(100u + k * 80u, 4u, 1.0f, 3);
+    for (size_t k = 0; k < 10u; k++)
+        buf[100u + STROBE_BURST_MAX_PULSES * 80u + k] = code_for((k & 1u) ? 11.7f : 10.5f, 3);
+    strobe_live_measure(buf, 3000, 80, STROBE_BURST_MAX_PULSES, &m);
+    CHECK(m.max_held_a < STROBE_LIVE_I_STOP_A && m.max_peak_a < STROBE_LIVE_I_PEAK_STOP_A);
+    CHECK(m.max_amps > STROBE_LIVE_I_STOP_A);
+    CHECK(m.verdict == STROBE_VERDICT_OVERCURRENT);
+    // ...the same run as pulse 1, for comparison.
+    fill(3000, 3);
+    for (size_t k = 0; k < 10u; k++) buf[100u + k] = code_for((k & 1u) ? 11.7f : 10.5f, 3);
+    strobe_live_measure(buf, 3000, 80, 1u, &m);
+    CHECK(fabsf(m.max_amps - 11.1f) < 0.01f);
+    CHECK(m.verdict == STROBE_VERDICT_OVERCURRENT);
+    // And two of three: a 17th run alternating 9 / 12 A, which only that rule
+    // catches (mean 10.5 A, held 9 A), is OVERCURRENT, not NOISY.
+    fill(3000, 3);
+    for (size_t k = 0; k < STROBE_BURST_MAX_PULSES; k++) put_pulse(100u + k * 80u, 4u, 1.0f, 3);
+    for (size_t k = 0; k < 10u; k++)
+        buf[100u + STROBE_BURST_MAX_PULSES * 80u + k] = code_for((k & 1u) ? 12.0f : 9.0f, 3);
+    strobe_live_measure(buf, 3000, 80, STROBE_BURST_MAX_PULSES, &m);
+    CHECK(m.max_amps < STROBE_LIVE_I_STOP_A && m.max_held_a < STROBE_LIVE_I_STOP_A);
+    CHECK(m.over_2of3);
+    CHECK(m.verdict == STROBE_VERDICT_OVERCURRENT);
+    return true;
+}
+
+// Two of any three consecutive samples over I_STOP is OVERCURRENT (2026-10-15,
+// the owner's decision on independent review's recommendation; board.h, "Stop
+// current"). It is checked over the whole window, so it depends on neither the
+// runs nor their storage.
+static bool policy_two_of_three(void) {
+    strobe_live_meas_t m;
+    // Alternating 9 / 12 A: mean 10.5 A, no two in a row over 10.8 A, every
+    // sample under 13 A, ripple inside the shape bounds -- it passed every
+    // other rule, and this one is the only one that catches it.
+    fill(300, 3);
+    for (size_t k = 0; k < 10u; k++) buf[100u + k] = code_for((k & 1u) ? 12.0f : 9.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(fabsf(m.max_amps - 10.5f) < 0.01f && m.max_held_a < STROBE_LIVE_I_STOP_A);
+    CHECK(m.max_peak_a < STROBE_LIVE_I_PEAK_STOP_A && m.shape == STROBE_SHAPE_CLEAN);
+    CHECK(m.over_2of3 && m.over_2of3_us == 202u);         // samples 101 and 103
+    CHECK(m.verdict == STROBE_VERDICT_OVERCURRENT);
+    // Isolated over-limit samples are not two of three: 12 A at +204 and +210 us,
+    // three positions apart, on 9 A is a spike (SHAPE), not a fault ...
+    fill(300, 3);
+    put_pulse(100, 10, 9.0f, 3);
+    buf[102] = code_for(12.0f, 3);
+    buf[105] = code_for(12.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(!m.over_2of3 && m.max_held_a < STROBE_LIVE_I_STOP_A);
+    CHECK(m.verdict == STROBE_VERDICT_SHAPE);
+    // ... two positions apart they are, and OVERCURRENT outranks the SHAPE.
+    buf[105] = code_for(9.0f, 3);
+    buf[104] = code_for(12.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.over_2of3 && m.over_2of3_us == 204u && m.shape == STROBE_SHAPE_OVERSHOOT);
+    CHECK(m.verdict == STROBE_VERDICT_OVERCURRENT);
+    // A run's edge samples count: its first and third, and its third-to-last and
+    // last, at 11 A on 9 A (inside the shape bound, never two in a row).
+    fill(300, 3);
+    put_pulse(100, 10, 9.0f, 3);
+    buf[100] = code_for(11.0f, 3);
+    buf[102] = code_for(11.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.max_held_a < STROBE_LIVE_I_STOP_A && m.shape == STROBE_SHAPE_CLEAN);
+    CHECK(m.over_2of3 && m.verdict == STROBE_VERDICT_OVERCURRENT);
+    fill(300, 3);
+    put_pulse(100, 10, 9.0f, 3);
+    buf[107] = code_for(11.0f, 3);
+    buf[109] = code_for(11.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.max_held_a < STROBE_LIVE_I_STOP_A && m.shape == STROBE_SHAPE_CLEAN);
+    CHECK(m.over_2of3 && m.over_2of3_us == 214u && m.verdict == STROBE_VERDICT_OVERCURRENT);
+    // The record's own edges: its first three samples and its last three. (Both
+    // are current outside the pulse too, and STUCK_ON outranks OVERCURRENT.) At
+    // the start they are in the baseline window and lift it to ~53 codes, so
+    // 12 A, which still reads 11.7 A above that.
+    fill(300, 3);
+    buf[0] = code_for(12.0f, 3);
+    buf[2] = code_for(12.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.over_2of3 && m.over_2of3_us == 0u && m.verdict == STROBE_VERDICT_STUCK_ON);
+    fill(300, 3);
+    buf[297] = code_for(11.0f, 3);
+    buf[299] = code_for(11.0f, 3);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.over_2of3 && m.over_2of3_us == 594u && m.verdict == STROBE_VERDICT_STUCK_ON);
+    // The exact boundary, on a zero baseline: 10.8 A is 1809.25 codes, so 1810
+    // (10.804 A) is over and 1809 (10.799 A) is not. Alternating with 1500 codes
+    // (8.95 A).
+    CHECK(strobe_code_to_amps(1810.0f) > STROBE_LIVE_I_STOP_A);
+    CHECK(strobe_code_to_amps(1809.0f) < STROBE_LIVE_I_STOP_A);
+    fill(300, 0);
+    for (size_t k = 0; k < 10u; k++) buf[100u + k] = (uint16_t)((k & 1u) ? 1810u : 1500u);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.over_2of3 && m.verdict == STROBE_VERDICT_OVERCURRENT);
+    for (size_t k = 0; k < 10u; k++) buf[100u + k] = (uint16_t)((k & 1u) ? 1809u : 1500u);
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(!m.over_2of3 && m.verdict == STROBE_VERDICT_OK);
+    return true;
+}
+
+// The dip bound only bites above ~0.19 A: below a settled level of 32 codes,
+// settled x 0.75 - 24 codes is under the baseline, so even a dip to zero is
+// inside it. (Independent review 2026-10-15: "a <= 4 us dip to zero now ends
+// live mode" was too broad.) A 0.1 A pulse with a 2-sample dip to zero is OK; a
+// 0.2 A one is a DIP.
+static bool policy_low_current_dip(void) {
+    strobe_live_meas_t m;
+    fill(300, 3);
+    put_pulse(100, 10, 0.1f, 3);
+    buf[104] = 3; buf[105] = 3;
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.n_pulses == 1u && m.pulse[0].samples == 10u);
+    CHECK(m.shape == STROBE_SHAPE_CLEAN && m.verdict == STROBE_VERDICT_OK);
+    fill(300, 3);
+    put_pulse(100, 10, 0.2f, 3);
+    buf[104] = 3; buf[105] = 3;
+    strobe_live_measure(buf, 300, 80, 1u, &m);
+    CHECK(m.n_pulses == 1u && m.shape == STROBE_SHAPE_DIP && m.shape_at_us == 208u);
+    CHECK(m.verdict == STROBE_VERDICT_SHAPE);
+    return true;
+}
+
+// In a burst the first violation in time is kept: pulse 1 dips, pulse 2 spikes.
+static bool shape_first_in_burst(void) {
+    strobe_live_meas_t m;
+    fill(600, 3);
+    put_pulse(100, 10, 5.0f, 3);
+    buf[105] = code_for(2.0f, 3);          // a dip in pulse 1, at 210 us
+    put_pulse(200, 10, 5.0f, 3);
+    buf[203] = code_for(8.0f, 3);          // a spike in pulse 2, at 406 us
+    strobe_live_measure(buf, 600, 80, 2u, &m);
+    CHECK(m.n_pulses == 2u && m.verdict == STROBE_VERDICT_SHAPE);
+    CHECK(m.shape == STROBE_SHAPE_DIP && m.shape_pulse == 0u && m.shape_at_us == 210u);
+    return true;
+}
+
+// The shape bound sits between the two overcurrent limits at the 9 A design
+// current, and the margin is wider than the floor it protects.
+_Static_assert(STROBE_LIVE_SHAPE_MARGIN_CODES > STROBE_LIVE_DETECT_MIN_CODES, "margin under the floor");
+static bool shape_bound_at_design_current(void) {
+    float settled = strobe_amps_to_code(STROBE_TARGET_CURRENT_A);
+    float bound = strobe_code_to_amps(settled * (1.0f + STROBE_LIVE_SHAPE_TOL)
+                                      + (float)STROBE_LIVE_SHAPE_MARGIN_CODES);
+    CHECK(bound > STROBE_LIVE_I_STOP_A && bound < STROBE_LIVE_I_PEAK_STOP_A);
+    return true;
+}
+
 // --- Pacing -----------------------------------------------------------------
 
 static bool budget_window(void) {
@@ -875,9 +1361,82 @@ static bool cal_ceiling(void) {
     return false;
 }
 
+// --- The session cap (2026-10-19, board.h) -----------------------------------
+
+static bool session_cap_math(void) {
+    // Board 1's 2026-10-16 cal: 435 -> 8.825 A, 440 -> 9.071 A, solved 439.
+    CHECK(strobe_session_cap(440u, 9.071f, 439u) == 463u);
+    // Floor, not round: (10.8 - 9.02) / 0.075 = 23.7 levels -> 23; 24.1 -> 24.
+    CHECK(strobe_session_cap(400u, 9.02f, 398u) == 423u);
+    CHECK(strobe_session_cap(400u, 8.99f, 398u) == 424u);
+    // Clamped to the ceiling; never below the solved level.
+    CHECK(strobe_session_cap(700u, 2.0f, 690u) == STROBE_LIVE_GATE_CEILING);
+    CHECK(strobe_session_cap(STROBE_LIVE_GATE_CEILING, 9.0f, STROBE_LIVE_GATE_CEILING)
+          == STROBE_LIVE_GATE_CEILING);
+    // Points that cannot anchor it give no headroom: the solved level.
+    CHECK(strobe_session_cap(440u, STROBE_LIVE_I_STOP_A, 439u) == 439u);
+    CHECK(strobe_session_cap(440u, 11.0f, 439u) == 439u);
+    CHECK(strobe_session_cap(440u, NAN, 439u) == 439u);
+    CHECK(strobe_session_cap(440u, -0.1f, 439u) == 439u);
+    CHECK(strobe_session_cap(430u, 9.0f, 439u) == 439u);       // l1 below solved
+    // A small reading still anchors: (10.8 - 0.05) / 0.075 = 143.3 levels.
+    CHECK(strobe_session_cap(100u, 0.05f, 95u) == 100u + 143u);
+    return true;
+}
+
+// The guarantee: on a plant whose current rises no faster than the bound, the
+// current AT the cap stays under the stop -- for every target `strobe cal`
+// accepts, including the low ones where the plant's own slope would mislead.
+// Board 1's measured curve (2026-10-13..16), then 0.0716 A per level above
+// 440 -- the physical maximum, steeper than board 1 really is.
+static float board1_amps(uint16_t level) {
+    static const struct { float l, a; } k[] = {
+        { 215.0f, 0.107f }, { 246.0f, 0.702f }, { 276.0f, 1.685f }, { 307.0f, 2.915f },
+        { 435.0f, 8.825f }, { 440.0f, 9.071f },
+    };
+    const float lv = (float)level;
+    if (lv <= k[0].l) return 0.0f;
+    for (size_t i = 1; i < sizeof(k) / sizeof(k[0]); i++)
+        if (lv <= k[i].l)
+            return k[i - 1].a + (k[i].a - k[i - 1].a) * (lv - k[i - 1].l) / (k[i].l - k[i - 1].l);
+    return k[5].a + (lv - k[5].l) * (3.3f * 3.0f / 1024.0f / STROBE_SENSE_V_PER_A);
+}
+
+static bool session_cap_bounds_current(void) {
+    for (float target = STROBE_CAL_MIN_A; target <= STROBE_TARGET_CURRENT_A + 1e-3f; target += 0.25f) {
+        uint16_t level = 0, prev_level = 0, cap = 0, solved = 0;
+        float prev_amps = 0.0f;
+        bool done = false;
+        for (uint32_t n = 0; n < STROBE_CAL_MAX_POINTS && !done; n++) {
+            float a = board1_amps(level);
+            bool det = strobe_amps_to_code(a) > (float)STROBE_LIVE_DETECT_MIN_CODES;
+            if (!det) a = 0.0f;
+            uint16_t nx = 0;
+            strobe_cal_step_t st = strobe_cal_next(level, a, det, target, &nx);
+            if (st == STROBE_CAL_SOLVED) {
+                solved = strobe_cal_solve(prev_level, prev_amps, level, a, target);
+                cap = strobe_session_cap(level, a, solved);
+                done = true;
+                break;
+            }
+            CHECK(st == STROBE_CAL_STEP);
+            prev_level = level;
+            prev_amps = a;
+            level = nx;
+        }
+        CHECK(done);
+        CHECK(cap >= solved);
+        CHECK(board1_amps(cap) <= STROBE_LIVE_I_STOP_A);
+        // ...and the operating point stays reachable above the solved level.
+        CHECK(cap > solved || board1_amps(solved) > STROBE_LIVE_I_STOP_A - 0.1f);
+    }
+    return true;
+}
+
 int main(int argc, char **argv) {
     static const struct { const char *name; bool (*run)(void); } cases[] = {
 #define TEST(name) {#name, name}
+        TEST(session_cap_math), TEST(session_cap_bounds_current),
         TEST(code_amps), TEST(single_pulse), TEST(plateau_excludes_edges),
         TEST(nothing_detected), TEST(lone_spikes_ignored), TEST(small_current_detected),
         TEST(burst_segmentation), TEST(dips_merge), TEST(extra_conduction), TEST(short_run_kept),
@@ -888,6 +1447,12 @@ int main(int argc, char **argv) {
         TEST(ring_copy_avail), TEST(baseline_by_index), TEST(baseline_checked),
         TEST(coverage), TEST(snapshot_latency_cancel), TEST(acquisition_stopped), TEST(short_gap_pulse), TEST(short_gap_stuck),
         TEST(short_baseline), TEST(replay_2026_10_12),
+        TEST(replay_2026_10_13_g21), TEST(replay_2026_10_13_g24), TEST(stuck_under_spike),
+        TEST(held_overcurrent), TEST(shape_bounds), TEST(clean_pulses_2026_10_15),
+        TEST(lone_sample_reported), TEST(floor_is_absolute), TEST(residual_between_pulses),
+        TEST(long_run_beyond_stored), TEST(shape_first_in_burst),
+        TEST(shape_bound_at_design_current), TEST(policy_two_of_three),
+        TEST(policy_low_current_dip),
         TEST(budget_window), TEST(budget_wrap), TEST(budget_full_table),
         TEST(budget_rejects_bad), TEST(budget_bookings), TEST(interval), TEST(idle_timeout),
         TEST(cal_next_steps), TEST(cal_steps_cannot_overshoot), TEST(cal_solve_interp),

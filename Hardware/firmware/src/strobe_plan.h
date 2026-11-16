@@ -40,6 +40,13 @@
 #define STROBE_PIO_MIN_WIDTH_US        (STROBE_PIO_WIDTH_OVERHEAD_US + 1u)
 #define STROBE_PIO_IRQ_AFTER_LAST_US   STROBE_PIO_GAP_OVERHEAD_US
 
+// A camera-gated burst (Phase 7) starts on strobe_gate.pio's `wait 1 irq 4`,
+// loaded immediately before the burst program. The 1 MHz state machine sees the
+// camera's FIRE at its next tick, then runs wait, pull, mov, jmp, set: the first
+// rising edge is 4 us after that tick, so 4-5 us after FIRE. Proven against the
+// assembled programs in tests/cam_pio_test.c (gate_then_burst); 7b measures it.
+#define STROBE_PIO_GATE_TO_EDGE_US     4u
+
 // A uniform burst: `count` pulses of `width_us`, rising edges `width + gap` apart.
 typedef struct {
     uint32_t width_us;
@@ -96,8 +103,10 @@ uint32_t strobe_burst_duration_us(const strobe_burst_t *b);
 //            burst charge exceeds BURST_CHARGE_MAX_MC, down to BURST_PULSES_MIN
 //
 // Width rounds DOWN so the blur budget is never exceeded; the period rounds to
-// nearest. The design's first-pulse delay is not computed: it needs the camera
-// latency t_cam and the beam-to-FOV geometry, which belong to Phase 7.
+// nearest. The design's first-pulse delay is not computed here. The camera
+// handshake (Phase 7, cam_plan.h) measures t_cam and fires at max(first delay,
+// t_cam) in PIO; the first delay itself needs the beam-to-FOV geometry, which
+// nothing computes yet (`cam shot` takes it typed).
 // ---------------------------------------------------------------------------
 typedef struct {
     float    speed_mps;
@@ -136,15 +145,56 @@ strobe_plan_err_t strobe_compute_schedule(float speed_mps, strobe_schedule_t *ou
 //
 // LIVE is entered only by `strobe live on confirm`, and only from gate 0. It
 // relaxes exactly one rule -- a pulse may fire with the gate non-zero -- and adds
-// guards of its own: the gate ceiling, the staircase rule (no raise more than
-// STROBE_LIVE_GATE_STEP_MAX above the highest level already fired and measured),
-// the watchdog armed, beam off, detector disarmed, the ADC free for the readback,
-// the firing interval and the rolling charge budget. See board.h for the numbers.
+// guards of its own: the gate ceiling, the session cap once `strobe cal` has
+// solved, the staircase rule (no raise more than STROBE_LIVE_GATE_STEP_MAX above
+// the highest level already fired and measured), the watchdog armed (unless a
+// Pi is powered: below), beam off, detector disarmed, the ADC free for the
+// readback, the firing interval and the rolling charge budget. See board.h for
+// the numbers.
+//
+// A PI ON J8 (image 1.8, owner 2026-11-12). Up to 1.7 every firing, dry or live,
+// was refused while a Pi was present. From 1.8 it is not: the Pi is the system
+// this strobe serves. What changes with a Pi powered is the watchdog. On this
+// board a watchdog reset opens the +5 V latch -- a hard power cut to the Pi --
+// and U5 (<= 137 us per pulse) and the PIO (every burst bounded) already stop a
+// hang from holding current on. So live mode does not arm it with a Pi powered
+// (strobe_live_arms_watchdog()), and a live session is bound to the Pi state it
+// was armed in: a Pi that appears or goes away ends it (STROBE_REFUSE_PI_CHANGED).
+// A session armed without a Pi therefore never runs on with one under live
+// mode's watchdog, and one armed with a Pi never runs on once the Pi is gone.
+//
+// WHICH "PI PRESENT" (image 1.9, review finding V18-F1). 1.8 took the power
+// FSM's power_pi_present(), and that flag is the wrong input here on its own:
+// it is debounced and conservative by design. In RUNNING it stays true after
+// the Pi's header 3V3 goes away, and in BENCH_RUNNING a late Pi's 3V3 is up for
+// PI_PRESENT_DEBOUNCE_MS before it turns true. So the snapshot carries
+// strobe_pi_t: the 3V3 sensed NOW and the FSM's classification together, and
+// UNSETTLED whenever they disagree. Live mode does not arm while UNSETTLED, and
+// an idle live session ends on it (STROBE_REFUSE_PI_UNSETTLED) at the next
+// service pass, without waiting for the FSM's debounce, handing back any
+// watchdog it armed. One exception: strobe_live_service() does nothing during a
+// firing (strobe.h), so a change inside an admitted, bounded firing and its
+// readback is acted on after it -- and the next gate change or pulse is
+// admitted on a fresh observation. A 3V3 lost in RUNNING stays UNSETTLED (the
+// FSM keeps its classification) until the sense recovers or an `off` and a new
+// power-up. The FSM's own power and shutdown behaviour is unchanged.
 // ---------------------------------------------------------------------------
+// A Pi on J8, as the strobe sees it (image 1.9; see "WHICH PI PRESENT" above).
+typedef enum {
+    STROBE_PI_ABSENT = 0,        // no 3V3 sensed, and the FSM classifies no Pi
+    STROBE_PI_POWERED,           // 3V3 sensed, and the FSM classifies a Pi present
+    STROBE_PI_UNSETTLED,         // the two disagree: a Pi powering up or down, or a fault
+} strobe_pi_t;
+
+// Combine the 3V3 sensed now (power_pi_3v3_sensed()) with the FSM's
+// classification (power_pi_present()). Disagreement is UNSETTLED, never a guess.
+strobe_pi_t strobe_pi_observe(bool sensed_3v3, bool fsm_present);
+const char *strobe_pi_text(strobe_pi_t p);
+
 typedef struct {
     bool rails_ready;            // power_rails_ready(): U8 and the gate amp run from VIR
     bool fault_latched;
-    bool pi_present;             // Phase 6 runs with no Pi on J8
+    strobe_pi_t pi;              // a Pi on J8, observed fresh (1.9; 1.8 had the FSM's flag alone)
     bool pulse_limit_defeated;   // GPIO27 not provably SIO, output, driven 0
     bool ready_led_on_pwm;       // A7 regression: GPIO12 back on slice 6A
     bool engine_busy;
@@ -156,7 +206,8 @@ typedef enum {
     STROBE_OK = 0,
     STROBE_REFUSE_RAIL,
     STROBE_REFUSE_FAULT,
-    STROBE_REFUSE_PI,
+    STROBE_REFUSE_PI_CHANGED,     // live: a Pi appeared or went away since live mode was
+                                  // armed (1.8; up to 1.7 this slot was "a Pi is present")
     STROBE_REFUSE_PULSE_LIMIT,
     STROBE_REFUSE_A7,
     STROBE_REFUSE_BUSY,
@@ -174,9 +225,14 @@ typedef enum {
     STROBE_REFUSE_INTERVAL,
     STROBE_REFUSE_BUDGET,
     STROBE_REFUSE_6D,             // clamptest without a measured 0.5-2.5 A at this level
+    STROBE_REFUSE_SESSION_CAP,    // over the cap from the last solved `strobe cal`
+    // Phase 7
+    STROBE_REFUSE_GATED_LIVE,     // a camera-gated burst with live mode armed: dry only
+    // Image 1.9 (V18-F1)
+    STROBE_REFUSE_PI_UNSETTLED,   // live: the Pi's 3V3 sensed now and the power FSM disagree
 } strobe_refusal_t;
 
-#define STROBE_REFUSE__LAST STROBE_REFUSE_6D
+#define STROBE_REFUSE__LAST STROBE_REFUSE_PI_UNSETTLED
 
 strobe_refusal_t strobe_may_fire(const strobe_snapshot_t *s);
 strobe_refusal_t strobe_may_set_gate(const strobe_snapshot_t *s, uint16_t level);
@@ -186,35 +242,53 @@ const char *strobe_refusal_text(strobe_refusal_t r);
 typedef struct {
     bool     live;             // armed by `strobe live on confirm`
     bool     watchdog_armed;
+    bool     pi_at_arm;        // a Pi was present when live mode was armed (1.8)
     bool     beam_on;
     bool     detect_armed;
     bool     adc_idle;         // ADC engine in IDLE with the ring running
     bool     gate_hw_match;    // GPIO28 on PWM, compare == commanded level
     uint16_t gate_level;       // commanded
     uint16_t gate_proven;      // highest level fired and measured within limits
+    uint16_t session_cap;      // from the last solved `strobe cal` (board.h); 0 = none
     bool     interval_ok;      // >= STROBE_LIVE_MIN_INTERVAL_MS since the last firing
     bool     budget_ok;        // this firing fits the rolling charge budget
 } strobe_live_t;
 
-// Highest level the gate may be raised to right now: the ceiling, or the
-// staircase limit above the proven level, whichever is lower.
+// The ceiling, or the staircase limit above the proven level, whichever is lower.
 uint16_t strobe_live_gate_limit(uint16_t proven);
 
-// Arming: every common check, the gate PROVABLY ZERO (including the decay
-// window), beam off, detector disarmed, ADC idle. `live` is ignored.
+// Highest level the gate may be raised to right now: strobe_live_gate_limit(),
+// and under the session cap when there is one.
+uint16_t strobe_live_raise_limit(uint16_t proven, uint16_t session_cap);
+
+// Arming: every common check, the Pi observation settled (not UNSETTLED; 1.9),
+// the gate PROVABLY ZERO (including the decay window), beam off, detector
+// disarmed, ADC idle. `live` is ignored.
 strobe_refusal_t strobe_live_may_arm(const strobe_snapshot_t *s, const strobe_live_t *l);
 
-// Raising the gate while live. Level 0 is always admitted.
+// Raising the gate while live. Level 0 is always admitted. Checked in this order:
+// the ceiling, the session cap, the staircase -- so a refusal names the bound
+// that is actually in the way.
 strobe_refusal_t strobe_live_may_set_gate(const strobe_snapshot_t *s, const strobe_live_t *l,
                                           uint16_t level);
 
 // Firing while live: everything above plus the hardware gate matching the
-// command, the gate within the staircase limit, the interval and the budget.
+// command, the gate within the ceiling, the session cap and the staircase limit,
+// the interval and the budget.
 strobe_refusal_t strobe_live_may_fire(const strobe_snapshot_t *s, const strobe_live_t *l);
 
 // What must STAY true while live mode is armed and idle. Any refusal from this
 // drops live mode. Excludes busy and the interval/budget, which only gate firing.
 strobe_refusal_t strobe_live_may_continue(const strobe_snapshot_t *s, const strobe_live_t *l);
+
+// The watchdog with a Pi (image 1.8, owner 2026-11-12; see "A PI ON J8" above).
+// Does `strobe live on confirm` arm it? Only with the Pi observed ABSENT -- never
+// POWERED or UNSETTLED -- and only if it is not already armed (then it stays the
+// operator's).
+bool strobe_live_arms_watchdog(strobe_pi_t pi, bool already_armed);
+// Does a live session need it? Only one armed without a Pi. `wdog off` is refused
+// exactly when this is true.
+bool strobe_live_needs_watchdog(bool live, bool pi_at_arm);
 
 // Is Q9's gate still decaying after the DAC was zeroed?
 //
@@ -224,8 +298,13 @@ strobe_refusal_t strobe_live_may_continue(const strobe_snapshot_t *s, const stro
 // effect at the next PWM wrap. Found in review 2026-10-02: `strobe off` followed
 // immediately by `strobe pulse` passed admission on digital state alone.
 //
-// So the gate counts as non-zero until DAC_SETTLE_MS (20 ms, 7.6 tau: 9.9 V decays
-// to ~5 mV) after the last non-zero -> zero transition. zeroed_us == 0 means "never
+// So the gate counts as non-zero until DAC_SETTLE_MS (20 ms) after the last
+// non-zero -> zero transition. That is 7.6 tau of the DAC filter: TP3 itself is
+// down to ~5 mV from 9.9 V. Q9's gate is slower on a board with the 1 uF gate
+// hold capacitor (board 1's rework, CR-23; the next board's C_hold): tau ~38 ms,
+// so it is still ~0.35 V at 20 ms (measured from 30 %; ~0.4 V from 100 %). That
+// is below conduction: board 1 conducts nothing measurable with its gate up to
+// 1.78 V (PROGRESS.md section 6, gate settling). zeroed_us == 0 means "never
 // zeroed from a non-zero level", which is the boot state.
 bool strobe_gate_settling(uint64_t now_us, uint64_t zeroed_us);
 

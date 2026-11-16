@@ -34,33 +34,72 @@ float strobe_amps_to_code(float amps);
 // `pre_n` are guaranteed to be before the first rising edge and set the
 // baseline. `fired` is the number of pulses the engine was told to produce.
 //
-// A pulse is a run of samples above threshold = baseline + max(DETECT_MIN,
-// half the peak excursion). Runs separated by 1-2 samples are one pulse: the
-// minimum gap the engine can produce is STROBE_MIN_GAP_US, 75 samples, so a
-// short dip is noise, not a gap. The plateau is the mean of the run with its
-// first and last sample dropped (they straddle the edges); runs of fewer than
-// four samples keep every sample and are flagged short.
+// A pulse is a run of samples above an ABSOLUTE floor: threshold = baseline +
+// STROBE_LIVE_DETECT_MIN_CODES (~72 mA). Until 2026-10-15 the threshold was
+// max(that, half the record's peak), and a turn-on spike hid the pulse under it
+// (board 1, 2026-10-13: 0.72 A read as "no current" under a 3.3 A spike); every
+// check below -- stuck-on included -- used those runs. Runs separated by 1-2
+// samples are one pulse: the minimum gap the engine can produce is
+// STROBE_MIN_GAP_US, 75 samples, so a short dip is not a gap -- the shape
+// check judges it instead. A run needs at least two samples; a lone sample
+// above the floor is not current, but it is not hidden either (peak_code).
+//
+// Per pulse, from the run with its first and last sample dropped (they
+// straddle the edges; runs of fewer than four samples keep every sample and
+// are flagged short):
+//   amps (plateau)  the mean;
+//   settled_a       the MEDIAN -- what the pulse settled at, whatever a spike or
+//                   a dip did to the mean. For a ramp or a two-level pulse it is
+//                   the middle, not the final value; the shape bounds allow that
+//                   much change, and the overcurrent checks still apply;
+//   held_a          the highest level held for two samples in a row, edges
+//                   included -- two SAMPLES 2 us apart, not a guarantee about
+//                   every 2 us of current: an excursion can fall between them;
+//   peak_a          the highest sample, edges included.
+// The plateau, the held level and the width are taken over every run before
+// the storage limit, so no fault depends on whether a run was stored.
+//
+// Over the WHOLE window, independent of runs: the highest sample (I_PEAK_STOP),
+// and whether two of any three consecutive samples are over I_STOP (over_2of3;
+// 2026-10-15, the owner's decision on independent review's recommendation).
+//
+// SHAPE, pulses of four or more samples only: a sample above
+// settled x (1 + STROBE_LIVE_SHAPE_TOL) + STROBE_LIVE_SHAPE_MARGIN_CODES, or a
+// sample other than the two edges below settled x (1 - TOL) - MARGIN, makes the
+// firing NOT CLEAN (verdict SHAPE). The first such sample in time is reported.
 //
 // MORE RUNS THAN `fired` is never OK (review finding 2026-10-07): one commanded
 // pulse that conducts twice -- a U5 retrigger, ringing, an oscillating gate loop
 // splitting the plateau -- must not count as a clean firing that raises the
 // staircase. Fewer is fine: at low current a pulse can sit under the floor.
+//
+// Verdicts, most severe first: STUCK_ON, OVERCURRENT, NOISY, SHAPE, OK.
 // ---------------------------------------------------------------------------
 typedef enum {
     STROBE_VERDICT_OK = 0,        // within limits, or nothing above the detection floor
     STROBE_VERDICT_NO_DATA,       // too few samples, or < STROBE_LIVE_PRE_MIN_SAMPLES of baseline
     STROBE_VERDICT_STUCK_ON,      // current before the pulse, still on at the end, or on too long
-    STROBE_VERDICT_OVERCURRENT,   // a plateau over I_STOP or a sample over I_PEAK_STOP
+    STROBE_VERDICT_OVERCURRENT,   // a plateau or a two-sample level over I_STOP, two of any three
+                                  // consecutive samples over it, or a sample over I_PEAK_STOP
     STROBE_VERDICT_NOISY,         // more current pulses than were fired
+    STROBE_VERDICT_SHAPE,         // a pulse overshoots or dips beyond the shape bounds
 } strobe_verdict_t;
 
+typedef enum {
+    STROBE_SHAPE_CLEAN = 0,
+    STROBE_SHAPE_OVERSHOOT,       // a sample far above its pulse's settled level
+    STROBE_SHAPE_DIP,             // a sample (not an edge) far below it
+} strobe_shape_t;
+
 typedef struct {
-    float    amps;        // plateau
+    float    amps;        // plateau: the mean, edges dropped
+    float    settled_a;   // the median of the same samples
+    float    held_a;      // highest level held for two samples in a row
     float    peak_a;      // highest sample in the run, baseline removed
     uint32_t start_us;    // first sample of the run, from the start of the window
     uint32_t width_us;    // samples in the run x STROBE_LIVE_SAMPLE_US
     uint32_t samples;
-    bool     short_run;   // < 4 samples: edges included in the plateau
+    bool     short_run;   // < 4 samples: edges included in the plateau, no shape check
 } strobe_pulse_meas_t;
 
 typedef struct {
@@ -69,23 +108,36 @@ typedef struct {
     size_t              pre_samples;
     uint32_t            fired;           // pulses commanded
     float               baseline_code;   // mean of the pre window
-    uint16_t            threshold_code;  // absolute
+    uint16_t            threshold_code;  // absolute: baseline + DETECT_MIN, the floor
     uint16_t            peak_code;       // absolute, whole window
-    bool                detected;        // anything above the detection floor
-    bool                on_at_end;       // the last sample is still above threshold
+    uint32_t            peak_us;         // where peak_code first occurs, from the start of the window
+    bool                detected;        // a run above the floor
+    bool                on_at_end;       // a run reaches the last sample
     uint32_t            n_pulses;        // runs found (can exceed the array: NOISY)
     strobe_pulse_meas_t pulse[STROBE_BURST_MAX_PULSES];
-    float               max_amps;        // over the plateaus
-    float               min_amps;
-    float               max_peak_a;
-    uint32_t            max_width_us;
-    float               charge_mc;       // measured: sum of plateau x width
+    float               max_amps;        // highest plateau over EVERY run, stored or not
+    float               min_amps;        // lowest plateau over the stored runs
+    float               max_held_a;      // over EVERY run, stored or not
+    float               max_peak_a;      // whole window
+    bool                over_2of3;       // two of some three consecutive samples over I_STOP, whole window
+    uint32_t            over_2of3_us;    // the first such three, from the start of the window
+    uint32_t            max_width_us;    // over EVERY run, stored or not
+    float               charge_mc;       // measured: sum of plateau x width, stored runs
+    // The first shape violation in time, if any (verdict SHAPE unless a more
+    // severe verdict outranks it).
+    strobe_shape_t      shape;
+    uint32_t            shape_pulse;     // its pulse, 0-based
+    uint32_t            shape_at_us;     // the sample, from the start of the window
+    float               shape_a;         // the sample's current, baseline removed
+    float               shape_settled_a; // the pulse's settled level
+    float               shape_limit_a;   // the bound it crossed
 } strobe_live_meas_t;
 
 // `fired` outside 1..STROBE_BURST_MAX_PULSES is treated as the maximum.
 void        strobe_live_measure(const uint16_t *s, size_t n, size_t pre_n, uint32_t fired,
                                 strobe_live_meas_t *m);
 const char *strobe_verdict_text(strobe_verdict_t v);
+const char *strobe_shape_text(strobe_shape_t s);
 
 // How many of a freeze's `got` samples (oldest first, the newest within one
 // 2 us conversion of t_stop_us) are BASELINE: taken before the engine was enabled
@@ -194,5 +246,13 @@ typedef enum {
 strobe_cal_step_t strobe_cal_next(uint16_t level, float amps, bool detected, float target_a,
                                   uint16_t *next_level);
 uint16_t strobe_cal_solve(uint16_t l0, float a0, uint16_t l1, float a1, float target_a);
+
+// The session cap a SOLVED cal sets (board.h, SESSION CAP): from the cal's first
+// point at or above the target (l1, a1),
+//     l1 + floor((STROBE_LIVE_I_STOP_A - a1) / STROBE_SESSION_CAP_A_PER_LEVEL),
+// clamped into [solved, STROBE_LIVE_GATE_CEILING]. A point that cannot anchor it
+// (a1 negative, NaN or at the stop; l1 below solved) gives `solved`: no headroom
+// rather than a guess.
+uint16_t strobe_session_cap(uint16_t l1, float a1, uint16_t solved);
 
 #endif // PITRAC_STROBE_LIVE_H

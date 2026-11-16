@@ -2,8 +2,13 @@
 // Copyright (C) 2026 PiTrac contributors
 #include "safe_state.h"
 #include "board.h"
+#include "telemetry.h"
 
+#include "pico/stdlib.h"
 #include "hardware/gpio.h"
+
+// RPI5_SHUTDOWN's inactive level: high for the active-low gpio-shutdown overlay.
+#define PI_SHUTDOWN_IDLE_LEVEL  (PI_SHUTDOWN_ACTIVE_LOW ? true : false)
 
 static volatile fault_t s_fault = FAULT_NONE;
 static volatile uint32_t s_fault_gen;
@@ -29,12 +34,6 @@ static void out_low(uint pin) {
     gpio_init(pin);
     gpio_put(pin, 0);          // set the level BEFORE enabling the driver, so
     gpio_set_dir(pin, GPIO_OUT); // we never emit a glitch high on the way up
-}
-
-static void out_high(uint pin) {
-    gpio_init(pin);
-    gpio_put(pin, 1);
-    gpio_set_dir(pin, GPIO_OUT);
 }
 
 static void in_pull(uint pin, bool up, bool down) {
@@ -97,8 +96,14 @@ void safe_state_init(void) {
     out_low(PIN_USB_ENABLE);
 
     // Pi-facing outputs.
-    // RPI5_SHUTDOWN idles DEASSERTED. With active-low polarity that means HIGH.
-    // INVARIANT: a reset must never look like a shutdown request.
+    //
+    // RPI5_SHUTDOWN (J8.37) starts RELEASED: input, no pulls, input buffer off.
+    // Until 2026-10-19 it was driven high (deasserted) from here, and in STANDBY
+    // that pushed up to ~2.7 mA through R39 into an unpowered Pi's GPIO26 clamp.
+    // The power FSM now drives it only while a Pi is powered (board.h, "THE
+    // LINE'S REST STATE"). Released, a powered Pi's own pull-up holds it
+    // deasserted. INVARIANT, unchanged: a reset must never look like a shutdown
+    // request.
     //
     // CAREFUL, and this used to be documented wrong here: the pad does NOT come
     // out of reset floating. PADS_BANK0_GPIO43_RESET = 0x116, so PDE=1 -- the
@@ -111,19 +116,21 @@ void safe_state_init(void) {
     // puts J8.37 below RP1's VIH. MEASURED 2026-07-31 (PROGRESS.md Q10): a real
     // Pi would see ~1.34 V, so the level fails. It is defence-in-depth rather than
     // a gate, because every reset also opens the +5V latch -- the Pi is losing
-    // power in the same instant. Optional fix: a 10K pull-up from J8.37 to the
-    // always-on +3V3 (NEXT_BOARD_REV.md CR-04).
+    // power in the same instant. Optional fix: a 10K pull-up from J8.37 to J8.1,
+    // the Pi's own 3V3 (NEXT_BOARD_REV.md CR-04), which feeds nothing into an
+    // unpowered Pi.
     //
-    // What this line DOES buy: once we are running, the line is actively driven
-    // rather than left to a 1K pull, so noise cannot couple a spurious request
-    // into the Pi's KEY_POWER input. It cannot shorten the pre-main window.
-#if PI_SHUTDOWN_ACTIVE_LOW
-    out_high(PIN_RPI5_SHUTDOWN);
-#else
-    out_low(PIN_RPI5_SHUTDOWN);
-#endif
+    // Releasing it here also turns that pull-down off, so the window ends at this
+    // line. Nothing here can shorten the part before main().
+    gpio_init(PIN_RPI5_SHUTDOWN);
+    safe_state_pi_shutdown_line(PI_LINE_RELEASED);
     out_low(PIN_SYSTEM_READY);
     out_low(PIN_IRQ_OUT);
+
+    // UART1 to the Pi (J8.8/J8.10) starts RELEASED as well: nothing idles high
+    // into J8.10 until the power FSM sees a Pi up (safe_state.h). Out of reset
+    // both pads are isolated with their pull-downs on, which this also ends.
+    safe_state_pi_uart_lines(false);
 
     // Indicators.
     out_low(PIN_LED_RED);
@@ -176,11 +183,67 @@ void safe_state_reclaim_pins(void) {
     gpio_set_function(PIN_THRESHOLD_PWM, GPIO_FUNC_PWM);
 }
 
+void safe_state_pi_shutdown_line(pi_line_t mode) {
+    const uint pin = PIN_RPI5_SHUTDOWN;
+    if (mode == PI_LINE_RELEASED) {
+        gpio_set_dir(pin, GPIO_IN);              // the driver off first
+        gpio_set_pulls(pin, false, false);
+        gpio_set_input_enabled(pin, false);
+        return;
+    }
+    gpio_set_input_enabled(pin, true);           // so `pins` can read the pad back
+    gpio_put(pin, mode == PI_LINE_ASSERTED ? !PI_SHUTDOWN_IDLE_LEVEL : PI_SHUTDOWN_IDLE_LEVEL);
+    gpio_set_dir(pin, GPIO_OUT);                 // the level is already set: no glitch
+}
+
+// Release: the SIO driver off first, then the pad handed from the UART to SIO,
+// so nothing is driven at any point; then no pulls and no input buffer, as for
+// J8.37. Connect: RX first, then TX, whose pad takes the UART's idle high.
+static void uart_pin_release(uint pin) {
+    gpio_set_dir(pin, GPIO_IN);
+    gpio_set_function(pin, GPIO_FUNC_SIO);
+    gpio_set_pulls(pin, false, false);
+    gpio_set_input_enabled(pin, false);
+}
+
+void safe_state_pi_uart_lines(bool connect) {
+    if (connect) {
+        if (safe_state_pi_uart_connected()) return;
+        gpio_set_pulls(PIN_UART_RX, false, false);
+        gpio_set_pulls(PIN_UART_TX, false, false);
+        gpio_set_function(PIN_UART_RX, GPIO_FUNC_UART);
+        gpio_set_function(PIN_UART_TX, GPIO_FUNC_UART);
+        return;
+    }
+    uart_pin_release(PIN_UART_TX);
+    uart_pin_release(PIN_UART_RX);
+}
+
+bool safe_state_pi_uart_connected(void) {
+    return gpio_get_function(PIN_UART_TX) == GPIO_FUNC_UART;
+}
+
+pi_line_t safe_state_pi_shutdown_mode(void) {
+    if (!gpio_is_dir_out(PIN_RPI5_SHUTDOWN)) return PI_LINE_RELEASED;
+    return gpio_get_out_level(PIN_RPI5_SHUTDOWN) == PI_SHUTDOWN_IDLE_LEVEL
+         ? PI_LINE_DEASSERTED : PI_LINE_ASSERTED;
+}
+
+const char *safe_state_pi_line_name(pi_line_t mode) {
+    switch (mode) {
+        case PI_LINE_RELEASED:   return "released (latch open or no Pi 3V3: nothing driven into J8.37)";
+        case PI_LINE_DEASSERTED: return "driven, deasserted";
+        case PI_LINE_ASSERTED:   return "driven, ASSERTED (shutdown request)";
+    }
+    return "?";
+}
+
 void fault_raise(fault_t f) {
     if (f == FAULT_NONE) return;
     if (s_fault == FAULT_NONE) {              // first fault wins
         s_fault = f;
         s_fault_gen++;
+        telemetry_fault((uint32_t)f, to_ms_since_boot(get_absolute_time()) / 1000u);
     }
 }
 

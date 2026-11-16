@@ -200,9 +200,12 @@ TP9 should appear as ~1.45 V at ADC5.
 > > 🔵 **The rule: never compare a ringing amplitude across instruments of different
 > > bandwidth.** Compare frequency, or re-take both on the same instrument.
 >
-> ⚠ **It is still under-compensated, and `NEXT_BOARD_REV.md` predicted that** — its
-> compensation table says 0.5 pF at ~100 kΩ is *"badly under-compensated"*, and 0.99 pF is only
-> halfway to where it should be. **See the sizing note below.**
+> **Sizing correction, 2026-11-03:** the old statement that 0.99 pF was only halfway to the
+> required compensation used an incorrect **8 MHz** OPA4323 GBW. TI specifies **20 MHz
+> typical**; the same Cin = 20 pF estimate gives about **1.17 pF at 116 kohm**, not 1.85 pF.
+> Cin and parasitics remain uncertain; observed ringing still needs measurement. See the
+> corrected sizing in [NEXT_BOARD_REV.md](NEXT_BOARD_REV.md) and the pending
+> **120.475 kohm / 1.5 pF** plan in [REWORK_ORIGINAL_BOARDS.md](REWORK_ORIGINAL_BOARDS.md).
 >
 > 🔵 **The lesson is procedural: a rework acceptance test needs a BEFORE measurement on the
 > SAME board.** Board 3 was never calibrated stock, so the TIA change and the board-to-board
@@ -495,33 +498,51 @@ depends on the board and where it is sitting.
 
 🔴 **Whatever you add, it must not move.** See the block below.
 
-### ✅ Use `level` to aim it — do not guess and then spend 26 s finding out
+### ✅ Use `level` to hold the level while you clamp — after a committed phase
 
 ```
 level
 ```
 
-Prints the live peak as a percentage of full scale, ~5×/s, until you press a key. It chops at
-20 Hz and reports **the same `peak` number `cal demod` will report**, so you can position the
-target and watch the figure instead of running a sweep to find out.
+Prints a live peak as a percentage of full scale until you press a key, chopping at 20 Hz.
+**It reads the CURRENT phase only, on every released image.** Use it as a relative aid after
+a committed phase; it can still read below the sweep's peak. So:
+- **On a fresh board, set the level with `cal demod` itself** and its verdict (`TOO BIG`,
+  `TOO SMALL`, or a committed phase).
+- **Then use `level`** to watch the level live while you clamp the target, or to re-check it
+  later.
+- On a board that had never run `cal demod`, it could read near zero beside a good target.
+  Board 4 took four sweeps to find its level (2026-11-11).
 
 ```
 live level: chopping at 20 Hz, reading the peak at the CURRENT phase
-  (1311 ticks, duty 25.00 %). Only the TRUE peak if the phase is already
-  near it -- run 'cal demod' once first.
-TARGET 50-70 % of full scale. Position the target, then CLAMP IT --
-  a hand cannot hold still for the 128 s 'cal model' takes.
-
+  (1333 ticks, duty 25.00 %). Only the TRUE peak if the phase is already
+  near it -- run 'cal demod' once first. ...
+TARGET 50-70 % of full scale; 'cal demod' will not commit under 30 %.
+  ...
   peak  1613 =  39 %  |########            |  low  -- more light
   peak  2120 =  52 %  |##########          |  GOOD
-  peak  2650 =  65 %  |#############       |  GOOD
 ```
+(Image 1.7's wording. Up to 1.5 the banner was shorter, and `TOO LOW` was at 20 %.)
+The banner's `TRUE peak` and `cal demod refuses` wording overstates this estimate. A clean,
+committable sweep can read above 30 % while `level` reads below 30 %. **Use the sweep's own
+peak and verdict for final acceptance**, including after adjusting the light.
+From image 1.11 (review pending; 1.8's wording, carried since) the banner calls `level` an approximate aiming aid. Its
+verdicts read `very low` under 30 % and `aim OK -- 'cal demod' decides` from 50 to 70 %, and
+nothing predicts a refusal (V17-N1).
 
-⚠ **It reads the peak only if the demod phase is already near the peak** — it samples one
-phase rather than sweeping. Run `cal demod` once first, then use `level` for adjustment.
+**Why not all phases:** image 1.6 tried 8 phases fitted like the sweep. Its independent review
+(V16-F1, `PROGRESS.md` §6) found two problems:
+- stepping the phase every 200 ms, much faster than the 0.66 s HPF settles, clips one-sided at
+  ADC5;
+- it then advised less light for targets `cal demod` accepted.
+
+1.6 was never released, and 1.7 keeps the one-phase reading. In that review's model, 1.7's
+`level` at the committed phase settles 9–16 % below the sweep's `peak`, steady and well clear
+of the rail. Treat the sweep as the reference.
 
 ⚠ **Ignore the first ~3.5 s.** Starting the chop is a step into the 0.66 s gated HPF, so the
-first readings climb toward the true value rather than sitting at it — board 3 read **9 %**
+first readings climb toward the settled value rather than sitting at it — board 3 read **9 %**
 on its first line and settled at **66 %**. Builds after 2026-08-28 label those readings
 `settling`. 🔵 That climb is itself a free measurement of the HPF: its deficit from the final
 value fell by 0.736 per 200 ms reading, giving **τ = 0.653 s** against the 2 MΩ × 330 nF
@@ -529,8 +550,8 @@ design value of 0.66 s.
 
 🔵 **Getting the level right is the single most repeated failure in Phase 3.** Too much light
 saturates the sweep; too little and there is nothing to fit; and the obvious way to add signal
-by hand is the one thing that ruins `cal model`. `level` closes that loop in seconds instead
-of half-minutes.
+by hand is the one thing that ruins `cal model`. After a phase has been committed, `level`
+shows relative changes in seconds; the final level check still comes from `cal demod`.
 
 > ### 🔴 NEVER USE YOUR HAND AS THE TARGET
 >

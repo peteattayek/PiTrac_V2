@@ -131,11 +131,11 @@ strobe_plan_err_t strobe_compute_schedule(float speed_mps, strobe_schedule_t *s)
 }
 
 // Conditions shared by both actions. Order sets which reason the operator sees
-// first, so the most fundamental one comes first.
+// first, so the most fundamental one comes first. A Pi on J8 is not one of them
+// from image 1.8 (strobe_plan.h, "A PI ON J8"); up to 1.7 it was the third.
 static strobe_refusal_t common_checks(const strobe_snapshot_t *s) {
     if (!s->rails_ready)         return STROBE_REFUSE_RAIL;
     if (s->fault_latched)        return STROBE_REFUSE_FAULT;
-    if (s->pi_present)           return STROBE_REFUSE_PI;
     if (s->pulse_limit_defeated) return STROBE_REFUSE_PULSE_LIMIT;
     if (s->ready_led_on_pwm)     return STROBE_REFUSE_A7;
     if (s->engine_busy)          return STROBE_REFUSE_BUSY;
@@ -174,6 +174,59 @@ uint16_t strobe_live_gate_limit(uint16_t proven) {
     return (uint16_t)lim;
 }
 
+uint16_t strobe_live_raise_limit(uint16_t proven, uint16_t session_cap) {
+    uint16_t lim = strobe_live_gate_limit(proven);
+    if (session_cap != 0u && session_cap < lim) return session_cap;
+    return lim;
+}
+
+// The session cap (board.h): 0 is "no cal has solved", not "cap at level 0".
+static bool over_session_cap(const strobe_live_t *l, uint16_t level) {
+    return l->session_cap != 0u && level > l->session_cap;
+}
+
+strobe_pi_t strobe_pi_observe(bool sensed_3v3, bool fsm_present) {
+    if (sensed_3v3 && fsm_present)   return STROBE_PI_POWERED;
+    if (!sensed_3v3 && !fsm_present) return STROBE_PI_ABSENT;
+    return STROBE_PI_UNSETTLED;
+}
+
+const char *strobe_pi_text(strobe_pi_t p) {
+    switch (p) {
+        case STROBE_PI_ABSENT:    return "absent";
+        case STROBE_PI_POWERED:   return "PRESENT";
+        case STROBE_PI_UNSETTLED: return "UNSETTLED (its 3V3 and the power state disagree)";
+    }
+    return "?";
+}
+
+// The Pi, while live (image 1.8; observed fresh from 1.9, V18-F1). The session
+// is bound to the Pi state it was armed in: UNSETTLED, or a settled change, ends
+// it whatever the watchdog says.
+static strobe_refusal_t live_pi_state(const strobe_snapshot_t *s, const strobe_live_t *l) {
+    if (s->pi == STROBE_PI_UNSETTLED) return STROBE_REFUSE_PI_UNSETTLED;
+    if ((s->pi == STROBE_PI_POWERED) != l->pi_at_arm) return STROBE_REFUSE_PI_CHANGED;
+    return STROBE_OK;
+}
+
+// ... and the watchdog: with the Pi state unchanged, it is required only when
+// that state is "no Pi".
+static strobe_refusal_t live_pi_and_watchdog(const strobe_snapshot_t *s, const strobe_live_t *l) {
+    strobe_refusal_t r = live_pi_state(s, l);
+    if (r != STROBE_OK) return r;
+    if (!l->watchdog_armed && strobe_live_needs_watchdog(true, l->pi_at_arm))
+        return STROBE_REFUSE_WATCHDOG;
+    return STROBE_OK;
+}
+
+bool strobe_live_arms_watchdog(strobe_pi_t pi, bool already_armed) {
+    return pi == STROBE_PI_ABSENT && !already_armed;
+}
+
+bool strobe_live_needs_watchdog(bool live, bool pi_at_arm) {
+    return live && !pi_at_arm;
+}
+
 // The environment live mode needs, whether arming, holding or firing.
 static strobe_refusal_t live_environment(const strobe_live_t *l) {
     if (l->beam_on)       return STROBE_REFUSE_BEAM;
@@ -186,6 +239,7 @@ strobe_refusal_t strobe_live_may_arm(const strobe_snapshot_t *s, const strobe_li
     if (!s || !l) return STROBE_REFUSE_RAIL;
     strobe_refusal_t r = common_checks(s);
     if (r != STROBE_OK) return r;
+    if (s->pi == STROBE_PI_UNSETTLED) return STROBE_REFUSE_PI_UNSETTLED;
     if (s->gate_nonzero) return STROBE_REFUSE_GATE_NONZERO;
     return live_environment(l);
 }
@@ -197,7 +251,10 @@ strobe_refusal_t strobe_live_may_set_gate(const strobe_snapshot_t *s, const stro
     if (!l->live) return STROBE_REFUSE_NOT_LIVE;
     strobe_refusal_t r = common_checks(s);
     if (r != STROBE_OK) return r;
+    r = live_pi_state(s, l);
+    if (r != STROBE_OK) return r;
     if (level > STROBE_LIVE_GATE_CEILING) return STROBE_REFUSE_CEILING;
+    if (over_session_cap(l, level)) return STROBE_REFUSE_SESSION_CAP;
     if (level > strobe_live_gate_limit(l->gate_proven)) return STROBE_REFUSE_STEP;
     return STROBE_OK;
 }
@@ -207,11 +264,13 @@ strobe_refusal_t strobe_live_may_fire(const strobe_snapshot_t *s, const strobe_l
     if (!l->live) return STROBE_REFUSE_NOT_LIVE;
     strobe_refusal_t r = common_checks(s);
     if (r != STROBE_OK) return r;
-    if (!l->watchdog_armed) return STROBE_REFUSE_WATCHDOG;
+    r = live_pi_and_watchdog(s, l);
+    if (r != STROBE_OK) return r;
     r = live_environment(l);
     if (r != STROBE_OK) return r;
     if (!l->gate_hw_match) return STROBE_REFUSE_GATE_MISMATCH;
     if (l->gate_level > STROBE_LIVE_GATE_CEILING) return STROBE_REFUSE_CEILING;
+    if (over_session_cap(l, l->gate_level)) return STROBE_REFUSE_SESSION_CAP;
     if (l->gate_level > strobe_live_gate_limit(l->gate_proven)) return STROBE_REFUSE_STEP;
     if (!l->interval_ok) return STROBE_REFUSE_INTERVAL;
     if (!l->budget_ok)   return STROBE_REFUSE_BUDGET;
@@ -223,14 +282,15 @@ strobe_refusal_t strobe_live_may_continue(const strobe_snapshot_t *s, const stro
     if (!l->live) return STROBE_REFUSE_NOT_LIVE;
     if (!s->rails_ready)         return STROBE_REFUSE_RAIL;
     if (s->fault_latched)        return STROBE_REFUSE_FAULT;
-    if (s->pi_present)           return STROBE_REFUSE_PI;
     if (s->pulse_limit_defeated) return STROBE_REFUSE_PULSE_LIMIT;
     if (s->ready_led_on_pwm)     return STROBE_REFUSE_A7;
-    if (!l->watchdog_armed)      return STROBE_REFUSE_WATCHDOG;
-    strobe_refusal_t r = live_environment(l);
+    strobe_refusal_t r = live_pi_and_watchdog(s, l);
+    if (r != STROBE_OK) return r;
+    r = live_environment(l);
     if (r != STROBE_OK) return r;
     if (!l->gate_hw_match) return STROBE_REFUSE_GATE_MISMATCH;
     if (l->gate_level > STROBE_LIVE_GATE_CEILING) return STROBE_REFUSE_CEILING;
+    if (over_session_cap(l, l->gate_level)) return STROBE_REFUSE_SESSION_CAP;
     return STROBE_OK;
 }
 
@@ -239,7 +299,7 @@ const char *strobe_refusal_text(strobe_refusal_t r) {
         case STROBE_OK:                  return "ok";
         case STROBE_REFUSE_RAIL:         return "+5V rail not ready (U8 and the gate amp run from VIR)";
         case STROBE_REFUSE_FAULT:        return "a fault is latched";
-        case STROBE_REFUSE_PI:           return "a Pi is present -- Phase 6 runs with J8 empty";
+        case STROBE_REFUSE_PI_CHANGED:   return "a Pi appeared or went away since live mode was armed -- 'strobe live on confirm' again";
         case STROBE_REFUSE_PULSE_LIMIT:  return "GPIO27 is not provably SIO-low: the U5 limiter may be defeated";
         case STROBE_REFUSE_A7:           return "GPIO12 is on PWM again: it would share the gate DAC (A7)";
         case STROBE_REFUSE_BUSY:         return "a burst is in progress";
@@ -256,6 +316,9 @@ const char *strobe_refusal_text(strobe_refusal_t r) {
         case STROBE_REFUSE_INTERVAL:     return "too soon after the last live firing";
         case STROBE_REFUSE_BUDGET:       return "the rolling charge budget is used up -- wait";
         case STROBE_REFUSE_6D:           return "clamptest needs a live firing at THIS gate level that measured 0.5-2.5 A";
+        case STROBE_REFUSE_SESSION_CAP:  return "over this session's cap from 'strobe cal' (where the current could reach the overcurrent stop): re-run 'strobe cal' to move it";
+        case STROBE_REFUSE_PI_UNSETTLED: return "the Pi's 3V3 and the power state disagree (a Pi powering up or down) -- wait until 'stat' settles, then 'strobe live on confirm'; if the Pi's 3V3 stays lost, 'off' and power up again";
+        case STROBE_REFUSE_GATED_LIVE:   return "live mode is armed -- camera-gated shots fire DRY only in this firmware ('strobe live off' first)";
     }
     return "?";
 }

@@ -10,15 +10,25 @@
 // every phase. The fix is to chop the light and measure the DIFFERENCE, which
 // also rejects ambient drift for free.
 //
-// A REFLECTOR IS NOT NEEDED, AND ON THIS BOARD IT HURTS. Measured 2026-08-24
-// with nothing in front of the board at all: D11 -> D12 crosstalk plus the
-// floor return gives a 1.795 V swing at TP7, which demodulates to 6.30 V at
-// ADC5 against a 3.3 V ceiling -- the calibration is over-driven by 1.9x before
-// any target exists. Crosstalk traverses the same TIA -> demod -> LPF chain as
-// target light and the path-length difference is ~2 m = 1 tick at 104 kHz, so
-// it calibrates the phase perfectly well. Attenuate INTO D12 to get in range;
-// moving or darkening a reflector cannot help with something that is not the
-// reflector.
+// WHETHER A REFLECTOR IS NEEDED DEPENDS ON THE BOARD. The calibration needs the
+// LEVEL in range (50-70 % of full scale), not any particular source of light:
+// crosstalk, a wall and a card all traverse the same TIA -> demod -> LPF chain,
+// and the path-length differences are nanoseconds (~2 m = 1 tick at 104 kHz).
+//   - Board 2 (stock 470 kOhm TIA), 2026-08-24, nothing in front of the board:
+//     D11 -> D12 crosstalk plus the floor return gave a 1.795 V swing at TP7,
+//     6.30 V at ADC5 against a 3.3 V ceiling -- over-driven 1.9x with no target.
+//     There the fix is to attenuate INTO D12; a reflector cannot help.
+//   - Board 4 (120 kOhm TIA, good baffle), 2026-11-11, nothing within 3 m: 9 %
+//     of full scale. It needed a white wall ~1.2 m away, angled, for 69 %.
+//     Its 69 % and 78 % runs committed 1333 and 1332 ticks: the source of the
+//     light does not move the phase.
+// To set the level from scratch, run `cal demod` and follow its verdict: it says
+// TOO BIG or TOO SMALL. `level` (cal_level_peak() below) reads the current phase
+// only. It is an approximate, relative aiming aid, even once a phase has been
+// committed: its single reading and the stepping sweep have different HPF
+// histories, so it can read below the sweep's peak (1.7 review, V17-N1: an
+// accepted 30.2-33.7 % sweep read 27.4 % in a model). The sweep's peak and
+// verdict decide.
 //
 // CHOPPING MUST NOT USE beam_enable(). That stops the demodulator clock as well
 // as the carrier, making the dark half a different circuit rather than a
@@ -111,7 +121,10 @@ typedef struct {
                             //   number; best_ticks is just how it is encoded.
     float    sat_frac;      // fraction of sweep points against the ADC rail
     bool     warm;          // was the beam at thermal plateau?
-    bool     valid;
+    bool     valid;         // the response is clean: cal_demod_judge()
+    bool     too_small;     // peak under CAL_PEAK_MIN_FRAC of full scale (1.6).
+                            //   NOT in `valid`: `cal demod` refuses to commit it,
+                            //   `cal model` does not judge its points on it.
 } cal_demod_t;
 
 // WHY THE PURITY BARS ARE DUTY-AWARE, AND WHY A FIXED h3 BAR WAS A TRAP
@@ -157,17 +170,33 @@ typedef struct {
 #define CAL_SAT_MAX       0.10f   // fraction of points allowed against the rail
 #define CAL_QUAD_NULL_MAX 0.15f   // |quad null| as a fraction of amplitude
 
+// The lowest peak `cal demod` will COMMIT, as a fraction of ADC full scale
+// (image 1.6, 2026-11-11). The bring-up target is 50-70 %. Before 1.6 nothing
+// enforced a floor: Board 4's run with nothing in front of it committed at 9 %
+// (1342 ticks, against 1333 at 69 %). That phase was only 2 deg off, so this is
+// not about a wrong answer. It stops an operator accepting a sweep the procedure
+// says to redo, with the threshold and `cal model` then working from it.
+#define CAL_PEAK_MIN_FRAC 0.30f
+
 // Intrinsic harmonic content of a clean lock-in response at beam duty `duty`.
-// Both are pure geometry -- no board constants, nothing measured.
+// Both are pure geometry -- no board constants, nothing measured. In cal_math.c.
 float cal_h3_expected(float duty);   // |sinc(3D)/(3 sinc(D))|
 float cal_form_factor(float duty);   // fitted fundamental / true peak
+
+// The verdict on a finished sweep (cal_math.c, host-tested). Sets `valid` from
+// amplitude/peak, h3, sat_frac and quad_null, and `too_small` from the peak.
+void  cal_demod_judge(cal_demod_t *r);
+// What `cal demod` commits on: valid AND not too small.
+bool  cal_demod_commit_ok(const cal_demod_t *r);
 
 // ---------------------------------------------------------------------------
 // Live level, for aiming the target BEFORE spending 26 s on a sweep.
 //
-// One chopped reading at the CURRENT phase, returned as a peak in codes -- the
-// same quantity cal_demod_t.peak reports, so it is directly comparable to the
-// 50-70 % of full scale that `cal demod` wants.
+// One chopped reading at the CURRENT phase, returned as a peak in codes: the
+// same units as cal_demod_t.peak, so the 50-70 % aim reads on the same scale.
+// It is an estimate, not the sweep's value, and the two are not interchangeable
+// (the note at the top of this file; V17-N1). Aim with it; let `cal demod`
+// decide.
 //
 // WHY THIS EXISTS. Getting the level right is the single most repeated failure
 // in phase 3: too much light saturates the sweep, too little and there is
@@ -178,13 +207,25 @@ float cal_form_factor(float duty);   // fitted fundamental / true peak
 // the target be positioned and CLAMPED before anything is committed.
 //
 // It is only the TRUE peak if the demod phase is already near it, since it
-// samples one phase rather than sweeping. Run `cal demod` once first.
+// samples one phase rather than sweeping. Run `cal demod` once first. On a
+// board that has never committed a phase it can read near zero beside a good
+// target.
+//
+// WHY NOT ALL PHASES (image 1.7). Image 1.6 took 8 readings 1/8 of a period
+// apart and fitted the fundamental, to be true at any phase. Its independent
+// review (V16-F1, 2026-11-11) found that stepping the phase every 200 ms, much
+// faster than the 0.66 s HPF settles, leaves each reading carrying the previous
+// phases' baseline and drives the single-supply U12B/ADC5 into one-sided
+// clipping. In the review's model it reported SATURATED for light that
+// `cal demod` accepted at 55 %. 1.6 never shipped; 1.7 keeps this one-phase
+// reading, which holds its phase still and so has no such transient.
 #define CAL_LEVEL_CYCLES 4u          // 4 chop cycles at 20 Hz = 200 ms = 5 Hz update
 float cal_level_peak(uint32_t cycles, uint32_t chop_hz);
 
 // Sweeps phase across a full carrier period, chopping the beam at each point.
 // Blocking, roughly n_points * cycles / chop_hz seconds (64 x 8 / 20 = ~26 s).
-// Needs the HPF in TRACK and a warm beam. No reflector -- see the note above.
+// Needs the HPF in TRACK, a warm beam, and the light at 50-70 % of full scale.
+// Whether that takes a reflector depends on the board: see the note at the top.
 bool cal_demod_phase(uint32_t freq_hz, uint32_t n_points, uint32_t cycles,
                      uint32_t chop_hz, cal_demod_t *out);
 

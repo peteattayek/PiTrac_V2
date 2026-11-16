@@ -9,7 +9,12 @@
 // Simulating the Pi, from the plan:
 //   RPI5_ON        GPIO0   <- J8.15 via R29 1K   : jumper J8.15 -> J8.1 (+3V3)
 //   PI_3V3_SENSE   GPIO24  <- R45/R44 divider    : feed 3.3 V into the top of R45
-//   RPI5_SHUTDOWN  GPIO43  -> J8.37 via R39 1K   : scope it
+//   RPI5_SHUTDOWN  GPIO43  -> J8.37 via R39 1K   : scope it. Driven only while
+//                  the latch is closed and PI_3V3_SENSE reads up; released
+//                  otherwise (board.h, "THE LINE'S REST STATE").
+//   UART1          GPIO36/37 <-> J8.10/J8.8 via 220R : connected only while the
+//                  latch is closed, PI_3V3_SENSE reads up and RPI5_ON is high;
+//                  released otherwise (safe_state.h).
 
 #ifndef PITRAC_POWER_FSM_H
 #define PITRAC_POWER_FSM_H
@@ -64,9 +69,31 @@ void power_request_fault_ack(void);
 // is a hard FORCE_OFF. See board.h.
 bool power_pi_present(void);
 
+// The Pi's header 3V3 as sensed right now (PI_3V3_SENSE, GPIO24), unfiltered.
+// power_pi_present() above is the FSM's debounced, conservative classification;
+// the strobe's live policy needs both (strobe_pi_observe(); image 1.9, V18-F1).
+bool power_pi_3v3_sensed(void);
+
+// MAY a Pi be on J8 right now? The FSM classifies one, OR its 3V3 is sensed now:
+// when the two disagree, the answer is yes. For every guard that must not act
+// against a powered Pi -- `reset`, `bootsel`, `cfg save` and the flash writes
+// behind its guard (image 1.10, review finding V19-F1).
+//
+// power_pi_present() alone is not enough there. It stays false while a Pi's 3V3
+// is already up in two places: in POWERING_ON until RAIL_SETTLE_MS, and in
+// BENCH_RUNNING for PI_PRESENT_DEBOUNCE_MS of late detection. A plain `reset`
+// was admitted in that window, and its reset opens the latch under the Pi.
+// The FSM's own states, debounces and shutdown decisions are unchanged.
+bool power_pi_maybe_present(void);
+
 // "Pi is down" indicator, two-of-three. Exposed for the CLI so you can watch it
 // while testing the simulated shutdown.
 bool power_pi_is_down(void);
+
+// RUNNING, and the Pi has read down for PI_DOWN_DEBOUNCE_MS with no request from
+// the board (BENCH_P8_PI.md 8.6). Counted in the halt telemetry; the rail stays
+// up. *for_ms (optional) is how long ago it was counted.
+bool power_pi_down_unrequested(uint32_t *for_ms);
 
 // Milliseconds spent in the current state (for the CLI status line).
 uint32_t power_state_elapsed_ms(void);

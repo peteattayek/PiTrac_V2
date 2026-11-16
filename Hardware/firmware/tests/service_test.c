@@ -72,6 +72,7 @@ int getchar_timeout_us(uint32_t timeout_us) {
 void watchdog_enable(uint32_t delay_ms, bool pause_on_debug) {
     (void)delay_ms;
     (void)pause_on_debug;
+    mock_watchdog_hw.scratch[4] = 0x6ab73121u;   // the SDK's "armed by watchdog_enable" mark
     mock_watchdog_hw.ctrl |= WATCHDOG_CTRL_ENABLE_BITS;
     last_kick_us = clock_us;
 }
@@ -199,6 +200,18 @@ static bool watchdog_kicks(void) {
     return true;
 }
 
+// 2026-10-19: disarming clears watchdog_enable()'s scratch[4] mark, so a reset
+// after a live session (`bootsel`, SW2) is never read at the next boot as the
+// watchdog having fired (telemetry.h; main.c, boot_reason()).
+static bool disarm_clears_mark(void) {
+    reset_fixture();
+    pitrac_watchdog_enable(true);
+    CHECK(mock_watchdog_hw.scratch[4] == 0x6ab73121u);
+    pitrac_watchdog_enable(false);
+    CHECK(mock_watchdog_hw.scratch[4] == 0u);
+    return true;
+}
+
 // Live strobe mode's hold checks and idle timeout run on every pass.
 static bool strobe_hook_every_pass(void) {
     reset_fixture();
@@ -214,7 +227,7 @@ int main(int argc, char **argv) {
 #define TEST(name) {#name, name}
         TEST(final_slice_key), TEST(final_slice_fault), TEST(fault_at_entry_is_not_abort),
         TEST(same_code_relatched), TEST(cleared_fault_is_not_abort), TEST(no_overshoot),
-        TEST(watchdog_kicks), TEST(strobe_hook_every_pass)
+        TEST(watchdog_kicks), TEST(strobe_hook_every_pass), TEST(disarm_clears_mark)
 #undef TEST
     };
     if (argc == 2) {

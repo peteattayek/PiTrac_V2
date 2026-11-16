@@ -96,45 +96,25 @@ static float adc5_sigma(uint32_t ms) {
 }
 
 // ---------------------------------------------------------------------------
-// Intrinsic harmonic content of the trapezoidal lock-in response. See the long
-// derivation above CAL_H3_TOL in cal.h -- these are geometry, not calibration.
+// The response's geometry (cal_h3_expected(), cal_form_factor()) and the sweep's
+// verdict (cal_demod_judge()) are pure arithmetic, in cal_math.c, where the host
+// tests run them.
 // ---------------------------------------------------------------------------
 
-static float sinc_pi(float x) {
-    // sin(pi x)/(pi x), with the removable singularity at 0 handled.
-    if (fabsf(x) < 1e-6f) return 1.0f;
-    return sinf((float)M_PI * x) / ((float)M_PI * x);
-}
-
-// Duty is clamped away from the degenerate ends: 0 makes the pulse vanish and
-// 0.5 makes it fill a demod half-cycle. BEAM_DUTY_CEILING keeps the real value
-// well inside this, so the clamp only guards against a caller passing junk.
-static float clamp_duty(float d) {
-    if (d < 0.01f) return 0.01f;
-    if (d > 0.45f) return 0.45f;
-    return d;
-}
-
-float cal_h3_expected(float duty) {
-    float d = clamp_duty(duty);
-    return fabsf(sinc_pi(3.0f * d) / (3.0f * sinc_pi(d)));
-}
-
-float cal_form_factor(float duty) {
-    float d = clamp_duty(duty);
-    return 4.0f * sinc_pi(d) / (float)M_PI;
-}
-
+// The live level at the CURRENT phase: image 1.5's reading, kept in 1.7 (see the
+// note above CAL_LEVEL_CYCLES in cal.h for why 1.6's all-phase version was
+// dropped). The phase is not moved.
 float cal_level_peak(uint32_t cycles, uint32_t chop_hz) {
     beam_chop_begin(beam_duty());
     float d = chopped_diff(cycles ? cycles : 1u,
                            chop_hz ? chop_hz : CAL_CHOP_HZ_DEFAULT);
     beam_chop_end();
 
-    // Report the PEAK, not the fitted fundamental, so the number means the same
-    // thing as the `peak` line in `cal demod` and can be compared to the same
-    // 50-70 % target. Sign is irrelevant here -- it only says which side of the
-    // correlation zero the phase sits on.
+    // Report the PEAK, not the fitted fundamental, so the number is in the same
+    // units as the `peak` line in `cal demod` and the 50-70 % aim reads on the same
+    // scale. It is an estimate of that peak, not the sweep's value (V17-N1). Sign
+    // is irrelevant here -- it only says which side of the correlation zero the
+    // phase sits on.
     float ff = cal_form_factor(beam_duty());
     return (ff > 0.01f) ? fabsf(d) / ff : fabsf(d);
 }
@@ -287,12 +267,11 @@ bool cal_demod_phase(uint32_t freq_hz, uint32_t n_points, uint32_t cycles,
     // not of the signal. 2026-08-24 measured it flat at 0.26 across a 2x change
     // in amplitude, and at 0.14 for the same signal swept more slowly. It stays
     // computed and printed as a sweep-health diagnostic; it must not gate.
-    bool ok_amp   = (out->amplitude > 1.0f) && (out->peak <= ADC_FULL_SCALE);
-    bool ok_h3    = (out->h3_ratio  < out->h3_expected + CAL_H3_TOL);
-    bool ok_sat   = (out->sat_frac  < CAL_SAT_MAX);
-    bool ok_null  = (fabsf(out->quad_null) < CAL_QUAD_NULL_MAX * out->amplitude);
-
-    out->valid = ok_amp && ok_h3 && ok_sat && ok_null;
+    //
+    // The four terms (amplitude and peak, h3, sat_frac, quad_null) are applied
+    // by cal_demod_judge() in cal_math.c, unchanged, where the host tests run
+    // them. It also sets `too_small` (1.6), which `valid` does not include.
+    cal_demod_judge(out);
     return out->valid;
 }
 
