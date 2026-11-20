@@ -7,6 +7,7 @@
 		(legacy_teardrops no)
 	)
 	(paper "A4")
+	(title_block (title "The one board to rule them all"))
 	(layers
 		(0 "F.Cu" signal)
 		(4 "In1.Cu" power "gnd")
@@ -147,7 +148,7 @@
 			(mirror no)
 			(drillshape 0)
 			(scaleselection 1)
-			(outputdirectory "KiCad TXT Files/SVG")
+			(outputdirectory "exports/svg")
 		)
 	)
 	(footprint "Resistor_SMD:R_0603_1608Metric"
@@ -7464,7 +7465,7 @@
 		(property ki_fp_filters "MountingHole*")
 		(path "/62a5dd6f-7c5e-4982-851e-b6010d75bf25")
 		(sheetname "/")
-		(sheetfile "The_Second_Board_To_Rule_Them_All.kicad_sch")
+		(sheetfile "The_One_Board_To_Rule_Them_All.kicad_sch")
 		(units
 			(unit
 				(name "A")
@@ -8615,7 +8616,7 @@
 		(property ki_fp_filters "MountingHole*")
 		(path "/a216b6d3-a763-4153-95c9-ccd3cf97bca8")
 		(sheetname "/")
-		(sheetfile "The_Second_Board_To_Rule_Them_All.kicad_sch")
+		(sheetfile "The_One_Board_To_Rule_Them_All.kicad_sch")
 		(units
 			(unit
 				(name "A")
@@ -65356,7 +65357,7 @@
 		(property ki_fp_filters "MountingHole*")
 		(path "/59c3bf5e-2554-45f8-9cab-def41f9d493b")
 		(sheetname "/")
-		(sheetfile "The_Second_Board_To_Rule_Them_All.kicad_sch")
+		(sheetfile "The_One_Board_To_Rule_Them_All.kicad_sch")
 		(units
 			(unit
 				(name "A")
@@ -69125,7 +69126,7 @@
 		(property ki_fp_filters "MountingHole*")
 		(path "/b644e2b3-6eba-48ec-b945-490565260347")
 		(sheetname "/")
-		(sheetfile "The_Second_Board_To_Rule_Them_All.kicad_sch")
+		(sheetfile "The_One_Board_To_Rule_Them_All.kicad_sch")
 		(units
 			(unit
 				(name "A")
@@ -77039,7 +77040,7 @@
 		(property ki_fp_filters "MountingHole*")
 		(path "/c722ce31-26df-4829-9e1d-ffd719720b12")
 		(sheetname "/")
-		(sheetfile "The_Second_Board_To_Rule_Them_All.kicad_sch")
+		(sheetfile "The_One_Board_To_Rule_Them_All.kicad_sch")
 		(units
 			(unit
 				(name "A")
@@ -77847,7 +77848,7 @@
 		(property ki_fp_filters "MountingHole*")
 		(path "/96d938ef-fc80-4af6-b742-e1e6525421fc")
 		(sheetname "/")
-		(sheetfile "The_Second_Board_To_Rule_Them_All.kicad_sch")
+		(sheetfile "The_One_Board_To_Rule_Them_All.kicad_sch")
 		(units
 			(unit
 				(name "A")
@@ -78391,7 +78392,7 @@
 		(property ki_fp_filters "MountingHole*")
 		(path "/578aeade-4df6-4fbb-8093-a1004adbe386")
 		(sheetname "/")
-		(sheetfile "The_Second_Board_To_Rule_Them_All.kicad_sch")
+		(sheetfile "The_One_Board_To_Rule_Them_All.kicad_sch")
 		(units
 			(unit
 				(name "A")
@@ -79678,7 +79679,7 @@
 		(property ki_fp_filters "MountingHole*")
 		(path "/0520aed4-0960-4a6a-a300-4565b9971841")
 		(sheetname "/")
-		(sheetfile "The_Second_Board_To_Rule_Them_All.kicad_sch")
+		(sheetfile "The_One_Board_To_Rule_Them_All.kicad_sch")
 		(units
 			(unit
 				(name "A")

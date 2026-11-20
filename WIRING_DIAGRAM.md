@@ -12,7 +12,7 @@ Complete harness and connector wiring guide for the **Next Gen PiTrac controller
 5. **Optional External Digital Microphone (`J5`) — both I²S (3-wire) and PDM (2-wire)**
 
 > **Sources verified against hardware netlists:**
-> - Next Gen PiTrac KiCad netlist & PCB: [KiCad netlist](Hardware/The_Second_Board_To_Rule_Them_All/The_Second_Board_To_Rule_Them_All.net), [`HARDWARE_REFERENCE.md`](HARDWARE_REFERENCE.md), [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md) (§5.3)
+> - Next Gen PiTrac KiCad netlist & PCB: [KiCad netlist](Hardware/The_One_Board_To_Rule_Them_All/exports/The_One_Board_To_Rule_Them_All.net), [`HARDWARE_REFERENCE.md`](HARDWARE_REFERENCE.md), [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md) (§5.3)
 > - Camera level-shifter safety rules: [`Hardware/firmware/BRINGUP_NEW_BOARD.md`](Hardware/firmware/BRINGUP_NEW_BOARD.md) (Step 13.4) and [`Hardware/firmware/NEXT_BOARD_REV.md`](Hardware/firmware/NEXT_BOARD_REV.md) (`CR-09`, `CR-27`)
 > - ams-OSRAM Mira220 CSP Reference Design (`V2.2`): [`ams-OSRAM/ams-Mira-Image-Sensors` (`camera_board/Mira220`)](https://github.com/ams-OSRAM/ams-Mira-Image-Sensors/tree/main/camera_board/Mira220) (`MIRA220CSP-Sheet1.SchDoc`, `P1` / `J1` / `J2`)
 > - Level converter breakout: HiLetgo `TXS0108E` 8-Channel Bi-Directional Logic Level Converter
@@ -86,7 +86,7 @@ flowchart LR
 
 ## 3. PiTrac V2 PCB Connector Summary (`J1`–`J9`)
 
-Every pin assignment below is extracted directly from the [KiCad netlist](Hardware/The_Second_Board_To_Rule_Them_All/The_Second_Board_To_Rule_Them_All.net) and `.kicad_pcb`. Square pads denote **Pin 1** on headers `J2`, `J4`, `J5`, `J7`, and `J8`.
+Every pin assignment below is extracted directly from the [KiCad netlist](Hardware/The_One_Board_To_Rule_Them_All/exports/The_One_Board_To_Rule_Them_All.net) and `.kicad_pcb`. Square pads denote **Pin 1** on headers `J2`, `J4`, `J5`, `J7`, and `J8`.
 
 | Ref | Connector Type | Function | Normal Play State |
 |---|---|---|---|

@@ -7,7 +7,7 @@ This document compares **Next Gen PiTrac** (the RP2354B controller & connector b
 
 - **Current PiTrac hardware:** [`PiTracLM/PiTrac` — `Hardware/`](https://github.com/PiTracLM/PiTrac/tree/main/Hardware) (**V3 Connector Board** + **IRLED2**)
 - **Current PiTrac documentation:** <https://docs.pitrac.org/>
-- **Next Gen PiTrac sources of truth in this repo:** [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md), netlist-generated [`HARDWARE_REFERENCE.md`](HARDWARE_REFERENCE.md), the [original hardware design doc](Hardware/The_Second_Board_To_Rule_Them_All.md), and live bring-up status in [`Hardware/firmware/PROGRESS.md`](Hardware/firmware/PROGRESS.md) (§0 and §10).
+- **Next Gen PiTrac sources of truth in this repo:** [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md), netlist-generated [`HARDWARE_REFERENCE.md`](HARDWARE_REFERENCE.md), the [original hardware design doc](Hardware/The_One_Board_To_Rule_Them_All.md), and live bring-up status in [`Hardware/firmware/PROGRESS.md`](Hardware/firmware/PROGRESS.md) (§0 and §10).
 
 ---
 
@@ -98,7 +98,7 @@ V2 embeds an **RP2354B** directly on the controller board (providing 48 GPIOs an
 ## 4. Optical Light-Sheet ("Light Curtain") Trigger
 
 - **V1:** Has no optical trigger electronics; it requires visible non-IR COB LED strips to illuminate the teed ball for Camera 1, making low "worm-burner" trajectories and visually noisy hitting mats difficult to track.
-- **Next Gen PiTrac ([original hardware design doc](Hardware/The_Second_Board_To_Rule_Them_All.md) §4, [`HARDWARE_REFERENCE.md`](HARDWARE_REFERENCE.md) §5):** Projects a coincident vertical IR light sheet through an acrylic plano-convex cylindrical lens:
+- **Next Gen PiTrac ([original hardware design doc](Hardware/The_One_Board_To_Rule_Them_All.md) §4, [`HARDWARE_REFERENCE.md`](HARDWARE_REFERENCE.md) §5):** Projects a coincident vertical IR light sheet through an acrylic plano-convex cylindrical lens:
   - **Modulated transmitter:** `D11` (`VSMA1085250X02`) pulsed at `~3 A` peak on a fixed **`104.1667 kHz`** carrier (`GPIO31` PWM 7B, `25%` operating duty, hardware-clamped per cycle to `~122 µs` by `U9` `74LVC1G123`).
   - **TIA with active DC servo:** `D12` (`VBPW34FAS` photodiode, reverse-biased at `36 V` from `VIR` for low junction capacitance and fast speed) feeds `U11A` (`OPA4323` TIA) with a **`2.27 Hz` DC servo loop** (`U11B`/`U11D`) that nulls steady sunlight and room lighting before saturation.
   - **Synchronous lock-in demodulator:** `U13` (`TMUX1219`) + `U12A` sign-switches the carrier at `GPIO39` (PWM 11B, phase-locked to `GPIO31` within **`1.02 ns`** via a single atomic `PWM_EN` register write), followed by a 4th-order `15.39 kHz` Sallen-Key low-pass filter (`U12D`/`U12C`). Bench measurements ([`Hardware/firmware/PROGRESS.md`](Hardware/firmware/PROGRESS.md) §0.5) confirmed **`~48 dB` ambient rejection** at `120 Hz`.
@@ -109,7 +109,7 @@ V2 embeds an **RP2354B** directly on the controller board (providing 48 GPIOs an
 
 ## 5. Microphone and Audio Trigger Capability
 
-Where Current PiTrac's V3 Connector Board has no audio hardware, Next Gen PiTrac provides two acoustic paths ([original hardware design doc](Hardware/The_Second_Board_To_Rule_Them_All.md) §7):
+Where Current PiTrac's V3 Connector Board has no audio hardware, Next Gen PiTrac provides two acoustic paths ([original hardware design doc](Hardware/The_One_Board_To_Rule_Them_All.md) §7):
 
 1. **Onboard analog MEMS microphone (`U16` `CMM-2718AT` + `U17` `LMV321`):** Inverting band-pass stage (`~2.41–24 kHz`, gain `≈ −6.7`, biased at `1.65 V` on `GPIO47/ADC7`), powered from the always-on `+3.3VA` analog rail and sampled continuously at **`250 ksps`** alongside the optical detector while armed. Bench testing measured sub-LSB `0.5 mV` RMS noise and `51–54 dB` clap/snap SNR. It provides a precise club-strike timestamp and acoustic confirmation/veto to reject non-impact optical crossings (such as club waggles or practice swings).
 2. **External digital I²S microphone header (`J5`):** 2×3 header (`GPIO4` SCK, `GPIO5` WS, `GPIO6` DATA via `220 Ω` series resistors, allocated to **PIO0 SM1**) for optional high-SNR digital acoustic capture.

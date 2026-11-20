@@ -47,7 +47,7 @@ It is a map: it summarises, then links to the detailed records rather than repea
 
 ### 1.1 What the board does
 
-*"The Second Board To Rule Them All"* (Rev V1) is the real-time controller for a PiTrac launch
+*"The one board to rule them all"* (Rev V1) is the real-time controller for a PiTrac launch
 monitor. In one shot, it does five things:
 
 1. Detects a golf ball crossing a vertical IR light curtain. The beam is a modulated 104.17 kHz
@@ -153,7 +153,7 @@ Several real bugs here came from hand-written hardware summaries that had drifte
 board. The precedence is:
 
 1. **The KiCad netlist**,
-   [`The_Second_Board_To_Rule_Them_All.net`](Hardware/The_Second_Board_To_Rule_Them_All/The_Second_Board_To_Rule_Them_All.net),
+   [`The_One_Board_To_Rule_Them_All.net`](Hardware/The_One_Board_To_Rule_Them_All/exports/The_One_Board_To_Rule_Them_All.net),
    for connectivity and part values.
 2. **[`Hardware/firmware/src/board.h`](Hardware/firmware/src/board.h)** — every pin and hardware
    constant. It is netlist-verified and heavily commented; read its "HARDWARE FACTS" block before
@@ -214,17 +214,14 @@ PiTrac_V2/
 │
 ├── Hardware/
 │   ├── README.md
-│   ├── The_Second_Board_To_Rule_Them_All.md   original design doc: theory of operation, pin map,
+│   ├── The_One_Board_To_Rule_Them_All.md   original design doc: theory of operation, pin map,
 │   │                                           firmware pseudocode, protocol proposal, timing budget
-│   ├── The_Second_Board_To_Rule_Them_All/     KiCad 10 project (sheet table in §3.2)
+│   ├── The_One_Board_To_Rule_Them_All/     KiCad 10 project (sheet table in §3.2)
 │   │   ├── *.kicad_pro, *.kicad_sch (root + sheets), *.kicad_pcb, *.kicad_dru
-│   │   ├── The_Second_Board_To_Rule_Them_All.net            netlist export: the firmware's source of truth
-│   │   ├── The_Second_Board_To_Rule_Them_All (netlist).txt  second export, identical except its timestamp
-│   │   ├── The_Second_Board_To_Rule_Them_All.csv            BOM export (agrees with the fab BOM)
-│   │   ├── The_Second_Board_To_Rule_Them_All.pdf            schematic PDF
+│   │   ├── exports/                        netlist (.net), schematic PDF, BOM CSV and layer plots (svg/)
+│   │   ├── legacy/                         inactive sheets and alternate timestamped netlist
 │   │   ├── MCU_RaspberryPi_RP2350.kicad_sym, "Pi Connector Parts.kicad_sym"   symbol libraries
 │   │   ├── Library.pretty/, RP2350_80QFN_minimal.pretty/, fp-lib-table        footprints
-│   │   ├── KiCad TXT Files/SVG/                             per-layer SVG plots (plain and Color/)
 │   │   └── jlcpcb/                                          gerber/, production_files/ (BOM, CPL and
 │   │                                                        gerber zip as sent to fab), project.db
 │   └── firmware/                    RP2354B firmware: C11, Pico SDK 2.3.0, ARM
@@ -262,7 +259,7 @@ below comes from the root schematic:
 
 | File | Sheet name | What is on it |
 |---|---|---|
-| `The_Second_Board_To_Rule_Them_All.kicad_sch` | *(root)* | Hierarchy, mounting holes H1–H8 |
+| `The_One_Board_To_Rule_Them_All.kicad_sch` | *(root)* | Hierarchy, mounting holes H1–H8 |
 | `Power.kicad_sch` | Power | J1 input, Q1 reverse-polarity FET, **Q3 soft latch** (Q2 driver, J2 bypass), NCP1117 +3V3, LM5157 36 V boost, 12 V shunt, J3 VIR out, TP1/TP2. The title block still reads "V3 Connector + IRLED", a leftover of the board's lineage. |
 | `RP2350_80QFN_minimal.kicad_sch` | MCU and Connectors | RP2354B (U3) and its core buck, crystal, USB-C J6, SW1/SW2, **Pi header J8**, J4 cameras, J5 I2S mic, J7 panel, J9 USB-A, status LEDs |
 | `strobe.kicad_sch` | **LED Trigger** | The **beam** LED D11 driver: U9 one-shot, U10 gate driver, Q11, TP5. *Despite the file name, this is not the strobe.* |
@@ -270,7 +267,7 @@ below comes from the root schematic:
 | `photodiode.kicad_sch` | Photodiode Amplification | D12, U11 TIA and DC servo, +2V5 buffer, TP6/TP7 |
 | `photodiode_demodulation.kicad_sch` | Photodiode Demodulation | U13 demodulator, LPF, U14 gated HPF, U12B gain, U15 comparator, threshold filter, TP8–TP10 |
 | `microphone.kicad_sch` | Audio Trigger | U16 MEMS mic, U17 LMV321 |
-| `IRLED.kicad_sch`, `MCU.kicad_sch` | *not instantiated* | Legacy files that no sheet references (`MCU.kicad_sch` is empty). Editing them changes nothing on the board. |
+| `legacy/IRLED.kicad_sch`, `legacy/MCU.kicad_sch` | *not instantiated* | No active sheet references these files. The MCU sheet is empty. |
 
 ### 3.3 Documentation map
 
@@ -299,7 +296,7 @@ developer:
 | [`BENCH_P8_PI.md`](Hardware/firmware/BENCH_P8_PI.md) | Phase 8: the gate checklist, Q4/Q7/Q10/Q11, 20-cycle shutdown acceptance, halt-telemetry design | Pi integration |
 | [`NEXT_BOARD_REV.md`](Hardware/firmware/NEXT_BOARD_REV.md) | Hardware change requests CR-01…CR-29 and layout rules | Anything that looks like a board bug |
 | [`SETUP.md`](Hardware/firmware/SETUP.md) | Toolchain install, VS Code route and manual route | Setting up a machine |
-| [`The_Second_Board_To_Rule_Them_All.md`](Hardware/The_Second_Board_To_Rule_Them_All.md) | Original design document | For the concept; then see [§4.6](#46-where-the-design-document-is-out-of-date) |
+| [`The_One_Board_To_Rule_Them_All.md`](Hardware/The_One_Board_To_Rule_Them_All.md) | Original design document | For the concept; then see [§4.6](#46-where-the-design-document-is-out-of-date) |
 | [`HARDWARE_REFERENCE.md`](HARDWARE_REFERENCE.md) | Generated netlist digest: GPIO/ADC maps, test points, DNP parts, corner frequencies, PWM collisions | Any hardware value |
 | [`Software/camera-comparison/`](Software/camera-comparison/README.md) | Pi camera setup, focus preview, conversion | [§11](#11-pi-side-software-in-this-repo) |
 
@@ -466,7 +463,7 @@ What matters to firmware:
 
 ### 4.6 Where the design document is out of date
 
-[`The_Second_Board_To_Rule_Them_All.md`](Hardware/The_Second_Board_To_Rule_Them_All.md) was
+[`The_One_Board_To_Rule_Them_All.md`](Hardware/The_One_Board_To_Rule_Them_All.md) was
 written before bring-up. Its concept and topology are right, but these values and methods are
 superseded:
 
@@ -1665,10 +1662,8 @@ The full reasoning, options and verification steps are in
 - **`CMakeLists.txt` duplicates a cache entry on every reconfigure.** `list(APPEND
   PICO_BOARD_HEADER_DIRS …)` adds one copy each time (20 were seen). It is harmless; guard it
   with `IN_LIST`.
-- **`netlist_report.py` scans every `*.kicad_sch` for DNP parts, including the two orphan
-  sheets.** As a result `HARDWARE_REFERENCE.md` §4 lists H5–H8 under `IRLED.kicad_sch`, although
-  in the netlist they sit on the root sheet and are not DNP. Read DNP from the netlist, or walk
-  the hierarchy.
+- **`netlist_report.py` scans top-level `*.kicad_sch` files for DNP parts.** Keep inactive
+  sheets in `legacy/`; otherwise the scan will count parts that are not in the design.
 - **Extend the generator to emit the J1–J9 pinouts,** so that §5.3 of this guide could be
   generated rather than hand-kept.
 
@@ -1678,8 +1673,6 @@ The full reasoning, options and verification steps are in
   the licence requires it.
 - There is no root `README.md`, so the GitHub landing page shows only a file list. A short README
   that points here would help.
-- `IRLED.kicad_sch` and `MCU.kicad_sch` are not part of the design. Archive or delete them (an
-  owner decision).
 - The design document's body keeps its superseded values. A banner now points to
   [§4.6](#46-where-the-design-document-is-out-of-date).
 
@@ -1835,5 +1828,5 @@ Made on 2026-09-28, together with this guide.
 | `Hardware/firmware/boards/pitrac_ltb_v1.h` | Removed a UTF-8 BOM and double-encoded em-dashes. The USB-only voltage and guard names are corrected |
 | `Hardware/README.md` | Status table, doc table, safety rules, design corrections and licence section brought up to date |
 | `Software/README.md` | Pointer to this guide |
-| `Hardware/The_Second_Board_To_Rule_Them_All.md` | Banner pointing to [§4.6](#46-where-the-design-document-is-out-of-date). Body unchanged |
+| `Hardware/The_One_Board_To_Rule_Them_All.md` | Banner pointing to [§4.6](#46-where-the-design-document-is-out-of-date). Body unchanged |
 | `Hardware/firmware/PROGRESS.md`, `BENCH.md`, `START_HERE.md` | Test 6 recorded as passed (owner-reported). §9/§10 entries marked fixed: the duty ceiling in `beam_configure()` and the phase-model restore |

@@ -517,7 +517,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "The_Second_Board_To_Rule_Them_All.kicad_pro",
+    "filename": "The_One_Board_To_Rule_Them_All.kicad_pro",
     "version": 3
   },
   "net_settings": {
@@ -585,9 +585,9 @@
   "pcbnew": {
     "last_paths": {
       "gencad": "",
-      "idf": "The_Second_Board_To_Rule_Them_All.emn",
+      "idf": "The_One_Board_To_Rule_Them_All.emn",
       "netlist": "",
-      "plot": "KiCad TXT Files/SVG",
+      "plot": "exports/svg",
       "pos_files": "",
       "specctra_dsn": "",
       "step": "",
@@ -602,7 +602,7 @@
       "method": 0,
       "sort_order": 0
     },
-    "bom_export_filename": "KiCad TXT Files\\The_Second_Board_To_Rule_Them_All.csv",
+    "bom_export_filename": "exports/The_One_Board_To_Rule_Them_All.csv",
     "bom_fmt_presets": [],
     "bom_fmt_settings": {
       "field_delimiter": ",",
@@ -793,7 +793,7 @@
     "subpart_id_separator": 0,
     "top_level_sheets": [
       {
-        "filename": "The_Second_Board_To_Rule_Them_All.kicad_sch",
+        "filename": "The_One_Board_To_Rule_Them_All.kicad_sch",
         "name": "Root",
         "uuid": "20e1d7b9-422e-4d51-857b-73abd59de3c9"
       }

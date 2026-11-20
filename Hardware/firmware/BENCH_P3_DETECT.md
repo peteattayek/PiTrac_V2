@@ -52,7 +52,7 @@ TP9 should appear as ~1.45 V at ADC5.
 
 > ## ⚠ Corrections from the netlist, 2026-08-14 — read before starting
 >
-> Reading `THE_SECOND_BOARD_TO_RULE_THEM_ALL` against this document turned up several
+> Reading `The_One_Board_To_Rule_Them_All` against this document turned up several
 > things it asserts that the board does not do. Two of them change what you do at the bench.
 >
 > | # | This doc said | The board actually does |

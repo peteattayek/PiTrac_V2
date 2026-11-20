@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// PiTrac "The Second Board To Rule Them All" -- Rev V1 board header
+// PiTrac "The one board to rule them all" -- Rev V1 board header
 //
 // MCU: Raspberry Pi RP2354B, QFN-80.
 //   - RP2350B core  -> 48 GPIOs, so PICO_RP2350A must be 0.

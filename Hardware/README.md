@@ -1,7 +1,7 @@
 # PiTrac V2 — Hardware
 
 KiCad design and RP2354 firmware for the PiTrac launch monitor controller board:
-*"The Second Board To Rule Them All"*, Rev V1.
+*"The one board to rule them all"*, Rev V1.
 
 > **New to this repo?** Start with [`../DEVELOPER_GUIDE.md`](../DEVELOPER_GUIDE.md). It covers
 > the repo map, the full pinout, how the firmware is built and why, and what is not done yet.
@@ -21,14 +21,18 @@ everything with pixels.**
 
 ```
 Hardware/
-├── The_Second_Board_To_Rule_Them_All.md     ← design document: theory of operation,
+├── The_One_Board_To_Rule_Them_All.md        ← design document: theory of operation,
 │                                              subsystem detail, test points, pin map
-├── The_Second_Board_To_Rule_Them_All/       ← KiCad 10 project, 8 sheets
-│   ├── *.kicad_sch, *.kicad_pcb
-│   ├── *.net                                 netlist export (firmware is verified against this)
+├── The_One_Board_To_Rule_Them_All/          ← KiCad 10 project, 8 sheets
+│   ├── *.kicad_pro, *.kicad_sch, *.kicad_pcb  editable project, schematics and layout
+│   ├── exports/                              netlist, schematic PDF, BOM and SVG plots
+│   ├── legacy/                               inactive sheets and superseded export
 │   └── jlcpcb/production_files/              gerbers + BOM + CPL as sent to fab
 └── firmware/                                ← RP2354B firmware, C / Pico SDK 2.x
 ```
+
+[Open the KiCad project](The_One_Board_To_Rule_Them_All/The_One_Board_To_Rule_Them_All.kicad_pro)
+or [browse the board folder inventory](The_One_Board_To_Rule_Them_All/README.md).
 
 `../HARDWARE_REFERENCE.md` (repo root) is **generated** from the netlist by
 `firmware/tools/netlist_report.py`. Regenerate it rather than editing it.

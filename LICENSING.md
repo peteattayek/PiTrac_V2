@@ -13,10 +13,10 @@ under the same terms. There is deliberately no path here to a closed fork.
 
 ## Hardware — CERN-OHL-S v2
 
-**Covers** everything under `Hardware/The_Second_Board_To_Rule_Them_All/` — schematics,
+**Covers** everything under `Hardware/The_One_Board_To_Rule_Them_All/` — schematics,
 PCB layout, symbol and footprint libraries, netlists, the BOM, and the gerbers in
 `jlcpcb/production_files/` — plus the design document
-`Hardware/The_Second_Board_To_Rule_Them_All.md`.
+`Hardware/The_One_Board_To_Rule_Them_All.md`.
 
 The notice to reproduce, per §3.1 of the licence:
 

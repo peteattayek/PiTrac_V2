@@ -10,7 +10,7 @@ python Hardware/firmware/tools/netlist_report.py          # rewrite this file
 python Hardware/firmware/tools/netlist_report.py --check  # fail if stale
 ```
 
-Source: `Hardware/The_Second_Board_To_Rule_Them_All/`, netlist exported 2026-07-15.
+Source: `Hardware/The_One_Board_To_Rule_Them_All/`, netlist exported 2026-07-15.
 
 ## How to use this file, and when not to
 
@@ -136,11 +136,10 @@ Complete across every sheet. **Only R98 is an electrical tuning option.**
 
 | sheet | refs |
 |---|---|
-| `IRLED.kicad_sch` | H5, H6, H7, H8 |
 | `Power.kicad_sch` | C9, R11 |
 | `photodiode_demodulation.kicad_sch` | R98 |
 
-H* are mounting holes. C9 (100 pF on VIR) and R11 (5R1) are optional hand-solder
+C9 (100 pF on VIR) and R11 (5R1) are optional hand-solder
 parts on the Power sheet. **R98 is the detect-chain gain option — see §6.**
 
 ---

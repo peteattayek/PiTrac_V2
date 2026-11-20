@@ -7,7 +7,7 @@ This document explains the physical, analog, and digital signal-processing theor
 
 > **Companion documents in this repository:**
 > - **Netlist-extracted component values and derived poles:** [`HARDWARE_REFERENCE.md`](HARDWARE_REFERENCE.md) (§5–§6)
-> - **Original board overview and firmware schedule math:** [original hardware design doc](Hardware/The_Second_Board_To_Rule_Them_All.md) (§4, §13)
+> - **Original board overview and firmware schedule math:** [original hardware design doc](Hardware/The_One_Board_To_Rule_Them_All.md) (§4, §13)
 > - **Bench procedures and empirical proofs:** [`Hardware/firmware/BENCH_P2_BEAM.md`](Hardware/firmware/BENCH_P2_BEAM.md) and [`Hardware/firmware/BENCH_P3_DETECT.md`](Hardware/firmware/BENCH_P3_DETECT.md)
 > - **Firmware implementations:** [`beam.h`](Hardware/firmware/src/beam.h), [`cal.h`](Hardware/firmware/src/cal.h), [`detect.h`](Hardware/firmware/src/detect.h), and [`detect.pio`](Hardware/firmware/src/detect.pio)
 

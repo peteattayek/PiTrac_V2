@@ -1,4 +1,4 @@
-# PiTrac — The Second Board To Rule Them All
+# PiTrac — The one board to rule them all
 
 **Standalone launch-monitor controller board — functional documentation and RP2354 firmware pseudocode**
 

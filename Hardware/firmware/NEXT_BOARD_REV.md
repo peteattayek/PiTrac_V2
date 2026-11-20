@@ -2,8 +2,8 @@
 
 **Status: open, accumulating.** Nothing here is committed to a layout yet.
 
-This is the running list of hardware changes for the next spin of *The Second Board To Rule
-Them All*, written as bring-up finds them. Every entry states **why** (with the measurement
+This is the running list of hardware changes for the next spin of *The one board to rule
+them all*, written as bring-up finds them. Every entry states **why** (with the measurement
 or the mechanism, not just the request), **what to change**, **how to verify it worked**, and
 **what firmware has to change with it** — because several of these break firmware silently if
 the code is not updated in the same commit.

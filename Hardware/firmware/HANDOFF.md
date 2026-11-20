@@ -58,7 +58,7 @@ before 2026-09-18 are in `PROGRESS_ARCHIVE.md` §6), §8
 `ARCHITECTURE.md` (what runs on PIO/PWM/DMA vs the CPU), and `HARDWARE_REFERENCE.md` **at the repo
 root** (generated from the KiCad netlist by `tools/netlist_report.py`).
 
-The netlist is `Hardware/The_Second_Board_To_Rule_Them_All/The_Second_Board_To_Rule_Them_All.net`.
+The netlist is `Hardware/The_One_Board_To_Rule_Them_All/exports/The_One_Board_To_Rule_Them_All.net`.
 **When a doc and the netlist disagree, the netlist is right** — several real bugs came from
 hand-written hardware summaries that had drifted. The netlist is the design, though, not the
 copper: whether two pads actually connect on the board is a DRC question (§7).
@@ -103,7 +103,7 @@ explicit decision from the owner.
    alone keeps +3V3 live), then power up. When a bench step names a probe point, the
    instruction must say what that point sits next to — the same omission as the foil on D12.
    **Check the PCB, not memory:** pad positions and the nearest other-net copper come from
-   `The_Second_Board_To_Rule_Them_All.kicad_pcb` (parse it; §7), and `PROGRESS.md` already
+   `The_One_Board_To_Rule_Them_All.kicad_pcb` (parse it; §7), and `PROGRESS.md` already
    records several (R61, R64, R65, TP2, TP3, TP4). The 2026-10-07 R65 ground advice ignored a
    gap that was already written down (§6 2026-10-08). The current lead plan, with a
    do-not-solder list, is in `BENCH_P6_STROBE.md` 6c, "Leads to solder for 6c/6d".

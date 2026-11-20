@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// PiTrac "Second Board To Rule Them All" -- RP2354B firmware
+// PiTrac "The one board to rule them all" -- RP2354B firmware
 //
 // Phase 0  : board bring-up, safe state, CLI, ADC block capture
 // Phase 1  : power button + latch, USB-power guard

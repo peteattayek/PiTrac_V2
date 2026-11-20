@@ -17,7 +17,7 @@ endif()
 cmake_minimum_required(VERSION 3.13)
 
 # ---------------------------------------------------------------------------
-# PiTrac "Second Board To Rule Them All" -- RP2354B firmware
+# PiTrac "The one board to rule them all" -- RP2354B firmware
 #
 # Build:
 #   cmake -B build -G Ninja -DPICO_BOARD=pitrac_ltb_v1 -DPICO_PLATFORM=rp2350

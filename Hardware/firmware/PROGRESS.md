@@ -125,7 +125,7 @@ assembly* — a tolerance, a mounting, an optical alignment — it repeats.
 
 ## 2. Verified hardware facts (already checked against the netlist — do not re-derive)
 
-- The .md §10 pin map matches `The_Second_Board_To_Rule_Them_All.net` **exactly**, all 30 signal GPIOs.
+- The .md §10 pin map matches `The_One_Board_To_Rule_Them_All.net` **exactly**, all 30 signal GPIOs.
 - Both netlist exports (`.net` and `(netlist).txt`) are byte-identical except the export timestamp.
 - The updated `.csv` and the as-built `jlcpcb/production_files/BOM-*.csv` agree with the netlist
   and the .md. Every firmware-relevant R/C value was checked and matches. (An older stale CSV

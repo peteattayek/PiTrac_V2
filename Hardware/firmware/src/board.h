@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 PiTrac contributors
-// board.h -- PiTrac "Second Board To Rule Them All" Rev V1
+// board.h -- PiTrac "The one board to rule them all" Rev V1
 //
 // SINGLE SOURCE OF TRUTH for pins and hardware constants.
 //
-// Every GPIO below was verified against The_Second_Board_To_Rule_Them_All.net
+// Every GPIO below was verified against The_One_Board_To_Rule_Them_All.net
 // (KiCad netlist export), not just the documentation. If you change a number
 // here, re-check the netlist.
 //

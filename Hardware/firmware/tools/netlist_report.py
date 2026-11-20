@@ -36,12 +36,12 @@ import argparse, math, os, re, sys, glob
 HERE  = os.path.dirname(os.path.abspath(__file__))
 FW    = os.path.dirname(HERE)
 ROOT  = os.path.dirname(os.path.dirname(FW))
-# Exact case matters: the directory is "The_Second_Board_To_Rule_Them_All". An
+# Exact case matters: the directory is "The_One_Board_To_Rule_Them_All". An
 # all-caps spelling here used to work only on case-insensitive filesystems
 # (Windows, default macOS) and failed outright on Linux.
-KICAD_DIRNAME = "The_Second_Board_To_Rule_Them_All"
+KICAD_DIRNAME = "The_One_Board_To_Rule_Them_All"
 KICAD = os.path.join(ROOT, "Hardware", KICAD_DIRNAME)
-NET   = os.path.join(KICAD, "The_Second_Board_To_Rule_Them_All.net")
+NET   = os.path.join(KICAD, "exports", KICAD_DIRNAME + ".net")
 OUT   = os.path.join(ROOT, "HARDWARE_REFERENCE.md")
 
 
@@ -251,7 +251,7 @@ def main():
     for f, refs in sorted(dnp.items()):
         w(f"| `{f}` | {', '.join(refs)} |")
     w("")
-    w("H* are mounting holes. C9 (100 pF on VIR) and R11 (5R1) are optional hand-solder")
+    w("C9 (100 pF on VIR) and R11 (5R1) are optional hand-solder")
     w("parts on the Power sheet. **R98 is the detect-chain gain option — see §6.**")
     w("")
 
