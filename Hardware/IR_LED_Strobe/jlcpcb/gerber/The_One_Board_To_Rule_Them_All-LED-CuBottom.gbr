@@ -1,0 +1,27 @@
+%TF.GenerationSoftware,KiCad,Pcbnew,10.0.4*%
+%TF.CreationDate,2026-07-12T07:01:48-04:00*%
+%TF.ProjectId,The_One_Board_To_Rule_Them_All-LED,5468655f-4f6e-4655-9f42-6f6172645f54,rev?*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Copper,L2,Bot*%
+%TF.FilePolarity,Positive*%
+%FSLAX46Y46*%
+G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
+G04 Created by KiCad (PCBNEW 10.0.4) date 2026-07-12 07:01:48*
+%MOMM*%
+%LPD*%
+G01*
+G04 APERTURE LIST*
+%TA.AperFunction,ComponentPad*%
+%ADD10C,4.400000*%
+%TD*%
+G04 APERTURE END LIST*
+D10*
+%TO.P,VIR+,1,1_1*%
+%TO.N,Net-(H2-Pad1)*%
+X86760000Y-76040000D03*
+%TD*%
+%TO.P,VIR-,1,1_1*%
+%TO.N,Net-(D10-K)*%
+X80960000Y-76040000D03*
+%TD*%
+M02*

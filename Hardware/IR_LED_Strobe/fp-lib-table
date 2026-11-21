@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "VSMA1085250") (type "KiCad") (uri "${KIPRJMOD}/VSMA1085250.pretty") (options "") (descr "LED footprint recovered from the original strobe PCB"))
+)
