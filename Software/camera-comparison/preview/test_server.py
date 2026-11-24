@@ -55,6 +55,54 @@ class FrameTests(unittest.TestCase):
         self.assertIsNone(store.snapshot(after=2))
         self.assertEqual(store.status()["frames_received"], 2)
 
+    def test_hold_flash_shows_the_latest_lit_frame(self) -> None:
+        dark, lit, lit2 = b"\x0e" * 8, b"\x50" * 8, b"\x60" * 8
+        with patch("preview.server.time.monotonic", return_value=10):
+            store = FrameStore(small_config(), hold_flash=True)
+            for frame in (dark, dark, dark, lit, dark, dark):
+                store.publish(frame)
+            self.assertEqual(store.snapshot(), (4, lit))
+            self.assertIsNone(store.snapshot(after=4))  # held: nothing new to send
+            status = store.status()
+            self.assertEqual((status["showing"], status["flash_frames"]), ("flash", 1))
+            self.assertEqual(status["flash_baseline"], 14.0)  # lit frames do not move the baseline
+            store.publish(lit2)
+            self.assertEqual(store.snapshot(after=4), (7, lit2))
+
+    def test_hold_flash_expires_to_the_latest_frame(self) -> None:
+        store = FrameStore(small_config(), hold_flash=True)
+        with patch("preview.server.time.monotonic", return_value=10):
+            store.publish(b"\x0e" * 8)
+            store.publish(b"\x50" * 8)
+        with patch("preview.server.time.monotonic", return_value=11.5):
+            store.publish(b"\x0f" * 8)
+            self.assertEqual(store.snapshot(), (2, b"\x50" * 8))
+        with patch("preview.server.time.monotonic", return_value=13.1):  # 3.1 s after the flash
+            store.publish(b"\x0e" * 8)
+            self.assertEqual(store.snapshot(after=2), (4, b"\x0e" * 8))
+            self.assertEqual(store.status()["showing"], "latest")
+
+    def test_hold_flash_ignores_small_changes_and_is_off_by_default(self) -> None:
+        store = FrameStore(small_config(), hold_flash=True)
+        for value in (14, 16, 13, 15):  # within 3 codes of the baseline: not lit
+            store.publish(bytes([value]) * 8)
+        self.assertEqual(store.snapshot(), (4, bytes([15]) * 8))
+        self.assertEqual(store.status()["flash_frames"], 0)
+        plain = FrameStore(small_config())
+        for frame in (b"\x0e" * 8, b"\x50" * 8, b"\x0e" * 8):
+            plain.publish(frame)
+        self.assertEqual(plain.snapshot(), (3, b"\x0e" * 8))
+        self.assertEqual(plain.status()["showing"], "latest")
+
+    def test_hold_flash_resets_on_reconfigure(self) -> None:
+        store = FrameStore(small_config(), hold_flash=True)
+        store.publish(b"\x0e" * 8)
+        store.publish(b"\x50" * 8)
+        store.reconfigure(small_config())
+        store.publish(b"\x0e" * 8)
+        self.assertEqual(store.snapshot(), (3, b"\x0e" * 8))
+        self.assertEqual(store.status()["flash_frames"], 0)
+
     def test_wrong_size_rejected(self) -> None:
         with self.assertRaisesRegex(PreviewError, "frame length"):
             FrameStore(small_config()).publish(b"short")

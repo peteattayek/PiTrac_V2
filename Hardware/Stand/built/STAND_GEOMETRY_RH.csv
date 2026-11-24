@@ -1,0 +1,9 @@
+item,x_mm,y_mm,z_mm,note
+CAM0 pupil,65.00,-368.80,97.60,"pitch +0.00 deg; fitted, see README"
+CAM1 pupil,65.00,-368.52,333.50,"pitch -22.00 deg; fitted, see README"
+strobe LED centroid,65.00,-372.34,231.80,pitch -16.00 deg; 20 LED part origins
+beam LED D11,65.00,-419.05,143.50,"KiCad (33.5, 146.5)"
+photodiode D12 (36 V),65.00,-419.05,183.50,"KiCad (73.5, 146.5)"
+mic U16,100.59,-419.05,201.89,"KiCad (91.89, 110.905)"
+ball on the mat,0.00,0.00,57.34,mat top Z = 36
+ball on a 40 mm-centre tee,0.00,0.00,76.00,mat top Z = 36

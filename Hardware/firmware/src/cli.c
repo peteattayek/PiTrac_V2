@@ -272,8 +272,8 @@ static const char *k_help =
     "                             and set the session cap from it\n"
     "  strobe wave                last live ADC0 record as CSV, 2 us per sample\n"
     "\n"
-    "  -- Phase 7: camera handshake (PIO1). NO CAMERA ON J4 (CR-09): 7a loopback,\n"
-    "  -- 7b a 3.3 V generator. The trigger is driven only with the rail up.\n"
+    "  -- Phase 7: camera handshake (PIO1). J4 is 3.3 V: a Mira220 only through a\n"
+    "  -- TXS0108E module (CR-09). The trigger is driven only with the rail up.\n"
     "  cam                        handshake engine, trigger + strobe pins (read back),\n"
     "                             the strobe gate, the last shot\n"
     "  cam shot [first_us] [m/s] [timeout_us]\n"
@@ -424,14 +424,17 @@ static bool reset_guard_ok(int argc, char **argv, const char *cmd) {
     return false;
 }
 
-// The same guard, AFTER the command's 50 ms output wait and immediately before
-// its reboot (image 1.11, review finding V110-F1). The wait is a bare sleep, so
-// the FSM does not run during it: the latch, its state and its classification
-// are as they were at entry, and only the Pi's 3V3 can have changed. Called
-// BEFORE the watchdog is disarmed, so a refusal here leaves it as it was.
+// The same guard, AFTER the command's message and its 50 ms wait, immediately
+// before its reboot (image 1.11, review finding V110-F1). Neither the message
+// nor the wait (a bare sleep) runs the FSM: the latch, its state and its
+// classification are as they were at entry, and only the Pi's 3V3 can have
+// changed -- at any point after the first check, while the message went out or
+// during the sleep (image 1.12, V111-N2). Called BEFORE the watchdog is
+// disarmed, so a refusal here leaves it as it was.
 static bool reset_still_ok(int argc, char **argv, const char *cmd) {
     if (reset_guard_ok(argc, argv, cmd)) return true;
-    printf("  Nothing was done: the Pi's 3V3 rose during the 50 ms wait before '%s'.\n", cmd);
+    printf("  Nothing was done: the Pi's 3V3 rose after the first check (during the\n"
+           "  message or the 50 ms wait), before '%s'.\n", cmd);
     return false;
 }
 
@@ -2694,8 +2697,8 @@ static void cam_status(void) {
     printf("limits   : timeout %u us (%u-%u), first delay <= %u us, hold <= %u us\n",
            (unsigned)CAM_TIMEOUT_US, (unsigned)CAM_TIMEOUT_MIN_US, (unsigned)CAM_TIMEOUT_MAX_US,
            (unsigned)CAM_FIRST_DELAY_MAX_US, (unsigned)CAM_HOLD_MAX_US);
-    printf("J4       : NO CAMERA (CR-09). 7a: J4.3 jumpered to J4.7 and J4.8.\n"
-           "           7b: a 3.3 V generator on J4.7/J4.8, triggered from J4.3.\n");
+    printf("J4       : 3.3 V. A Mira220 only through a TXS0108E module (CR-09);\n"
+           "           t_cam ~0.2 us measured with one (7c.1, 2026-11-18).\n");
     shot_result_t r;
     if (shot_last(&r)) print_shot(&r);
     else               printf("shot     : none since boot\n");
@@ -2748,7 +2751,7 @@ static void cmd_cam(int argc, char **argv) {
         q.burst.gap_us   = sc.gap_us;
         q.burst.count    = sc.count;
         printf("cam shot : first delay %lu us, timeout %lu us; DRY burst = S15 at %.1f m/s:\n"
-               "           %lu x %lu us, every %lu us. J4: NO CAMERA (CR-09).\n",
+               "           %lu x %lu us, every %lu us.\n",
                (unsigned long)q.first_delay_us, (unsigned long)q.timeout_us, (double)v,
                (unsigned long)sc.count, (unsigned long)sc.width_us, (unsigned long)sc.period_us);
         run_test_shot(&q);
@@ -2766,7 +2769,7 @@ static void cmd_cam(int argc, char **argv) {
         q.strobe  = false;
         q.hold_us = CAM_TRIG_HOLD_US;
         printf("cam trig : the handshake alone: first delay %lu us, timeout %lu us, hold %u us.\n"
-               "           No burst. J4: NO CAMERA (CR-09).\n",
+               "           No burst.\n",
                (unsigned long)q.first_delay_us, (unsigned long)q.timeout_us,
                (unsigned)CAM_TRIG_HOLD_US);
         run_test_shot(&q);
@@ -3319,7 +3322,10 @@ static void cmd_fault(int argc, char **argv) {
 // Until 1.10 the watchdog was disarmed first and the guard ran only at 1: a Pi
 // whose 3V3 rose during the 50 ms was cut. Now a refusal at 3 leaves the
 // watchdog as it was. An armed watchdog (1 s, fed by the superloop pass just
-// before this command) cannot expire in the 50 ms.
+// before this command) cannot expire in the bare 50 ms sleep itself. It bounds
+// nothing else: the message before the sleep goes out over USB, and a host that
+// stalls or trickles can hold a printf longer than a second (image 1.12, review
+// note V111-N1). So never arm the watchdog with a powered Pi on this basis.
 //
 // Bare sleep on purpose, not pitrac_yield_ms(): with the FSM frozen, nothing
 // can close the latch during the wait (a button press would, through a yield),

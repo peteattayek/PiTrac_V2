@@ -17,12 +17,12 @@ document map and reading order are in [`../README.md`](../README.md) and `HANDOF
 |---|---|
 | **Handoff** | 🔵 **New to this work? Read `HANDOFF.md` first** (conventions, safety, tooling pitfalls, reading order; for a whole-repo developer overview see `DEVELOPER_GUIDE.md` at the repo root), then §10 for the live resume point. There is **no separate plan file** — the `~/.claude/plans/…` paths this table used to cite no longer exist. PROGRESS is the plan. |
 | **Boards** | **Board 3** — UID `6d6fda754e367a40`, **reworked TIA (Rf 116 kΩ, Cf 0.99 pF)**, calibrated and saved (carrier 104166 Hz, phase 1311 ticks, slot A seq 5); runs the `Oct  5 2026 11:13:55` image; 6a.1 showed **no pulse at R61** (2026-10-05). **Board 2** — stock 470 kΩ TIA, calibrated; **a probe on R61 sparked 2026-10-05**, damage check pending. ⚠ One of boards 2/3 reads **10 Ω from R61 to GND even with R62 removed** (2026-10-06) — parked, R62 off; which board is to be confirmed (§6). 🟡 **Board 1** — UID `a764f5332ca5ac53`; **runs image 1.11 in partition A since 2026-11-12 (bought; 1.7 in B, the fallback); §8.10 PASS (§6)**; U11B destroyed 2026-08-17 by foil across D12 (§11): **out of service for optics**, **the strobe board** — fast-path bring-up and **6a/6b PASS 2026-10-06**, TP3 loop stability **PASS 2026-10-08**; before 1.2, 1.7 and 1.11 it ran **r5 `Oct 20 2026 14:59:52`** (flashed 2026-10-30; partition table installed 2026-11-02; since 2026-11-09 r5 runs in partition B, A erased, after §8.7; §6); before it the readback-fix image `Oct 15 2026 22:09:11` (flashed 2026-10-16), `Oct 12 2026 14:43:50` from 2026-10-12, and the `Oct  7` 6c build (§6); leads soldered to R33 (GPIO25), R61 pad 1 (U5 Q), TP3, TP4 and two on R66's GND pad; J3 pins 1 and 2 re-soldered (cold joints, 2026-10-13); LED leads twisted; **1 µF X5R at Q9's gate** (CR-23 stage-1 rework, verified 2026-10-15). |
-| **Additional original-board rework batch** | **Three other original boards; 2 pF parts confirmed C0G. COM10 UID `6093584a7790419d` identified 2026-11-03**, running r5 flat. Owner confirms original R80 470 kohm retained with 162 kohm added in parallel; intended Rf **120.475 kohm**, actual connection/value not yet established. **ADC2 clips at 8% and 25% duty** in the new captures; optical acceptance pending, next is the unpowered R80 joint/measurement check (section 10). ADC5V scale **1.0688 saved, slot A seq 9**. Other batch UIDs and their checks remain pending; temporary RW-A/B/C labels have not been mapped to UIDs. [Rework plan](REWORK_ORIGINAL_BOARDS.md), [check protocol](BENCH_REWORK_CHECK.md). |
+| **Additional original-board rework batch** | **Three other original boards; 2 pF parts confirmed C0G. COM10 UID `6093584a7790419d` identified 2026-11-03**, running r5 flat; **it is Board 5, brought up through §12 on 2026-11-23, and powering board 1's Pi since that day, with R80 measured at 120 kΩ across its pads (§6, §10)**. Owner confirms original R80 470 kohm retained with 162 kohm added in parallel; intended Rf **120.475 kohm**, measured 120 kΩ. **ADC2 clipped at 8% and 25% duty on 2026-11-03**, with no baffle; with one, §8 passes to 25 % (2026-11-23). ADC5V scale **1.0688 saved, slot A seq 9**. Other batch UIDs and their checks remain pending; temporary RW-A/B/C labels have not been mapped to UIDs. [Rework plan](REWORK_ORIGINAL_BOARDS.md), [check protocol](BENCH_REWORK_CHECK.md). |
 | Toolchain | Installed — VS Code Pico extension, private copies in `%USERPROFILE%\.pico-sdk`. SDK 2.3.0, toolchain 15_2_Rel1, ninja 1.13.2, cmake 4.3.4. ⚠ **Not on PATH** — see `HANDOFF.md` for the export line. |
-| Bench equipment | Saleae **Logic Pro 8** (analog inputs **±10 V / 12 V max**, ~5 MHz analog bandwidth, up to 50 MS/s); **Tek MSO54B** (500 MHz, 4 ch, TPP1000 probes — **available again 2026-10-08**); Tektronix **TDS 1002** (60 MHz, 2 ch, 8-bit; the fallback, 2026-10-07); DMM, current-limited PSU, FLIR thermal camera. |
-| **Firmware** | 🟡 **Image 1.11, 2026-11-12: 1.10 with V110-F1 fixed -- `reset` and `bootsel` check again after their 50 ms wait, immediately before the reboot, disarm the watchdog only then, and refuse while POWERING_ON. Built, host tests 299/299, 30/30 mutations; **on board 1 since 2026-11-12, from the Pi (A, bought; 1.7 in B the fallback); `BENCH_P8_PI.md` §8.10 PASS**; independent confirm review PASS (V110-F1 closed, sampled V19-F1 closure complete; V111-N1/N2 nonblocking wording notes)** (§6, "Image 1.11"): `build_v1.11/`, Release `Nov 12 2026 15:42:51`, 247536 text / 0 data / 422684 bss, UF2 SHA256 `E940AE6A…F9B72991`, `.bin` `883D4EFA…CA1CFC31`. ❌ **Image 1.10, 2026-11-12: 1.9 with V19-F1 fixed -- plain `reset`, `bootsel` and `cfg save` count a Pi's 3V3 sensed now as a Pi (`power_pi_maybe_present()`), the FSM unchanged -- and the 1.9 review's two text notes. Built, host tests 298/298, 25/25 mutations; NOT on a board; independent confirm review NOT PASSED (V110-F1: reset/bootsel permission becomes stale during their 50 ms wait)** (§6, "Image 1.10"): `build_v1.10/`, Release `Nov 12 2026 15:13:28`, 246560 text / 0 data / 422684 bss, UF2 SHA256 `F5BF95F2…CFF48060`, `.bin` `ECB0746B…2626029A`. ❌ **Image 1.9, 2026-11-12: 1.8 with the strobe's Pi observed fresh -- the 3V3 sensed now and the power FSM's classification, UNSETTLED when they disagree (V18-F1) -- and V18-N1's comments. Built, host tests 292/292, 17/17 mutations; NOT on a board; confirm review closes V18-F1/N1, but overall NOT PASSED (V19-F1: pre-existing reset/bootsel and config guards trust cached Pi presence)** (§6, "Image 1.9"): `build_v1.9/`, Release `Nov 12 2026 11:06:20`, 245512 text / 0 data / 422684 bss, UF2 SHA256 `0004839E…52247D16`, `.bin` `32409AE6…B57766B9`. ❌ **Image 1.8, 2026-11-12: the strobe may fire with a Pi powered; live mode then arms no watchdog (owner), and a live session ends if a Pi appears or goes away; `level` worded as an aiming aid (V17-N1). Built, host tests 280/280, 11/11 mutations; NOT on a board; independent review NOT PASSED (V18-F1: cached Pi presence defeats the live-session/watchdog rule)** (§6, "Image 1.8"): `build_v1.8/`, Release `Nov 12 2026 10:25:58`, 245072 text / 0 data / 422684 bss, UF2 SHA256 `14D5CBC6…88002DB6`, `.bin` `5E691DCB…4D530463`. The owner approved `BENCH_P8_PI.md` §8.10; the failed review blocks flashing and that test. 🟡 **Image 1.7, 2026-11-11: 1.6 without the all-phase `level` (back to 1.5's current-phase reading) and with the 1.6 review's comment note (V16-N1). It keeps the `cal demod` 30 % floor and phase restore, the saved threshold restored at boot, and `cfg save` naming its fix. Board 4's next image (it shipped on 1.5). Built, host tests PASS; independent review PASS 2026-11-12; **on board 1 since 2026-11-12, from the Pi (`BENCH_P8_PI.md` §8.9b PASS)** (V16-F1/N1 closed; nonblocking wording note V17-N1)** (§6, 2026-11-11, "Image 1.7"): `build_v1.7/`, Release `Nov 11 2026 16:41:14`, 244008 text / 0 data / 422684 bss, UF2 SHA256 `CCB7B931…BA15087B`, `.bin` `F7129CD4…84C94602`, 273/273 host tests, 9/9 mutations caught. ❌ **Image 1.6: independent review NOT PASSED (V16-F1, `level`); never released** (§6, "Image 1.6"). 🟡 **Image 1.5, 2026-11-10: 1.4 with the independent review's three findings fixed (H7-F1 one coherent sample of both strobes; H7-F2 the strobe gate read with the engine stopped, and CAM_TIMEOUT certified only by it; H7-F3 `gpio 10 1` refused with the rail down, a fault or a handshake). Built, host tests PASS; Board 4 shipped on it in partition A (2026-11-11); independent confirm review PASS (H7-F1/F2/F3 closed)** (§6, 2026-11-10, "Image 1.5"): `build_v1.5/`, Release `Nov 10 2026 16:48:47`, 241824 text / 0 data / 422684 bss, UF2 SHA256 `F82A6562…F85374B7`, `.bin` `6ABFDBE4…1716A9AA`, 265/265 host tests, 34/34 mutations caught. 🔴 **Image 1.4, 2026-11-10 (superseded by 1.5; never left this PC; `build_v1.4/` removed): Phase 7 -- the camera handshake in PIO1 (trigger, both strobes, `t_cam`, FIRE at max(first delay, t_cam), `CAM_TIMEOUT`) and a dry camera-gated strobe burst; `cam`, `cam shot`, `cam trig`. Built, host tests PASS; NOT on a board; independent review NOT PASSED (H7-F1/F2/F3; review report in section 6)** (§6, 2026-11-10, "Phase 7 firmware"): `build_v1.4/`, Release `Nov 10 2026 13:46:40`, 240896 text / 0 data / 422676 bss, UF2 SHA256 `96563EF9…48B54134`, `.bin` `3C894686…4F03BCB51`, 246/246 host tests (the PIO programs run in a cycle model), 20/20 mutations caught. 🟡 **Image 1.3, 2026-11-10: the 10 s shutdown holdoff (owner), the flash-update `this boot` label and the released-J8.37 label; built, host tests PASS, not on a board yet** (§6, 2026-11-10, "Image 1.3"): `build_v1.3/`, Release `Nov 10 2026 10:25:37`, 224872 text / 0 data / 422112 bss, UF2 SHA256 `0258B97E…07C3533`, `.bin` `76762B40…766971FD7`, 228/228 host tests, 23/23 Pi-tool, 21/21 shutdown-hook. Never ran on board 1: `BENCH_P8_PI.md` §8.9b runs 1.7 instead (2026-11-12). 🟡 **Image 1.2, 2026-11-10: r5's code with only the version changed; on board 1 since 2026-11-10, installed from the Pi (`BENCH_P8_PI.md` §8.9 PASS)** (§6, 2026-11-10): `build_v1.2/`, Release `Nov 10 2026 09:47:13`, 224728 text / 0 data / 422112 bss, UF2 SHA256 `7B7DBEE3…C24AD6FF`, `.bin` `3EFB1072…2E81CD18`. 🟡 **New image r5, 2026-10-20: r4 with R4-F1 fixed (cleanup counts only when sector 0 reads back all 0x00 or all 0xFF; the test oracle is the boot ROM's own scanner); independent confirm review PASS; flashed on board 1 2026-10-30**, §8.0b PASS, partition table installed 2026-11-02, §8.7 PASS 2026-11-09 (§6, 2026-10-30, 2026-11-02 and 2026-11-09; review: §6, 2026-10-20 r5): Release `Oct 20 2026 14:59:52`, 224720 text / 0 data / 422112 bss, SHA256 `AC5F4493…C272ACF7`, version 1.1, 228/228 host tests, 23/23 Python tests, 83/83 mutations caught. 🟡 **Image r4, 2026-10-20 (superseded by r5): r3 with the review's original update reproductions fixed; R3-F2 confirmed, but confirm review NOT PASSED on R4-F1 (cleanup can miss a surviving header across the first-sector boundary); NOT flashed** (§6, 2026-10-20 r4): Release `Oct 20 2026 11:11:58`, 224568 text / 0 data / 422112 bss, SHA256 `015205B5…10A7FE96`, version 1.1, 224/224 host tests, 23/23 Python tests, 79/79 mutations caught. 🟡 **Image r3, 2026-10-20 (superseded by r4): the Pi serial link and firmware updates from the Pi (A/B partitions, try-before-you-buy, rollback), on top of r2; independent review NOT PASSED, NOT flashed** (§6, 2026-10-20): Release `Oct 20 2026 06:13:43`, 222424 text / 0 data / 421752 bss, SHA256 `BD1E45D7…AD495AA4`, version 1.1, 204/204 host tests, 21/21 Python tests, 52/52 mutations caught. It contains r2 unchanged; both r2 fixes are now confirmed. Two new update findings (failed final header write and reset before Pi restoration), fixed in r4; see the 2026-10-20 independent review in §6. 🟡 **Image r2, 2026-10-19: the review's two findings confirmed fixed in the r3 source review; NOT flashed** (§6, "Review findings fixed"): Release `Oct 19 2026 11:44:38`, 207808 text / 0 data / 123508 bss, SHA256 `841E353E…34398ABF`, 161/161 host tests and 21/21 shutdown-hook tests, 49/49 mutations caught. Round 1 (`Oct 19 2026 06:23:15`) is superseded. It adds: J8.37 driven only while a Pi's 3V3 is up; the USB reboot paths closed; Phase 8.6 halt telemetry (`hist`); the strobe session cap from `strobe cal`; a config-store sequence fix; comment corrections. ✅ **Board 1 runs the live readback fix, flashed 2026-10-16** (Session A dry checks PASS, §6): `Oct 15 2026 22:09:11` (Release, 198840 text / 0 data / 123220 bss, SHA256 `FCC1AF66…18195B57`, 117/117 host tests, 28 mutations: 27 caught, 1 equivalent; independent review: round 1's four findings fixed, rounds 2 and 3 PASS; §6). Before it, board 1 ran fix image `Oct 12 2026 14:43:50` (Release, flashed 2026-10-12): **194344 text / 0 data / 122796 bss**, SHA256 `2D3BD0C1…4FB6471D`, **102/102 host tests**, 25 mutations all caught. Six review rounds (Sol passed round 6). Then the bench found **the ADC running at half rate (DIV 95)**, now fixed, along with first-pass snapshot brackets (§6, 2026-10-12 bench entry). It fixes the ADC0 stale-baseline readback found at 6c Step 2 (§6 2026-10-12). On `14:43:50`, board 1 passed `adc ringtest 100` (200/200 covered) and 6c Steps 1–2 (§6). It replaced `Oct  7 2026 08:07:33` (Release, 184440 text / 0 data / 122720 bss, SHA256 `DE0C6676…2DE80BC2`, 78/78), on which one live pulse at gate 0 latched a false `STROBE_CLAMP` (2026-10-12; no current). 🔴 **Never fire live on the `Oct  7` image.** Board 3 still runs `Oct  5 2026 11:13:55` (13/13 smoke PASS). The 6c build is the 2026-10-05 image plus **strobe 6c/6d live mode** (`strobe live on confirm`: pulses with a setpoint under the staircase / 70 % ceiling / pacing / charge guards, ADC0 readback and verdict per firing, `STROBE_OVERCURRENT` and `STROBE_CLAMP` faults, watchdog armed by the strobe, CLI allowlist, `strobe cal`, `strobe wave`), the "before 6c" §9 items, and two fixes from an independent review (§6 2026-10-07). Dry behaviour (6a/6b) is unchanged. Written: power FSM, safe state, beam carrier + demod, ADC engine (DMA ring, block capture, **triggered capture**, freeze-and-copy), detect (threshold DAC, gated HPF, comparator PIO timing, pass log + retained waveforms), cal (`cal demod`, `cal model`, `scan carrier`), dual-slot config store, service/yield layer, shot sequencer (**test shots from 1.4**: the camera handshake and a dry camera-gated burst; a detected pass ends "not implemented"), **strobe 6a–6d** (PIO0 burst engine + DMA, gate DAC, §15 schedule, charge interlock, A7 fix, live mode), CLI (every numeric argument strictly parsed). ❌ **Not written:** reported ball velocity, Phase 5 onset detector + mic veto, a fired shot from a detected pass (the ball speed, the first delay from the geometry), live current from the shot path, the strobe with a Pi present, persisting the strobe current LUT, the Phase 8 shot messages on the Pi link. Phase 8.6 halt telemetry and the Pi serial link/updates are written; independent review passed on r5 (2026-10-20); hardware acceptance under way on board 1 (§8.0b, 2026-10-30). Phase 8.0–8.5 power/shutdown firmware exists and passed against a **simulated** Pi (1b); no real Pi has been connected. **Committed 2026-10-09 as `a8e08b3`** (all Phase 6 work, tests and docs), at the owner's request. **Everything since `b467166` (2026-10-15), through image 1.11 and the 7c.0 procedure, committed 2026-11-16 at the owner's request; `CHANGELOG.md` at the repo root lists it.** |
+| Bench equipment | Saleae **Logic Pro 8** (analog inputs **±10 V / 12 V max**, ~5 MHz analog bandwidth, up to 50 MS/s; **four channels in use**, owner 2026-11-18, so 7c's analyser plans use four); **Tek MSO54B** (500 MHz, 4 ch, TPP1000 probes — **available again 2026-10-08**); Tektronix **TDS 1002** (60 MHz, 2 ch, 8-bit; the fallback, 2026-10-07); DMM, current-limited PSU, FLIR thermal camera. |
+| **Firmware** | 🟡 **Image 1.12, 2026-11-18: text only.** It retires the J4 printouts and comments after 7c, quotes 7c.1's measured `t_cam` (~0.2 µs) in comments, and makes the 1.11 review's V111-N1/N2 wording changes. Built; host tests 300/300; mutations 2/2; machine code identical to 1.11 apart from the version. **Independent software review PASS with nonblocking wording findings. On Board 5 since 2026-11-23 (A, bought; r5 in B); board 1's install pending** (§6, "Image 1.12" and 2026-11-23): `build_v1.12/`, Release `Nov 18 2026 15:57:13`, 247528 text / 0 data / 422684 bss, UF2 SHA256 `5ABB297C…0D39D377`, `.bin` `DC1B64BE…A56C04EB`. 🟡 **Image 1.11, 2026-11-12: 1.10 with V110-F1 fixed -- `reset` and `bootsel` check again after their 50 ms wait, immediately before the reboot, disarm the watchdog only then, and refuse while POWERING_ON. Built, host tests 299/299, 30/30 mutations; **on board 1 since 2026-11-12, from the Pi (A, bought; 1.7 in B the fallback); `BENCH_P8_PI.md` §8.10 PASS**; independent confirm review PASS (V110-F1 closed, sampled V19-F1 closure complete; V111-N1/N2 nonblocking wording notes)** (§6, "Image 1.11"): `build_v1.11/`, Release `Nov 12 2026 15:42:51`, 247536 text / 0 data / 422684 bss, UF2 SHA256 `E940AE6A…F9B72991`, `.bin` `883D4EFA…CA1CFC31`. ❌ **Image 1.10, 2026-11-12: 1.9 with V19-F1 fixed -- plain `reset`, `bootsel` and `cfg save` count a Pi's 3V3 sensed now as a Pi (`power_pi_maybe_present()`), the FSM unchanged -- and the 1.9 review's two text notes. Built, host tests 298/298, 25/25 mutations; NOT on a board; independent confirm review NOT PASSED (V110-F1: reset/bootsel permission becomes stale during their 50 ms wait)** (§6, "Image 1.10"): `build_v1.10/`, Release `Nov 12 2026 15:13:28`, 246560 text / 0 data / 422684 bss, UF2 SHA256 `F5BF95F2…CFF48060`, `.bin` `ECB0746B…2626029A`. ❌ **Image 1.9, 2026-11-12: 1.8 with the strobe's Pi observed fresh -- the 3V3 sensed now and the power FSM's classification, UNSETTLED when they disagree (V18-F1) -- and V18-N1's comments. Built, host tests 292/292, 17/17 mutations; NOT on a board; confirm review closes V18-F1/N1, but overall NOT PASSED (V19-F1: pre-existing reset/bootsel and config guards trust cached Pi presence)** (§6, "Image 1.9"): `build_v1.9/`, Release `Nov 12 2026 11:06:20`, 245512 text / 0 data / 422684 bss, UF2 SHA256 `0004839E…52247D16`, `.bin` `32409AE6…B57766B9`. ❌ **Image 1.8, 2026-11-12: the strobe may fire with a Pi powered; live mode then arms no watchdog (owner), and a live session ends if a Pi appears or goes away; `level` worded as an aiming aid (V17-N1). Built, host tests 280/280, 11/11 mutations; NOT on a board; independent review NOT PASSED (V18-F1: cached Pi presence defeats the live-session/watchdog rule)** (§6, "Image 1.8"): `build_v1.8/`, Release `Nov 12 2026 10:25:58`, 245072 text / 0 data / 422684 bss, UF2 SHA256 `14D5CBC6…88002DB6`, `.bin` `5E691DCB…4D530463`. The owner approved `BENCH_P8_PI.md` §8.10; the failed review blocks flashing and that test. 🟡 **Image 1.7, 2026-11-11: 1.6 without the all-phase `level` (back to 1.5's current-phase reading) and with the 1.6 review's comment note (V16-N1). It keeps the `cal demod` 30 % floor and phase restore, the saved threshold restored at boot, and `cfg save` naming its fix. Board 4's next image (it shipped on 1.5). Built, host tests PASS; independent review PASS 2026-11-12; **on board 1 since 2026-11-12, from the Pi (`BENCH_P8_PI.md` §8.9b PASS)** (V16-F1/N1 closed; nonblocking wording note V17-N1)** (§6, 2026-11-11, "Image 1.7"): `build_v1.7/`, Release `Nov 11 2026 16:41:14`, 244008 text / 0 data / 422684 bss, UF2 SHA256 `CCB7B931…BA15087B`, `.bin` `F7129CD4…84C94602`, 273/273 host tests, 9/9 mutations caught. ❌ **Image 1.6: independent review NOT PASSED (V16-F1, `level`); never released** (§6, "Image 1.6"). 🟡 **Image 1.5, 2026-11-10: 1.4 with the independent review's three findings fixed (H7-F1 one coherent sample of both strobes; H7-F2 the strobe gate read with the engine stopped, and CAM_TIMEOUT certified only by it; H7-F3 `gpio 10 1` refused with the rail down, a fault or a handshake). Built, host tests PASS; Board 4 shipped on it in partition A (2026-11-11); independent confirm review PASS (H7-F1/F2/F3 closed)** (§6, 2026-11-10, "Image 1.5"): `build_v1.5/`, Release `Nov 10 2026 16:48:47`, 241824 text / 0 data / 422684 bss, UF2 SHA256 `F82A6562…F85374B7`, `.bin` `6ABFDBE4…1716A9AA`, 265/265 host tests, 34/34 mutations caught. 🔴 **Image 1.4, 2026-11-10 (superseded by 1.5; never left this PC; `build_v1.4/` removed): Phase 7 -- the camera handshake in PIO1 (trigger, both strobes, `t_cam`, FIRE at max(first delay, t_cam), `CAM_TIMEOUT`) and a dry camera-gated strobe burst; `cam`, `cam shot`, `cam trig`. Built, host tests PASS; NOT on a board; independent review NOT PASSED (H7-F1/F2/F3; review report in section 6)** (§6, 2026-11-10, "Phase 7 firmware"): `build_v1.4/`, Release `Nov 10 2026 13:46:40`, 240896 text / 0 data / 422676 bss, UF2 SHA256 `96563EF9…48B54134`, `.bin` `3C894686…4F03BCB51`, 246/246 host tests (the PIO programs run in a cycle model), 20/20 mutations caught. 🟡 **Image 1.3, 2026-11-10: the 10 s shutdown holdoff (owner), the flash-update `this boot` label and the released-J8.37 label; built, host tests PASS, not on a board yet** (§6, 2026-11-10, "Image 1.3"): `build_v1.3/`, Release `Nov 10 2026 10:25:37`, 224872 text / 0 data / 422112 bss, UF2 SHA256 `0258B97E…07C3533`, `.bin` `76762B40…766971FD7`, 228/228 host tests, 23/23 Pi-tool, 21/21 shutdown-hook. Never ran on board 1: `BENCH_P8_PI.md` §8.9b runs 1.7 instead (2026-11-12). 🟡 **Image 1.2, 2026-11-10: r5's code with only the version changed; on board 1 since 2026-11-10, installed from the Pi (`BENCH_P8_PI.md` §8.9 PASS)** (§6, 2026-11-10): `build_v1.2/`, Release `Nov 10 2026 09:47:13`, 224728 text / 0 data / 422112 bss, UF2 SHA256 `7B7DBEE3…C24AD6FF`, `.bin` `3EFB1072…2E81CD18`. 🟡 **New image r5, 2026-10-20: r4 with R4-F1 fixed (cleanup counts only when sector 0 reads back all 0x00 or all 0xFF; the test oracle is the boot ROM's own scanner); independent confirm review PASS; flashed on board 1 2026-10-30**, §8.0b PASS, partition table installed 2026-11-02, §8.7 PASS 2026-11-09 (§6, 2026-10-30, 2026-11-02 and 2026-11-09; review: §6, 2026-10-20 r5): Release `Oct 20 2026 14:59:52`, 224720 text / 0 data / 422112 bss, SHA256 `AC5F4493…C272ACF7`, version 1.1, 228/228 host tests, 23/23 Python tests, 83/83 mutations caught. 🟡 **Image r4, 2026-10-20 (superseded by r5): r3 with the review's original update reproductions fixed; R3-F2 confirmed, but confirm review NOT PASSED on R4-F1 (cleanup can miss a surviving header across the first-sector boundary); NOT flashed** (§6, 2026-10-20 r4): Release `Oct 20 2026 11:11:58`, 224568 text / 0 data / 422112 bss, SHA256 `015205B5…10A7FE96`, version 1.1, 224/224 host tests, 23/23 Python tests, 79/79 mutations caught. 🟡 **Image r3, 2026-10-20 (superseded by r4): the Pi serial link and firmware updates from the Pi (A/B partitions, try-before-you-buy, rollback), on top of r2; independent review NOT PASSED, NOT flashed** (§6, 2026-10-20): Release `Oct 20 2026 06:13:43`, 222424 text / 0 data / 421752 bss, SHA256 `BD1E45D7…AD495AA4`, version 1.1, 204/204 host tests, 21/21 Python tests, 52/52 mutations caught. It contains r2 unchanged; both r2 fixes are now confirmed. Two new update findings (failed final header write and reset before Pi restoration), fixed in r4; see the 2026-10-20 independent review in §6. 🟡 **Image r2, 2026-10-19: the review's two findings confirmed fixed in the r3 source review; NOT flashed** (§6, "Review findings fixed"): Release `Oct 19 2026 11:44:38`, 207808 text / 0 data / 123508 bss, SHA256 `841E353E…34398ABF`, 161/161 host tests and 21/21 shutdown-hook tests, 49/49 mutations caught. Round 1 (`Oct 19 2026 06:23:15`) is superseded. It adds: J8.37 driven only while a Pi's 3V3 is up; the USB reboot paths closed; Phase 8.6 halt telemetry (`hist`); the strobe session cap from `strobe cal`; a config-store sequence fix; comment corrections. ✅ **Board 1 runs the live readback fix, flashed 2026-10-16** (Session A dry checks PASS, §6): `Oct 15 2026 22:09:11` (Release, 198840 text / 0 data / 123220 bss, SHA256 `FCC1AF66…18195B57`, 117/117 host tests, 28 mutations: 27 caught, 1 equivalent; independent review: round 1's four findings fixed, rounds 2 and 3 PASS; §6). Before it, board 1 ran fix image `Oct 12 2026 14:43:50` (Release, flashed 2026-10-12): **194344 text / 0 data / 122796 bss**, SHA256 `2D3BD0C1…4FB6471D`, **102/102 host tests**, 25 mutations all caught. Six review rounds (Sol passed round 6). Then the bench found **the ADC running at half rate (DIV 95)**, now fixed, along with first-pass snapshot brackets (§6, 2026-10-12 bench entry). It fixes the ADC0 stale-baseline readback found at 6c Step 2 (§6 2026-10-12). On `14:43:50`, board 1 passed `adc ringtest 100` (200/200 covered) and 6c Steps 1–2 (§6). It replaced `Oct  7 2026 08:07:33` (Release, 184440 text / 0 data / 122720 bss, SHA256 `DE0C6676…2DE80BC2`, 78/78), on which one live pulse at gate 0 latched a false `STROBE_CLAMP` (2026-10-12; no current). 🔴 **Never fire live on the `Oct  7` image.** Board 3 still runs `Oct  5 2026 11:13:55` (13/13 smoke PASS). The 6c build is the 2026-10-05 image plus **strobe 6c/6d live mode** (`strobe live on confirm`: pulses with a setpoint under the staircase / 70 % ceiling / pacing / charge guards, ADC0 readback and verdict per firing, `STROBE_OVERCURRENT` and `STROBE_CLAMP` faults, watchdog armed by the strobe, CLI allowlist, `strobe cal`, `strobe wave`), the "before 6c" §9 items, and two fixes from an independent review (§6 2026-10-07). Dry behaviour (6a/6b) is unchanged. Written: power FSM, safe state, beam carrier + demod, ADC engine (DMA ring, block capture, **triggered capture**, freeze-and-copy), detect (threshold DAC, gated HPF, comparator PIO timing, pass log + retained waveforms), cal (`cal demod`, `cal model`, `scan carrier`), dual-slot config store, service/yield layer, shot sequencer (**test shots from 1.4**: the camera handshake and a dry camera-gated burst; a detected pass ends "not implemented"), **strobe 6a–6d** (PIO0 burst engine + DMA, gate DAC, §15 schedule, charge interlock, A7 fix, live mode), CLI (every numeric argument strictly parsed). ❌ **Not written:** reported ball velocity, Phase 5 onset detector + mic veto, a fired shot from a detected pass (the ball speed, the first delay from the geometry), live current from the shot path, the strobe with a Pi present, persisting the strobe current LUT, the Phase 8 shot messages on the Pi link. Phase 8.6 halt telemetry and the Pi serial link/updates are written; independent review passed on r5 (2026-10-20); hardware acceptance under way on board 1 (§8.0b, 2026-10-30). Phase 8.0–8.5 power/shutdown firmware exists and passed against a **simulated** Pi (1b); no real Pi has been connected. **Committed 2026-10-09 as `a8e08b3`** (all Phase 6 work, tests and docs), at the owner's request. **Everything since `b467166` (2026-10-15), through image 1.11 and the 7c.0 procedure, committed 2026-11-16 at the owner's request; `CHANGELOG.md` at the repo root lists it. Everything since, through image 1.12, Board 5's bring-up, 7c.0–7c.3, the two-camera tools and the focus tools, committed 2026-11-24 at the owner's request (`CHANGELOG.md`, the 2026-11-24 section).** |
 | **Bench work done** | ✅ Phases 0, 0.5, 1, 1b, 1c, 2 previously passed; **power-request regression found 2026-09-18**, fixed, and ✅ **BENCH.md Test 6 PASS (owner-reported 2026-09-28)**; see §6/§10. ✅ **Phase 3 §3.1–3.6 on board 3** — §3.6b is a *design finding* (Q8 ×7.43, CR-02), §3.6 Check 2 PASS. ✅ **Phase 5 mic bring-up** (2026-08-31). ✅ Board 3 detect control-path smoke and **first real optical ball waveform** (2026-09-18), **3.102 V peak / ~22.7 ms FWHM**, no observed clipping. Comparator edge timing and full §3.7/Phase 4 remain open. ✅ **Strobe 6a and 6b PASS on board 1 (2026-10-06)** — U5 clamp 135 µs, LA timing, schedule, A7, interlock, gate DAC (§6). |
-| **Next** | 🔵 **2026-11-13: 7c allowed by the owner** (a Pi on J8 and a camera on J4, the camera only through a TXS0108E module; §8). **Next: 7c.0 on board 1:** the module, the trigger's level at the camera, and the camera's strobe reaching GPIO8, with the camera free-running. 7c.1 on needs the Mira220 in external-trigger mode, which the installed driver cannot do (§6). The stray J4.3 edge at power-up was the Pico 2's (erratum E9), not the board's (§6). 🔵 **2026-11-13: Phase 7 on board 1 (owner), on 1.11 with no reflash. 7a and 7b PASS** (§6). 7b, with a Pico 2 running `tools/pulsegen`: t_cam reads 0.044–0.063 µs above the analyser at 50, 150, 200, 201 and 300 µs, and the burst starts 4.0–4.9 µs after FIRE in every shot. 7a: a 1000 µs timeout fires nothing, and every refusal holds (Step 3's 5000 µs repeat not run). 7b once a spare Pico runs `tools/pulsegen`. 7c is not yet allowed (§10). 🔵 **2026-11-10: Phase 7 image 1.5 fixes the review's H7-F1/F2/F3: independent confirm review PASS: reflash first with the exact 1.5 image, then `BENCH_P5_P7_MIC_CAMERA.md` 7a/7b with no Pi and no camera** (§6, §10). Image 1.4 failed its review and is not to be used. 🔵 **2026-11-10: board 1 runs 1.2 from partition A, installed from the Pi; `BENCH_P8_PI.md` §8.0b and §8.7 PASS** (§6, 2026-11-02 and 2026-11-09). **Phase 8 with the Pi seated on board 1: first seating, 8.1–8.6, 8.8 and 8.9 PASS** (2026-11-09 and 2026-11-10; §6). **6c complete on board 1 (2026-11-10)**: the session-cap check PASS and Step 6, with the Pi off the board; Phase 6 is complete on board 1 (§6). **Next: image 1.3 from the Pi** (`BENCH_P8_PI.md` §8.9b, the 10 s holdoff), if not yet done (§10). The owner relaxed the gate on 2026-11-09 (§8). Before that: 🔵 **2026-10-20: r5 confirm review PASS; reflash first** with `Oct 20 2026 14:59:52` (`captures/review_2026-10-19/SOL_REVIEW_r5.md`; R4-F1 closed), then **reflash and the no-Pi checks** (`BENCH_P8_PI.md` §8.0b and §8.7, the partition table) *(was: one review round for r2's confirm pass and r3, `REVIEW_BRIEF_r3.md`: r2 confirmed, r3 not passed, both findings fixed in r4)* and the session-cap check in 6c (§10). 6c Step 6 (`strobe live off`, `off`): done 2026-11-10. Earlier: **Strobe 6c on board 1** (`BENCH_P6_STROBE.md` 6c): ✅ Steps 0, A, 1, 2 (2026-10-12; Step 2 re-run on `14:43:50` after the readback fix). 🔴 **Step 3 stopped 2026-10-13: no current from gate 3 to 33 %. Cause: a cold joint on J3 pin 1, so the bank never saw VIR; re-soldered by the owner (§6). Step 2 re-run at gate 0 with the load: PASS. Then the staircase again reached 30 % with no current: **J3 pin 2 was also cold**, re-soldered. Step 2 then passed with the bank fully connected (VIR 36 V at J3). First current at gate 21 % (2026-10-13), but TP4 is not flat (~1 MHz ripple, decaying body) and ADC0's half-peak threshold mis-measures it. 🔴 **Step 3 stopped at 24 % on 2026-10-13 (3.3 A overshoot); **board-1 gate-drive rework verified 2026-10-15** (flat 0.70 A at 24 %, CR-23). ✅ **6d PASS at 24 % on 2026-10-15** (U5 ends 0.70 A at 135 µs of 1000 commanded, §6). Next: ✅ board 1 reflashed, and the dry and live re-checks passed (2026-10-16, §6); the readback fix is bench-verified. 6c Step 3 has reached 30 % (2.9 A), and ADC0 agrees with the Saleae within 0.5 %. Step 4 PASS: `strobe cal 9` solved level 439 (42.87 %, TP3 4.233 V on the DMM), confirmed at 9.02 A, and four runs agree within 0.3 %. Step 4b PASS (TDS photos and the firmware): ~12.4 V across Q9 at the start of a 9 A pulse. Step 5 PASS on the firmware's criteria: the boost goes into hiccup for ~125 ms after 50 µs and 100 µs pulses (not 20 µs), and the bank is ~600 µF (§6, CR-25). Step 5 complete: on the Saleae the gate node held within ±1 mV through the bursts, and TP4 agreed with ADC0 within ~1 % (§6).** (1) ✅ Step 0 done 2026-10-12: `id` confirmed `built : Oct  7 2026 08:07:33`, board in STANDBY; ✅ TP3 loop stability **PASS 2026-10-08** (MSO54B, §6); leads soldered per the 6c lead plan; (2) 6c Steps 1–6: refusals and arming, the first live pulse at gate 0, the 3 % staircase with ADC0 against TP4 (scope 20 MHz BW limit), **6d inside Step 3** (✅ 2026-10-15, at 0.70 A), `strobe cal 9`, bursts with the FLIR. Also: identify the parked 10 Ω board (Step −1 on boards 2 and 3). Optical acquisition-window constraint (~59.8 ms needed vs 32.768 ms ring at 500 ksps), §3.7 20-pass set and CR-18 mic impact remain open, deferred while strobe work proceeds. |
+| **Next** | 🔵 **2026-11-24: 7c.2 Steps 3–5 PASS on the firmware and Pi side** (12 handshakes, `t_cam` 0.207–0.240 µs; every frame paired; then a 50-shot soak, 50 of 50, all paired). Camera 0 is on bus 10 (CAM/DISP 0), the reverse of the table. **The first live session found no LED current; the owner fixed J3,** and 9 A solved at level 437 (42.68 %), 9.015 A. Flashes light both cameras. **New:** `tools/strobe_focus.ps1` and `focus-preview.sh --hold-flash`, for focusing by paced flashes. **Next:** focus (camera 0 is far out); then 7c.2's analyser parts (§6, §10). 🔵 **2026-11-23: Board 5 (the COM10 board) bring-up first (owner).** Steps 1.3–1.4 PASS: the partition table, and r5 in B. **1.12 in A, bought** (its first board). §2's readings at the first `on`; §3, §4 and §5 PASS; **R80 120 kΩ** (the rework check PASS). §6–§12 before the Pi (owner), with no soldered leads (§8, §10). **§8–§11 PASS:** phase 1320 ticks (400 ns), vref 3.270 V, Vos +6.2 mV; Step 6.4 assumed OK by the owner (no FLIR). **§12 PASS:** TP3 4.94 / 8.91 / 0 V; U5's clamp 134 µs; 9 A at level 436 (42.58 %). **Board 1's Pi on Board 5** (§6): `BENCH_P8_PI.md` "First seating" PASS as far as it runs from this PC, with one clean `on`/`off` and 1000 pings, 0 failed. **7c.2 Step 0 PASS:** the tests pass on the Pi, the second overlay is in, and both Mira220s (buses 11 and 10) are configured and stream. Camera 1 sees no light yet (lens or cap). **Next:** 7c.2 Steps 1–5 (module #1 and J4 wired with the power off; the analyser); the owner's call on repeating 7c.0/7c.1's module checks on Board 5 (§10); NIR light for the lenses. §13's rollback and §8.0b are skipped. 🔵 **2026-11-20: the owner decided the shot path's D1–D8** (§8; `SHOT_PATH_PLAN.md` §3a). D3 raises the live span limit to 150 ms with the first 30 ms watched, in WP5 under independent review. **Next:** 7c.2 on board 1, written 2026-11-20: a TXS0108E per camera (the owner's choice, §8), and the Pi tools for two Mira220s (§6). No reflash. Then WP0 and WP1. 🔵 **2026-11-20: 7c.3 PASS (desk; §6).** Four whole-ball freezes fit CAM0's view at 100 m/s if the first flash comes within 289 µs of the trailing edge (47.33 mm spacing). The live readback's baseline takes 198–200 µs, not ~0.4 ms as I had written (§6). **Next:** the owner's decisions D1–D8 in `SHOT_PATH_PLAN.md`, and WP0; 7c.2 when a second Mira220 is on hand. 🔵 **2026-11-18: 7c.0 and 7c.1 PASS on board 1** (§6). The Mira220 in slave mode exposes while the board's trigger is high, and its strobe follows about 0.17 µs late: `t_cam` 0.21–0.24 µs, not the assumed 100–300 µs. **Next:** at the next power-up, the fixed `trigger-capture.sh` onto the Pi and its frames pulled; prepare the Pi install instructions for the reviewed 1.12 image (§10). 7c.2 awaits a second Mira220. 🔵 **2026-11-13: 7c allowed by the owner** (a Pi on J8 and a camera on J4, the camera only through a TXS0108E module; §8). **Next: 7c.0 on board 1:** the module, the trigger's level at the camera, and the camera's strobe reaching GPIO8, with the camera free-running. 7c.1 (written 2026-11-16, runs after 7c.0) puts the Mira220 in slave mode with `trigger-capture.sh`, after each stream start; the register sequence is upstream PiTrac's (§6, 2026-11-16). The stray J4.3 edge at power-up was the Pico 2's (erratum E9), not the board's (§6). 🔵 **2026-11-13: Phase 7 on board 1 (owner), on 1.11 with no reflash. 7a and 7b PASS** (§6). 7b, with a Pico 2 running `tools/pulsegen`: t_cam reads 0.044–0.063 µs above the analyser at 50, 150, 200, 201 and 300 µs, and the burst starts 4.0–4.9 µs after FIRE in every shot. 7a: a 1000 µs timeout fires nothing, and every refusal holds (Step 3's 5000 µs repeat not run). 7b once a spare Pico runs `tools/pulsegen`. 7c is not yet allowed (§10). 🔵 **2026-11-10: Phase 7 image 1.5 fixes the review's H7-F1/F2/F3: independent confirm review PASS: reflash first with the exact 1.5 image, then `BENCH_P5_P7_MIC_CAMERA.md` 7a/7b with no Pi and no camera** (§6, §10). Image 1.4 failed its review and is not to be used. 🔵 **2026-11-10: board 1 runs 1.2 from partition A, installed from the Pi; `BENCH_P8_PI.md` §8.0b and §8.7 PASS** (§6, 2026-11-02 and 2026-11-09). **Phase 8 with the Pi seated on board 1: first seating, 8.1–8.6, 8.8 and 8.9 PASS** (2026-11-09 and 2026-11-10; §6). **6c complete on board 1 (2026-11-10)**: the session-cap check PASS and Step 6, with the Pi off the board; Phase 6 is complete on board 1 (§6). **Next: image 1.3 from the Pi** (`BENCH_P8_PI.md` §8.9b, the 10 s holdoff), if not yet done (§10). The owner relaxed the gate on 2026-11-09 (§8). Before that: 🔵 **2026-10-20: r5 confirm review PASS; reflash first** with `Oct 20 2026 14:59:52` (`captures/review_2026-10-19/SOL_REVIEW_r5.md`; R4-F1 closed), then **reflash and the no-Pi checks** (`BENCH_P8_PI.md` §8.0b and §8.7, the partition table) *(was: one review round for r2's confirm pass and r3, `REVIEW_BRIEF_r3.md`: r2 confirmed, r3 not passed, both findings fixed in r4)* and the session-cap check in 6c (§10). 6c Step 6 (`strobe live off`, `off`): done 2026-11-10. Earlier: **Strobe 6c on board 1** (`BENCH_P6_STROBE.md` 6c): ✅ Steps 0, A, 1, 2 (2026-10-12; Step 2 re-run on `14:43:50` after the readback fix). 🔴 **Step 3 stopped 2026-10-13: no current from gate 3 to 33 %. Cause: a cold joint on J3 pin 1, so the bank never saw VIR; re-soldered by the owner (§6). Step 2 re-run at gate 0 with the load: PASS. Then the staircase again reached 30 % with no current: **J3 pin 2 was also cold**, re-soldered. Step 2 then passed with the bank fully connected (VIR 36 V at J3). First current at gate 21 % (2026-10-13), but TP4 is not flat (~1 MHz ripple, decaying body) and ADC0's half-peak threshold mis-measures it. 🔴 **Step 3 stopped at 24 % on 2026-10-13 (3.3 A overshoot); **board-1 gate-drive rework verified 2026-10-15** (flat 0.70 A at 24 %, CR-23). ✅ **6d PASS at 24 % on 2026-10-15** (U5 ends 0.70 A at 135 µs of 1000 commanded, §6). Next: ✅ board 1 reflashed, and the dry and live re-checks passed (2026-10-16, §6); the readback fix is bench-verified. 6c Step 3 has reached 30 % (2.9 A), and ADC0 agrees with the Saleae within 0.5 %. Step 4 PASS: `strobe cal 9` solved level 439 (42.87 %, TP3 4.233 V on the DMM), confirmed at 9.02 A, and four runs agree within 0.3 %. Step 4b PASS (TDS photos and the firmware): ~12.4 V across Q9 at the start of a 9 A pulse. Step 5 PASS on the firmware's criteria: the boost goes into hiccup for ~125 ms after 50 µs and 100 µs pulses (not 20 µs), and the bank is ~600 µF (§6, CR-25). Step 5 complete: on the Saleae the gate node held within ±1 mV through the bursts, and TP4 agreed with ADC0 within ~1 % (§6).** (1) ✅ Step 0 done 2026-10-12: `id` confirmed `built : Oct  7 2026 08:07:33`, board in STANDBY; ✅ TP3 loop stability **PASS 2026-10-08** (MSO54B, §6); leads soldered per the 6c lead plan; (2) 6c Steps 1–6: refusals and arming, the first live pulse at gate 0, the 3 % staircase with ADC0 against TP4 (scope 20 MHz BW limit), **6d inside Step 3** (✅ 2026-10-15, at 0.70 A), `strobe cal 9`, bursts with the FLIR. Also: identify the parked 10 Ω board (Step −1 on boards 2 and 3). Optical acquisition-window constraint (~59.8 ms needed vs 32.768 ms ring at 500 ksps), §3.7 20-pass set and CR-18 mic impact remain open, deferred while strobe work proceeds. |
 
 *Closure notes for Phases 1, 1b and 2 (the 2026-07-30 supply-monitor bug and fix, Q1/Q2) are
 in [`PROGRESS_ARCHIVE.md`](PROGRESS_ARCHIVE.md) §0, verbatim.*
@@ -302,8 +302,8 @@ And from 1.1 `tools/flash_swd.sh` refuses by default: SWD writes over the partit
       ✅ **7b PASS** (a Pico 2 running `tools/pulsegen`). The stray J4.3 edge at power-up was the Pico 2's
       (E9), not the board's (§6). 🟡 **7c:** allowed by the owner (2026-11-13; §8), the camera
       only through a TXS0108E module (CR-09). **7c.0** (the module and the strobe path, the
-      camera free-running) runs now; 7c.1 on needs the Mira220 in external-trigger mode, which
-      the installed driver cannot do (§6).
+      camera free-running) **PASS 2026-11-18**. **7c.1 PASS 2026-11-18:** the Mira220 in slave
+      mode, one frame per trigger, and the strobe following REQ EXP; `t_cam` 0.21–0.24 µs (§6).
 - [ ] **8** Real Pi integration + clean-shutdown acceptance — `BENCH_P8_PI.md`.
       ✅ **The firmware for 8.0–8.5 exists and is proven** (full Phase 1b matrix). ✅ 8.6 halt
       telemetry, the serial link and updates from the Pi are in r5 (flashed 2026-10-30);
@@ -7119,7 +7119,9 @@ in `...\Downloads\PiIdle_*` and `PiLoad_*` (~150 MB).
   the commit `install-mira220.sh` pins (`aeedd65`).
   - It runs the sensor free-running as master.
   - It defines `MIRA220_IMAGER_STATE_SLAVE_CONTROL` but never writes it.
-  - It writes `EXT_EVENT_SEL` and `EXT_EXP_PW_SEL` as 0 at init.
+  - ~~It writes `EXT_EVENT_SEL` and `EXT_EXP_PW_SEL` as 0 at init.~~ **Wrong** (found
+    2026-11-16, see that entry): it writes `0x1001 = 0x41`, both bits set. The "(0)" in its
+    comments is a field index, not the value.
   - It has no trigger control and no module parameter.
   - It does enable the illumination-trigger output at init (`0x10D7 = 0x1`, `0x10D8 = 0x2`).
     So the camera's strobe should pulse once per frame while it streams.
@@ -7136,6 +7138,1570 @@ in `...\Downloads\PiIdle_*` and `PiLoad_*` (~150 MB).
 - **Next image:** the firmware's `cam`, `cam shot` and `cam trig` still print
   `J4: NO CAMERA (CR-09)`. That is out of date from 7c; it changes with the 1.11 review's
   V111-N1/N2 notes.
+
+### 2026-11-16 - Upstream PiTrac switches a streaming Mira220 to slave mode; what to port; I was wrong about 0x1001
+
+- **The source** (the owner's pointer): `PiTracLM/PiTrac`, branch `feature/pico`, at `f198139`
+  (2026-10-16).
+  - The Mira220 work is commit `afe689e` (2026-10-10, "mira220 as camera 2…").
+  - Read on 2026-11-16 into a scratch folder; nothing from it is in this repo.
+  - The commit does not record a test on hardware. The owner believes it works.
+- **What it does:** `Software/LMSourceCode/ImageProcessing/CameraTools/mira220_trigger <bus>
+  <0|1>`, 31 lines of bash. It uses `i2ctransfer -f` at address 0x54, while the stream runs.
+  - It reads 0x1001.
+  - It stops the imager at a row boundary (`0x1003 = 0x02`, `0x10F0 = 0x00`), then waits 40 ms.
+  - **Slave:** it writes 0x1001 with bits 6 and 0 cleared, then `0x1003 = 0x08`.
+  - **Master:** it sets both bits, then writes `0x1003 = 0x10`.
+  - Then it restarts the imager with `0x10F0 = 0x01`.
+  - Its comment names the bits:
+    - bit 6 is `EXT_EVENT_SEL`; when set, REQ_FRAME starts readout;
+    - bit 0 is `EXT_EXP_PW_SEL`; when set, EXP_TIME sets the exposure length.
+  - With both cleared, the sensor exposes while REQ EXP is high, and the falling edge starts
+    readout.
+  - **Upstream's C++** calls it once after each stream start, with 500 ms allowed for the switch.
+    It never switches back: the next stream start does that.
+  - **Polarity:** the Mira220's REQ EXP is active high; the IMX296's is active low. Our handshake
+    already drives the trigger high.
+- **Checked against the driver we pin (`aeedd65`):**
+  - Stream start writes `0x1003 = 0x10` (master), `0x1002 = 0x04` (continuous) and
+    `0x10F0 = 0x01`.
+  - Stream stop writes `0x1003 = 0x02` and `0x10F0 = 0x00`.
+  - Runtime PM powers the sensor down 1 s after a stream stops (autosuspend 1000 ms). Then it
+    does not answer on I²C (measured 2026-11-18; this line first said "when it is not
+    streaming").
+  - The address is 0x54 (`mira220.dtsi`).
+  - The init table writes **`0x1001 = 0x41`**.
+  - So the switch has to follow every stream start, as upstream does.
+- **I was wrong** (the 2026-11-13 entry above): I wrote that the driver writes `EXT_EVENT_SEL`
+  and `EXT_EXP_PW_SEL` as 0.
+  - It writes 0x41, which sets both bits. Its comments read `EXT_EVENT_SEL(0)`; the "(0)" is a
+    field index, and I took it for the value.
+  - **What stands:** the driver alone gives no trigger mode.
+  - **What changes:** 7c.0 Step 2 expects REQ EXP to be ignored because the sensor is in master
+    mode, not because of those bits.
+  - Corrected in that entry, in `BENCH_P5_P7_MIC_CAMERA.md` (the 7c Pi software row, 7c.0 Step 2
+    and 7c.1) and in §0, §5 and §10.
+- **Worth porting:**
+  - **The register sequence.** It is the whole of 7c.1's "external-trigger mode". Upstream is
+    GPL-2.0-only and this repo is GPL-3.0-or-later, so we write our own tool from the register
+    facts, checked against the driver, and credit upstream. Copying their file would need the
+    author's permission.
+  - **The lessons for operating it:**
+    - switch after every stream start;
+    - keep frames coming, or the Pi's capture may time out (upstream fires 12 priming triggers
+      at 15 Hz);
+    - allow time for the switch.
+- **Not worth porting:**
+  - **Their Pico firmware.** It fires the strobe a fixed time after the trigger
+    (`CAM_XTR_SETUP_US`, 1000 µs by default) and never reads ILLUM TRIG. Our handshake waits for
+    the sensor's strobe and measures `t_cam`.
+  - **The Arducam module path** (`arducam_trigger`, a V4L2 `trigger_mode` control) and their
+    1.5 kΩ / 1.8 kΩ divider. We use the ams board and the TXS0108E.
+  - **`mira220_mono.json`,** a pisp tuning file for the mono sensor. Perhaps later, for the Pi
+    software; not for 7c.
+- **Still unknown; 7c.1 measures it:**
+  - **Whether ILLUM TRIG pulses in slave mode, and when.** Our handshake waits for it. Upstream
+    does not use it. The driver's illumination settings (`0x10D7 = 0x1`, `0x10D8 = 0x2`) are not
+    touched by the switch. DS000642 would answer this in advance; the bench answers it anyway.
+  - **The delay from trigger to exposure,** which is our `t_cam`.
+
+### 2026-11-16 - 7c.1 written: the Pi tools for a triggered Mira220, and the procedure
+
+- **Asked by the owner** while away from the bench: start everything possible for 7c.1 and
+  beyond. No firmware changed; board 1 stays on 1.11.
+- **Two Pi tools, in `Software/camera-comparison/scripts/`** (`TRIGGER.md`):
+  - **`mira220-trigger.sh status|slave|master`:**
+    - It makes the register switch (§6, the entry above) at 0x54, on the bus named in the
+      configured entity (`mira220 <bus>-0054`).
+    - It reads 0x1001 back, and fails if bits 6 and 0 are not as written.
+    - If the imager may have been left stopped, it says so.
+    - It is written for this repo; it is not upstream's GPL-2.0-only file.
+  - **`trigger-capture.sh`:**
+    - It streams the Mira220, switches it after the first frame, and prints `READY` with the
+      CLOCK_MONOTONIC time.
+    - It keeps each triggered frame: the raw data, a `.pgm`, pixel statistics and the device
+      timestamp.
+    - It stops and says so if frames keep coming at the free-running rate after `READY`.
+    - Its `v4l2-ctl` runs **without `--stream-poll`**, which gives up after 2 s without a
+      frame (read in the v4l-utils source). Blocking, it waits however long a trigger takes.
+      `focus-preview.sh` and `record-dual.sh` use `--stream-poll`, so they cannot capture
+      triggered frames.
+  - **The report:** `conversion/triggered_frames.py`.
+- **Tests, run on this PC only:**
+  - `tests/test-trigger.sh`, 30 checks, against a fake `i2ctransfer`. 9 of 9 mutants of the
+    tool are caught.
+  - `tests/test-trigger-capture.sh`, 23 checks, end to end with a fake `v4l2-ctl` that
+    free-runs until the fake sensor is switched, then emits one frame per trigger. 5 of 5
+    mutants are caught.
+  - `conversion.test_triggered_frames`, 8 tests.
+  - Nothing has run on a Pi yet.
+- **`BENCH_P5_P7_MIC_CAMERA.md` 7c.1 written:**
+  - Step 1: switch to slave, then 10 s with no frames and the strobe idle low.
+  - Step 2: `cam trig 0 50000` three times. FIRE as soon as both strobes are seen, and the
+    longest timeout. It names three outcomes: the strobe answers; TIMEOUT, so ILLUM TRIG does
+    not pulse in slave mode; or no frame at all.
+  - Step 3: `cam shot` at 50, 200 and 300 µs, three each, with GPIO25 on the analyser.
+  - **Exit:** one frame per trigger, and `t_cam` on 12 handshakes within ±0.1 µs of the
+    analyser.
+  - 7c.2 (the second camera) and 7c.3 (the geometry check) are outlined.
+- **Checked for 7c.1's safety:**
+  - A latched `CAM_TIMEOUT` does not move the power FSM.
+  - In RUNNING, `fault clear` only clears the code: `power_request_fault_ack()` is dropped
+    unless the FSM is in `PS_FAULT`.
+  - So the procedure's `fault clear` after a camera timeout does not cut the Pi. The procedure
+    still says to stop if the board prints `acknowledging FAULT`.
+
+### 2026-11-18 - Board 1's Pi set up for 7c: the Mira220 probes on I²C bus 11 and streams at 88.96 fps
+
+- **Asked by the owner:** the Pi had neither the repo nor the driver.
+  - The model did the setup over SSH from the PC (`pitrac2.local`, key login from
+    `~/.ssh/config`).
+  - The Pi stayed seated on board 1 throughout, with the rail up and the board on 1.11.
+- **The Pi:** Raspberry Pi OS Lite, Trixie, kernel `6.18.50+rpt-rpi-2712`. Its headers,
+  `build-essential`, `dtc` and `initramfs-tools` were already installed.
+- **What was done:**
+  - **The camera kit:** `Software/camera-comparison` was copied from the PC to
+    `~/PiTrac_V2/Software/camera-comparison`.
+    - It is the PC's working tree, so it includes the uncommitted 7c.1 tools.
+    - It is not a git clone: remove or replace it before cloning there.
+  - **Packages:** `gawk`, `git`, `i2c-tools` and `python3-pil`, with their dependencies.
+    - Installed with `--no-upgrade`, after a clean simulation: no removals, and nothing in the
+      kernel, firmware or libcamera.
+  - **The driver:** `install-mira220.sh --install` built and installed the pinned driver,
+    srcversion `712AA4F74D072B09AA7CE8F`. The regenerated initramfs holds no mira220 module.
+  - **`/boot/firmware/config.txt`:** `camera_auto_detect=1` became `0`, and
+    `dtoverlay=mira220-nir` was added for CAM/DISP 1. Nothing else changed.
+    - Backups: `/boot/firmware/config.txt.before-mira220.20261118-144454` and
+      `~/claude-setup/config.txt.before`.
+  - **I²C:** `i2c-dev` now loads at boot (`/etc/modules-load.d/i2c-dev.conf`). The user was
+    already in the `i2c` group.
+  - **Reboot:** `sudo reboot` on the seated Pi. It was back in 27 s, and the rail stayed up, as
+    in 8.6.
+  - **sudo:** the owner gave the password in chat.
+    - It was used once, to add a temporary `NOPASSWD` rule (`/etc/sudoers.d/90-claude-temp`,
+      checked with `visudo`).
+    - The rule was removed at the end, and sudo asks for a password again.
+    - The first attempt failed: PowerShell's pipe put a UTF-8 BOM in front of the password
+      (`HANDOFF.md` §7).
+  - **The remote scripts and logs** are in `~/claude-setup` on the Pi. They hold no password.
+- **Results:**
+  - **The driver:** after the reboot, `install-mira220.sh --check` reports matching checksums,
+    and the loaded srcversion matches the build.
+  - **The camera** was already on CAM/DISP 1.
+    - The kernel log shows `rp1-cfe … Using sensor mira220 11-0054 for capture`.
+    - Media entity `mira220 11-0054` is on `/dev/media0`, with video on `/dev/video0`.
+    - **I²C bus 11**, and `/dev/i2c-11` is present.
+  - **The profile:** `configure-cameras.sh --camera mira220` accepted the 8-bit mono profile:
+    1600 × 1400, GREY, stride 1600.
+  - **Streaming:** 270 frames at **88.96 fps**, against the model's 89.08.
+  - **`mira220-trigger.sh status` while streaming,** which reads only:
+
+    | Register | Value |
+    |---|---|
+    | `0x1001` | `0x41` |
+    | `0x1002` | `0x04` |
+    | `0x1003` | `0x10` |
+    | `0x10F0` | `0x00` |
+    | `0x10D7` | `0x01` |
+    | `0x10D8` | `0x02` |
+
+    - **The 2026-11-16 correction holds on hardware.**
+    - `0x10F0` reads 0 while the sensor runs, so it is a self-clearing start bit. The tool does
+      not interpret it.
+- **I was imprecise (2026-11-16):** I wrote that the sensor does not answer on I²C between
+  streams.
+  - In fact the driver suspends it 1 s after a stream stops (runtime-PM autosuspend, 1000 ms).
+  - It answered just after a stream ended, and gave `Remote I/O error` later.
+  - Corrected in `mira220-trigger.sh`, `TRIGGER.md`, 7c.1 and the 2026-11-16 entry.
+  - No effect on the tools: they switch only while the sensor streams.
+- **Next: 7c.0,** once the owner has confirmed the module and the probes are wired as its board
+  state says, with the board unpowered.
+
+### 2026-11-18 - Board 1: 7c.0 Step 1 PASS; Step 3's strobe checks pass from the same capture
+
+- **Setup:** image 1.11, the Pi seated, one Mira220 on CAM/DISP 1, and the TXS0108E module.
+  - The analyser had four channels: ch0 "A1", ch1 the strobe row (digital and analog), ch2 "A2"
+    and ch3 VA. Analog at 1 MS/s, 1 s per capture.
+  - Captures: `captures/p7c0_step1_{idle,streaming}_{analog,digital}_2026-11-18.csv`.
+- **Not streaming:** every channel within ±0.13 V of 0, VA included. The camera's 1.8 V is up
+  only while it streams, which is the case 7c.0 Step 1 provides for.
+- **Streaming** (`focus-preview.sh`, 1000 µs exposure):
+
+  | Signal | Measured | Criterion |
+  |---|---|---|
+  | VA | **1.797 V**, 1.770–1.844 V | 1.70–1.90 V |
+  | Strobe at the camera (ch0) | **0 ↔ 1.807 V**, 1.95 V overshoot at the edges | |
+  | Strobe row (ch1) | **0.037 ↔ 2.754 V**, 3.58 V overshoot at the rising edges | ≥ 2.5 V high, ≤ 0.4 V low |
+  | Trigger at the camera (ch2) | **0.03 V**; edge blips to 0.17 V | < 0.54 V |
+
+  - The row follows the camera side within 1 µs, the analog resolution.
+  - The strobe is **active high and idles low**. `pins` showed `CAM_STROBE_0(8) 0` and
+    `CAM_STROBE_1(9) 0`.
+  - **It comes every 11.2257 ms and is 981.7 µs wide.** That is exactly the 124 configured
+    exposure lines × 7.917 µs (981.67 µs): the strobe width follows the exposure.
+  - The row's 3.58 V overshoot comes from the module's one-shot edge accelerator. It sits
+    behind R19/R24 (220 Ω), below the RP2350's 3.8 V limit.
+- **The owner's "spikes on A1" are the strobe pulses.**
+  - The ch0 probe labelled A1 carries the strobe, and the ch2 probe labelled A2 sits at the
+    trigger level.
+  - The row can only go high from the strobe channel's camera side. So either the A1 and A2
+    probes are swapped, or the module's channels are used the other way round from the doc.
+  - Both are electrically fine: the trigger reaches REQ EXP, and the strobe reaches the row.
+  - The owner is checking which it is. It decides which probe stays for Step 2 and 7c.1: the
+    one on the trigger channel's camera side, ch2 today.
+- **Still open in 7c.0:** Step 2 (`gpio 10 1`/`0`, with a stream running), and Step 3's `pins`
+  catching both strobes at 1.
+
+### 2026-11-18 - Board 1: 7c.0 Step 2 PASS with 17 mV to spare; 7c.0 PASS; 7c.1 bridges channel 5 first
+
+- **Captures:** `captures/p7c0_step2_{high,low}_{analog,digital}_2026-11-18.csv`. 1 s each, with
+  `focus-preview.sh` streaming. The probes are as in Step 1: ch2 is the trigger at the camera.
+- **`gpio 10 1`:** the trigger at the camera sat at **1.277 V**. That is 98 % of samples within
+  1.277–1.282 V, against 1.26–1.90 V. **PASS, by 17 mV.**
+  - About 1.35 V was predicted. 1.797 × 12 / (12 + R) = 1.277 gives R ≈ **4.9 kΩ** for the
+    module's pull-up, against the 4 kΩ typical I used.
+  - **Crosstalk from the strobe channel:**
+    - 19 of the 89 strobe falls dipped the trigger line for one sample (≤ 1 µs), to as low as
+      **1.038 V**, below VIH.
+    - 11 strobe rises lifted it, to as high as 1.53 V.
+    - 5 more tiny dips, to 1.19 V, were not at a strobe edge.
+- **`gpio 10 0`:** 0.029 V, max 0.164 V, against < 0.54 V. **PASS.**
+- **The strobe ignored REQ EXP,** as master mode should: 89 pulses each second, every 11.2257 ms
+  and 981.7 µs wide, the same with the trigger high and low.
+- **`pins`** read `CAM_STROBE_0(8) 0` and `CAM_STROBE_1(9) 0` every time; the paste shows at least
+  four.
+  - The strobe is high 8.7 % of the time, so four zeros happen 69 % of the time. That is
+    inconclusive, not a fail.
+  - 7c.1's handshake proves GPIO8/9 see the strobe: it cannot complete otherwise.
+- **7c.0 PASS on its exit criteria:** VA 1.797 V; A1 1.277 V high and 0.03 V low; the strobe
+  crosses once per frame, 2.754 V at the row.
+- **For 7c.1, the bridge is required, not optional:** channel 5 goes onto the trigger channel.
+  - **Why:** in 7c.1 REQ EXP must stay high while the strobe switches. A dip below VIH then
+    could cut or restart an exposure.
+  - **What it gives:** the bridge halves the pull-up, to about 1.49 V predicted, and halves the
+    impedance the crosstalk works against.
+  - **New 7c.1 Step 0** checks it: ≥ 1.40 V, and ≥ 1.26 V at every strobe fall.
+  - **Also:** keep the trigger and strobe leads apart. `WIRING_DIAGRAM.md` §7.3 now recommends
+    the bridge.
+
+### 2026-11-18 - Board 1: 7c.1 Step 0 PASS: 1.490 V with channel 5 bridged, and no dips at strobe falls
+
+- **Setup:** A5 is wired to A1 and B5 to B1, so the trigger is on channel 1, as in the doc. In
+  7c.0 the A1 and A2 probes were swapped.
+  - Probes: ch0 on J4.4, ch1 on B2 (the strobe row), ch2 on A1 (the trigger at the camera), and
+    ch3 on R33 (GPIO25).
+  - Captures: `captures/p7c1_step0_{high,low}_{analog,digital}_2026-11-18.csv`.
+  - The analog ran at 250 kS/s (4 µs), and only ch1 was recorded as digital.
+- **`gpio 10 1`:** J4.4 at 3.294 V. **A1 at 1.490 V**, between 1.448 V and 1.547 V, against
+  ≥ 1.40 V; 1.49 V was predicted. **PASS.**
+- **`gpio 10 0`:** A1 at 0.055 V.
+- **The strobe** kept pulsing every 11.2257 ms, at 2.749 V on the row.
+- **Crosstalk, compared at the same 4 µs sampling** (7c.0's 1 MS/s capture, every 4th sample):
+
+  | | Before the bridge (7c.0) | With the bridge (Step 0) |
+  |---|---|---|
+  | Strobe falls moving A1 by more than 50 mV | 7 of 90 | **0 of 59** |
+  | Deepest sample at a fall | 1.058 V | **1.448 V** |
+  | Largest rise excursion | +0.20 V | +0.06 V |
+
+  - With no change, about 5 of 59 falls would have dipped.
+  - **The caveat:** at 4 µs a sub-µs dip can fall between samples. Steps 1–3 sample analog at
+    ≥ 1 MS/s.
+- **Analyser settings for Steps 1–3** (no probe moves):
+  - digital on J4.4, the row and GPIO25, at ≥ 100 MS/s;
+  - analog only on A1 and the row, at ≥ 1 MS/s.
+- **Next: 7c.1 Step 1.**
+
+### 2026-11-18 - Board 1: 7c.1 PASS: the Mira220 exposes while the board's trigger is high; t_cam ≈ 0.2 µs
+
+- **Setup:** image 1.11, as Step 0, with channel 5 bridged onto the trigger channel.
+  - The analyser had digital on J4.4, the B2 row and R33 (GPIO25), and analog on the row and A1
+    at about 1.25 MS/s.
+  - The board's scrollback covers shots #8–#19.
+  - **The captures don't all match that scrollback:**
+    - `trig2`, `trig3` and `shot50_1`–`_3` were exported at 15:31–15:34, from an earlier pass
+      whose scrollback was not pasted.
+    - `trig1` (#8) and `shot200_*`/`shot300_*` (#14–#19) match it.
+    - `shot50_3` caught no trigger.
+  - Captures: `captures/p7c1_*_2026-11-18.csv`.
+- **Step 1:**
+  - The switch printed `slave: 0x1001 0x41 -> 0x00, 0x1003 0x08, running.`, after 7 and then 6
+    free-running frames, 11.227 ms apart.
+  - The analyser saw **no edge at all** in 0.92 s. The row stayed at 0.027–0.037 V, and A1 at
+    0.05–0.065 V.
+- **Frames:** exactly **one per trigger:** 3 for `cam trig` and 9 for `cam shot`, each 12–74 s
+  apart, with none in between (`free_running_after_ready: no`).
+- **Slave mode, measured. The camera's strobe follows REQ EXP on both edges:**
+  - It **rises 0.168–0.184 µs** after J4.4, in all 11 captures that caught a shot.
+  - It **stays high as long as J4.4,** to within 12 ns: 1000.30 µs for `cam trig`, and
+    5614.98 / 5764.98 / 5864.97 µs for `cam shot` 50 / 200 / 300.
+  - It **falls 0.156–0.176 µs** after J4.4 does.
+  - So in slave mode ILLUM TRIG marks the exposure, which lasts as long as REQ EXP is high.
+  - A coupling glitch cannot hold 2.754 V for 5.8 ms, and 7c.0 Step 2 showed no DC path from
+    the trigger to the row.
+- **`t_cam`:**
+
+  | Shot | Firmware | Analyser | Difference |
+  |---|---|---|---|
+  | `trig1` (#8) | 0.227 µs | 0.172 µs | +0.055 µs |
+  | `shot200` ×3 (#14–16) | 0.207 / 0.240 / 0.240 µs | 0.168 / 0.184 / 0.180 µs | +0.039 to +0.060 µs |
+  | `shot300` ×3 (#17–19) | 0.240 ×3 µs | 0.184 / 0.176 / 0.172 µs | +0.056 to +0.068 µs |
+
+  - All within ±0.1 µs. It is the same +40–70 ns offset as 7b.
+  - Over shots #8–#19 the firmware printed 0.207–0.240 µs: one or two 33.3 ns loops.
+  - **So `t_cam` is about 0.2 µs, not the 100–300 µs assumed** in `board.h` and the design
+    docs.
+- **The release:** J4.4 fell within 0.005 µs of the printed `trigger released at`, in every
+  capture.
+- **The burst:**
+  - The first GPIO25 edge came at FIRE + **4.05–4.99 µs**: +54.5 / +54.7 µs at 50, +204.5–205.0 µs
+    at 200, and +304.0–304.7 µs at 300.
+  - Then 10 pulses of 14.000 µs, 610.000 µs apart.
+  - The last pulse ended about 56 µs before the trigger dropped.
+  - The board printed `FIRE + 4-5 us` and `IRQ0 seen` for every shot.
+- **A1 while J4.4 was high:** never below **1.464 V** (median 1.490 V), through the strobe edges
+  and every burst.
+- **7c.1 PASS on its exit criteria:**
+  - no frames without a trigger, and one per trigger;
+  - `t_cam` on 12 handshakes, 0.207–0.240 µs, with the analyser within ±0.1 µs where the two
+    pair;
+  - every burst 4–5 µs after FIRE;
+  - the strobe recorded: active high, 0.17 µs after each trigger edge, and as wide as the
+    trigger.
+- **I was wrong (2026-11-16):** I said v4l2-ctl flushes its output file after every frame, so a
+  TERM loses nothing.
+  - Its `fflush(fout)` runs only when streaming to a network host.
+  - To a named file, glibc holds up to 4 KB of each frame until the next frame or a normal
+    exit.
+  - So `trigger-capture.sh` lost the **last frame's tail** in both runs. The raw files ended at
+    exactly 5468 × 4096 and 8203 × 4096 bytes: 3072 bytes short each time.
+  - The report then rightly refused to convert those frames: the third `cam trig` and the
+    ninth `cam shot`.
+  - **Fixed:** the script runs `stdbuf -o0 v4l2-ctl … --stream-to=- > mira220.raw`. With `-`,
+    v4l2-ctl's `--silent` stops only ioctl tracing; `--verbose` still logs each frame.
+  - **The fake now holds back each frame's tail the same way,** and the end-to-end test checks
+    that every logged frame is whole. 24 checks pass. The old line fails the test: 0 whole
+    frames of 15.
+  - Not yet run on the Pi, which was off. It gets the fixed script at the next power-up.
+- **Not yet done:**
+  - pulling the frames (`~/camera-trig-20261118-153552/{trig,shot}`) to compare brightness. The
+    Pi was off.
+- **For the next image:**
+  - `board.h`'s 100–300 µs comment and `adc_engine.h`'s "100-300 us window": the refinement
+    window now comes from the first delay, not the camera;
+  - the `J4: NO CAMERA (CR-09)` printouts;
+  - the V111-N1/N2 notes.
+- **Geometry check (7c.3):** v·t_cam = 90 m/s × 0.24 µs ≈ 0.02 mm, which is negligible.
+
+### 2026-11-18 - Image 1.12 built: text only (the J4 printouts, t_cam, V111-N1/N2). Independent review PASS with wording notes
+
+- **What it is:** 1.11 with text and comments only, plus one host-test case and the version.
+  The owner chose it after 7c.1. The patch, against 1.11's source in `e23aa65`, is
+  `captures/review_2026-11-18/v1.11_to_v1.12.patch`.
+  - **The J4 printouts:** `cli.c` no longer prints `NO CAMERA ON J4` or `J4: NO CAMERA (CR-09)`.
+    `cam` says J4 is 3.3 V, and takes a Mira220 only through a TXS0108E. The `board.h` and
+    `camera.h` 🔴 comments say the same.
+  - **`t_cam`:** the 100–300 µs assumption in `board.h` and `adc_engine.h` is replaced by
+    7c.1's measured ~0.2 µs. With `t_cam` that short, FIRE is at the first delay in practice.
+  - **V111-N1:** the watchdog statements (above `cmd_reset`, and at `WATCHDOG_MS` in
+    `service.c`) bound only the bare 50 ms sleep and the board's own work, not USB output.
+  - **V111-N2:** the late refusal reads "the Pi's 3V3 rose after the first check (during the
+    message or the 50 ms wait), before '<cmd>'".
+  - **The test:** a new host case, `fsm.reset_rise_in_message`, raises the 3V3 inside the
+    attempt message's `printf`, before the sleep.
+- **Identity:** `build_v1.12/`, Release `Nov 18 2026 15:57:13`, 247528 text / 0 data / 422684 bss, UF2 SHA256 `5ABB297C…0D39D377`, `.bin` `DC1B64BE…A56C04EB`. `picotool`: Release, version 1.12, TBYB flagged. No warnings, and
+  `check_retained` reports both retained blocks as before.
+- **Host tests 300/300.** Mutations 2/2 caught: the old wording, and the message moved after
+  the second check.
+- **Machine code against 1.11** (`elf_code_diff.py`, with addresses and literal pools masked):
+  - 748 labels in each .text disassembly, all at the same addresses.
+  - Only `cmd_id_cmd` and `cmd_upd` differ, by one instruction each: `movs r2, #11` became
+    `#12`, the version minor.
+  - **Review correction.** Version metadata, pointers and image offsets also changed. The two version loads account for all changed Thumb instructions in flash and RAM.
+- **Independent software review PASS, 2026-11-18.** An isolated build reproduced the BIN and UF2
+  byte-for-byte. The independent host run passed 300/300, both mutations were caught, and four
+  command/watchdog combinations refused a rise during output while preserving watchdog state.
+  Both retained RAM records matched 1.11.
+  - **V112-N1.** V111-N1 remains partly open. USB output can consume enough of the watchdog
+    period for it to expire during the subsequent 50 ms sleep. The 5 ms yield slice is no
+    general service deadline. The reset guard and Pi-present watchdog policy remain as reviewed.
+  - **V112-N2/N3.** Shot 8 used zero first delay and reported FIRE at 0.313 µs. The first delay
+    governs the longer-delay shots. The CLI could name 7c as the camera phase and the Pi
+    exception in its short watchdog help. All three findings are nonblocking.
+  - Report `captures/review_2026-11-18/INDEPENDENT_REVIEW_v1.12.md`. Board 1 still runs
+    1.11 in A with 1.7 in B. The 1.12 Pi install instructions and on-board checks are pending.
+- **I was wrong twice in the 1.12 package (author, 2026-11-18):**
+  - **"Every other difference is string data" was too broad.** The IMAGE_DEF version word,
+    relocated pointers and image-end offsets changed too: the review's correction above.
+  - **My new comment above `cmd_reset` is false.** It says an armed watchdog "cannot expire
+    in the bare 50 ms sleep itself".
+    - Nothing feeds the watchdog between the superloop and the sleep, so the sleep starts
+      with whatever the message's USB output left of the 1 s period. 970 ms of output leaves
+      30 ms (V112-N1).
+    - That comment replaced V111-N1's false assurance with another.
+    - Nonblocking: no code depends on it, and the rule against arming the manual watchdog
+      with a powered Pi stands.
+- **Queued for the next image:**
+  - **V112-N1:** describe the sleep as using 50 ms of whatever remains since the last feed.
+  - **V112-N2:** say `t_cam` ~0.2 µs was measured with one Mira220 in slave mode, with its
+    return on both inputs. FIRE follows at `t_cam` + 0.087 µs only with a zero first delay;
+    otherwise the first delay governs (`board.h`, `adc_engine.h`). `ARCHITECTURE.md`'s
+    schedule-window note is corrected now: docs need no image.
+  - **V112-N3:** the short `help` should name 7c alongside the TXS0108E. The `wdog` help line
+    should say live mode arms the watchdog only with no Pi present and the watchdog off.
+- **The install:** `BENCH_P8_PI.md` §8.9c, written 2026-11-18.
+
+### 2026-11-19 - The stand's geometry is in the repo (`Hardware/Stand/`); the mic is 455 mm from the ball; I was wrong about the impact sound
+
+- **The owner asked** where the stand's parts sit, and why. The answer, with its sources, is
+  [`../Stand/README.md`](../Stand/README.md).
+  - **Where the layout comes from:** the Faceplate optimizer's weighted020 candidate
+    (2026-09-15), with the strobe raised to clear the trigger lens (2026-10-01).
+  - **Its `reference_003` export** (2026-10-02) is the frame the printed parts were drawn in.
+  - **`Hardware/Stand/tools/stand_geometry.py`** reads `FullStand.STEP` (2026-11-18). Both
+    camera pupils land on the design to 0.000 mm. The V2 board's M2 holes land on their
+    standoffs to 0.00 mm.
+- **Distances from the ball** (RH, a 36 mm mat assumed): CAM0 376.6 mm, CAM1 465.1 mm, mic U16
+  454.6 mm. The light sheet is the plane 65 mm downrange of the ball centre.
+- **I was wrong (2026-11-19) to say the impact sound reaches the mic "comfortably before FIRE
+  at up to 100 m/s".**
+  - That rested on a guessed 50 mm from tee to sheet and the design doc's
+    `beam_to_fov_mm = 150`, and I did not say so.
+  - With the real geometry the sound arrives 1.31–1.33 ms after contact. Under the 150 mm
+    figure that is before FIRE at every speed.
+  - The stand was optimised for a first flash just after the trailing edge, with the ball
+    centre about 101 mm downrange. Under that model the sound comes after FIRE above about
+    79 m/s: about 96 m/s once club contact is allowed for.
+  - So copying the mic samples before BURST catches fast drivers only if the burst starts
+    later, as it does with the 150 mm figure.
+- **Two timing models disagree** (README §4.1).
+  - The design doc: a 3 mm beam, 150 mm to the first freeze, 42.67 mm spacing.
+  - The optimizer: a 30 mm sheet, the first flash 25 µs after the trailing edge, 47.33 mm
+    spacing.
+  - 7c.3 has to settle which. Nothing in the firmware changes.
+- **The owner (2026-11-19): the sheet is about 3 cm thick.** The design doc's `beam_width_mm`
+  of 3 mm should have been 3 cm.
+  - The July optimizer written alongside the doc already used 25 mm ("2-3 cm").
+  - No firmware uses the value: no speed is computed yet, and `detect path` is unset.
+- **Where 150 mm came from:** a deliberately loose starting value.
+  - §15 sized it for `t_cam` assumed at 100–300 µs. §16 step 8 says to tighten it from the
+    images.
+  - Neither optimizer used it.
+- **A first freeze just after the trailing edge is possible** now that `t_cam` is about
+  0.2 µs. The floor is about 40 mm past the sheet centre at 100 m/s. **(Wrong in part: see
+  2026-11-20.)**
+  - It needs no firmware change: the first delay is per shot.
+  - Measure the detection latency and the trailing-edge-to-FIRE time first (README §4.1).
+- **CAD storage is the owner's choice.**
+  - The assembly STEP is 171.7 MB, over GitHub's 100 MB limit, and the repo has no Git LFS.
+  - The repo holds only the text files and the tool so far.
+
+### 2026-11-19 - The optimizer and the stand's CAD now live in `Faceplate\Faceplate_Design` (verified copy); a wording correction
+
+- **The owner's choice:** the cleaned-up optimizer and the CAD go in
+  `C:\Users\ATTAYEKP\Github-Personal\Faceplate\Faceplate_Design`, outside this repo.
+- **The optimizer:** 526 files and 235 MB, from the original folder's 46,351 files and 36 GB.
+  - The files were traced from real runs, then copied byte-for-byte with their relative paths.
+  - It gets its own copy of the Python environment.
+  - The engine's internals are unchanged: it hashes them.
+- **The proof**, in `Faceplate_Design\VERIFICATION\`:
+  - weighted020's five focus-condition capture maps match the record cell for cell, and the
+    scores recompute exactly: 97.2005 % nominal, 79.2959 % worst-focus;
+  - the same source identity, 593 files;
+  - all 26 API jobs identical, apart from the STEP files' timestamps;
+  - no reads into the original folder.
+- **The CAD:** `Downloads\PitracStand` (235 files, a snapshot), `reference_003` and the
+  2026-10-05 enclosure parts, each with a SHA-256 manifest. The originals are untouched.
+- **`Hardware/Stand/README.md`** now points there. §5 gives the paths relative to that folder.
+- **I was wrong (2026-11-19):** the Stand README said that any edit to the optimizer's sources
+  "stops it", and it called `clock_model.py` hash-locked.
+  - The engine hashes every module it loads into a source identity, which keys cached results.
+  - It refuses to start only when the coaxial source folder differs from its snapshot, or a
+    pinned input fails its hash.
+  - It stops when a file changes mid-session.
+  - Editing `clock_model.py` while stopped is allowed. Corrected in both READMEs.
+
+### 2026-11-20 - The workbench's firmware handoff checked; the shot-path plan written; I was wrong twice
+
+- **The owner asked** for a firmware plan from
+  `Faceplate_Design\FIRMWARE_COMPATIBILITY_HANDOFF.md`, which the workbench side wrote that
+  morning.
+  - The plan is [`SHOT_PATH_PLAN.md`](SHOT_PATH_PLAN.md). Its §2 checks the handoff claim by
+    claim against image 1.12 and `designs/weighted020/CONTROLLER.json`.
+  - No firmware changed.
+- **What the check found:**
+  - **The live readback sets the first-flash latency.**
+    - `STROBE_REFUSE_ADC` requires IDLE.
+    - A live firing waits for 200 µs of ADC0 baseline after the switch to BURST. On board 1
+      that was about 0.4 ms (2026-10-12). *(Wrong: 198–200 µs. See the 7c.3 entry below.)*
+    - A9 puts the switch after the speed analysis.
+    - So the handoff's 25–50 µs readiness, and its "BURST before admission", do not fit the
+      reviewed code.
+  - **A pass's fall time is the superloop's read time**, not the edge. The ±1 µs anchor needs
+    a bounded hot loop or a hardware-timed edge.
+  - **The LUT:**
+    - 67 bins with gaps, not 89. A missing bin goes to the fallback, as in the workbench's own
+      model;
+    - bin 23 has no pulse, and eight bins drop the sharp pulses;
+    - ten widths are under 5 µs;
+    - RH and LH differ;
+    - only bin 4 (71 ms) exceeds the 30 ms readback window;
+    - the `flat15` × 10 fallback spans about 255 ms.
+  - **The handoff's Option A** (6–8 µs ADC0 sampling, 90 ms bursts) would weaken the reviewed
+    2 µs overcurrent rules and raise a live limit. Not recommended.
+- **Decisions D1–D7** (plan §3) wait for the owner.
+- **I was wrong (2026-11-19) twice.**
+  - **`L_eff` for the ADC5 50 % width.** I changed `PITRAC_V2_TECHNICAL_GUIDE.html` to
+    "`D_ball + w_beam` ≈ 72.7 mm" and set its simulator to 72.67 mm. 72.67 mm is the
+    full-contact length.
+    - The 50 %-of-peak width of the bump is about 36–41 mm in a simple backscatter model
+      (plan §6). The old 45.67 mm was nearer, for the wrong reason.
+    - Corrected to a modelled ~38 mm, still a per-board calibration.
+  - **"A first freeze just after the trailing edge … needs no firmware change".** I said it
+    in the Stand README §4.1, the stand HTML page, `DEVELOPER_GUIDE.md` §4.6, the CHANGELOG
+    and the entry above.
+    - Four things stand in the way: the 2 ms bench coalescer, the superloop's read-time
+      anchor, the uniform burst encoder, and the live readback's baseline wait (~0.2 ms; first written
+      as ~0.4 ms, corrected below).
+    - All corrected.
+- **The owner's direction:** the first flash comes as soon as reasonable, whatever the speed;
+  the speed is needed only after it. Recorded in the plan's §2a, which revises D2 and adds D8.
+  - The workbench already models pulse 0 that way.
+  - It takes the speed off the critical path: a ch5 snapshot, then refinement while pulse 0
+    fires; pulse 1 is at least 526 µs later.
+  - It needs a fixed pulse-0 width (about 10 µs), a LUT with slot 0 always on, and a two-stage
+    burst feed.
+  - The live readback's baseline wait remains the floor (~0.2 ms; first written here as
+    ~0.4 ms, corrected below). D2 now offers three ways around it.
+
+### 2026-11-20 - 7c.3 PASS (desk); the live readback's baseline takes ~0.2 ms, not 0.4 ms: I was wrong
+
+- **7c.3, the geometry check** (`BENCH_P5_P7_MIC_CAMERA.md`), at the owner's request.
+  - The check: `beam_to_fov_mm > (D+w)/2 + v·(t_fixed + t_cam)`, from the sheet centre.
+    (D+w)/2 = 36.3 mm with the owner's 3 cm sheet. `t_cam` is 0.24 µs (7c.1): 0.02 mm at
+    100 m/s.
+  - An upper limit the formula leaves out: the whole ball in CAM0's view, so at most 207 mm
+    (first-order pinhole, the 1600-pixel side horizontal).
+  - At 100 m/s the first freeze comes 39.6 mm past the sheet centre with the design's 32 µs,
+    and 59.5 mm with the 199 µs baseline on top. The design doc's fixed value is 150 mm.
+    **All PASS.**
+  - Whole-ball freezes in view, at 42.67 / 47.33 mm spacing: 4 / 4, 4 / 4 and 2 / 2.
+  - Four freezes at 100 m/s need the first flash within 289 µs of the trailing edge at
+    47.33 mm, or 429 µs at 42.67 mm. After the baseline, that leaves 90 µs or 230 µs for
+    detection and the CPU.
+- **I was wrong about the live readback's start-up.**
+  - I said about 0.4 ms in `SHOT_PATH_PLAN.md` (row 3a, §2a, D2), the Stand README §4.1,
+    the stand page, `DEVELOPER_GUIDE.md` §4.6, the CHANGELOG and the entries above.
+  - My first 7c.3 figures to the owner used it too: about 80 mm and 3 freezes.
+  - The source was `board.h`'s comment: 122 ADC0 samples about 440 µs after the switch
+    (2026-10-12). The same day's §6 entries explain both numbers:
+    - 440 µs was the whole record (PRE 200 + firing ~39 + POST 200);
+    - the ADC was running at half rate (DIV 95), so the ring was never late.
+  - On the fixed image, every live firing in 6c printed `100 ready` at **+198 to +200 µs**,
+    with the first sample at +2 to +5 µs (once +38 µs, a late poll). That answers the plan's
+    WP0.2.
+  - **Also wrong:** D2 (A) said PRE could go from 200 to 100 µs, "the review's floor of 50
+    samples". 50 samples is the record's minimum baseline, and the 200 µs wait leaves the
+    record only 76–77. How far PRE can shrink is a question for the review.
+  - Corrected:
+    - the plan: D2 now recommends (A), and WP0.2 is marked done;
+    - the Stand README, the stand page, `DEVELOPER_GUIDE.md` and the CHANGELOG;
+    - `ARCHITECTURE.md`, whose 2026-10-12 note still called the cause unknown.
+- **Queued for the next image** (comments only). Three comments describe the 122 samples at
+  ~440 µs as a late start:
+  - `board.h`, above `STROBE_LIVE_RING_READY_SAMPLES`;
+  - `strobe.c`, at the ring-ready wait;
+  - `cli.c`, above `cmd_adc_ringtest`.
+  They should say the ADC ran at half rate, and that the ring starts within about 5 µs. The
+  index-counted wait stays: it is the right defence regardless.
+
+### 2026-11-20 - The owner decides D1–D8 for the shot path; D3 changes a live-strobe limit
+
+- **Recorded in [`SHOT_PATH_PLAN.md`](SHOT_PATH_PLAN.md) §3a, and in §8 here.** No firmware
+  changed.
+- **D1:** measure first (WP0.1). Core 0 if its armed worst case is under about 20 µs;
+  otherwise core 1.
+- **D2:** (A), switch to BURST at the trailing edge.
+- **D3:** the owner asked why the 30 ms limit cannot become 100 ms.
+  - The answer: 30 ms is how long ADC0 can watch the strobe current without a gap. The DMA
+    ring can only wrap within 32 KB (16384 samples, 32.8 ms), and RAM has about 66 KB free
+    (`build_v1.12` map) against the ~100 KB a 100 ms record needs.
+  - The owner then asked whether every pulse needs watching, given calibration.
+  - Calibration sets the current; the readback catches a pulse that departs from it (6c's
+    3.3 A overshoot and cold J3 joints). Its verdict comes after the burst and stops the
+    next firing.
+  - **Decided:** watch the first 30 ms, and let later pulses fire unwatched. The span limit
+    rises to 150 ms, in WP5, under independent review.
+- **D4:** the live fallback is upstream PiTrac's driver pattern, 8 pulses over 21.8 ms
+  (`kStrobePulseVectorDriver`, PiTracLM/PiTrac `main`, read 2026-11-20).
+- **D5:** the workbench regenerates its table under the firmware's rules, to 100 m/s.
+- **D6:** the analog mic is for after the shot only.
+- **D7:** the table is compiled in first.
+- **D8:** pulse 0 is fixed at the width that gives a 100 m/s shot a sharp image. About 9 µs
+  is estimated; the workbench computes it.
+
+### 2026-11-20 - 7c.2 written: a TXS0108E per camera (owner); the Pi tools take two Mira220s
+
+- **The owner has a second Mira220,** and asked for 7c.2.
+- **One module for both cameras would back-feed camera 1.**
+  - The documented wiring fed a single module's VA and OE from camera 0's 1.8 V.
+  - On board 1 a Mira220's 1.8 V is up only while it streams (7c.0 Step 1: VA 0 V with the
+    stream stopped). The driver powers a camera only while it streams, and for 1 s after.
+  - So whenever camera 0 streamed and camera 1 did not, the module would drive camera 1's
+    REQ EXP and ILLUM TRIG pins with camera 1 unpowered: the CR-09 damage case.
+  - **The owner chose a module per camera** (§8). Each module's VA and OE come from its own
+    camera, so an unpowered camera faces a Hi-Z module. No start or stop order is needed.
+- **No firmware change.** J4.3 and J4.4 carry the one trigger (GPIO10). J4.7 and J4.8 are the
+  two strobe inputs, and the handshake already waits for both (`camera.c`).
+- **[`BENCH_P5_P7_MIC_CAMERA.md`](BENCH_P5_P7_MIC_CAMERA.md) 7c.2:**
+  - Step 0: the Pi's tests, both overlays, and each camera configured by its I²C bus.
+  - Step 1: module #1 holds camera 1's trigger below 0.2 V while camera 1 is off.
+  - Step 2: camera 1's trigger level and strobe, and the strobes not crossed.
+  - Step 3: both cameras in slave mode, with no untriggered frames.
+  - Steps 4 and 5: `cam trig` and `cam shot`. Each camera's delay and the skew come from the
+    analyser; `t_cam` must be the later strobe; every trigger pairs a frame from each camera.
+- **The Pi tools** (`Software/camera-comparison`; `TRIGGER.md`):
+  - `configure-cameras.sh --bus N` chooses one of two Mira220s. Without it, two are refused,
+    with both names listed. The search is a new helper, `find_sensor` in `common.sh`.
+  - `trigger-capture.sh` takes `--config` twice. One process streams both, because the
+    camera lock is per user. Each camera's files go into `bus<N>/`. One camera works as
+    before.
+  - `conversion/triggered_pairs.py` (new) pairs each trigger's frames: mutual nearest, within
+    50 ms. A missed trigger leaves its frame unpaired and does not shift the rest.
+  - **Tests, on this PC under Git Bash:**
+    - `test-helpers.sh` 109 checks, `test-trigger.sh` 30, `test-trigger-capture.sh` 47 (24
+      before);
+    - the Python unit tests, 17;
+    - the fakes now keep a sensor per bus, with one trigger file for both;
+    - not yet run on a Pi. 7c.2 Step 0 runs them there.
+  - **A test-host trap:** Git Bash rewrites `/dev/video11` into a Windows path for a Windows
+    Python, so the fake reads only the device number.
+- **The wiring docs follow the decision:**
+  - `WIRING_DIAGRAM.md`: rules 3 and 4, the overview, §3, §6.2, §7.1–§7.3 (a new drawing), §8's
+    J5.2 note, and §9;
+  - `BRINGUP_NEW_BOARD.md` Step 13.4's module table. It had a second camera's strobe on the
+    first module's A3;
+  - `PITRAC_V2_TECHNICAL_GUIDE.html`'s rules, table and checklist. Its two wiring drawings
+    still show one module, and their captions now say so.
+- **Board 1's ports:** camera 0 stays on CAM/DISP 1, and camera 1 goes on CAM/DISP 0. The board
+  does not care which port is which. 7c.2 records which bus is which camera.
+- Not committed.
+
+### 2026-11-21 - Two modules kept (owner); two alternatives considered; CR-09 corrected twice
+
+- **A divider on the trigger, the strobe direct: rejected.**
+  - **The strobe:** the Mira220 guarantees a high of only 1.44 V (1.80 V at most). The RP2350
+    guarantees a high read only above ~2 V, so a direct strobe would rest on unspecified
+    behaviour.
+  - **The trigger:** a divider gives a good level. For example, 12 kΩ in series against the
+    camera's 12 kΩ pull-down gives ~1.64 V. But it never isolates: every trigger high would
+    reach a camera that is off.
+    - A ~6 kΩ divider passes ~0.17 mA, with under 0.1 V of noise margin (7c.0's dips,
+      scaled).
+    - A ~0.6 kΩ divider passes ~1.7 mA, about 3× the camera's whole I/O supply current.
+- **One module, VA from camera 0 and OE from camera 1 (100 kΩ, 470 kΩ to GND): considered,
+  not adopted.**
+  - OE low puts the TXS0108E's I/Os in Hi-Z and turns off its pull-ups (TI SCES642), so it
+    would be safe in every steady state.
+  - It leaves three things two modules don't have:
+    - a window of a few ms while camera 1 powers down, with OE still high;
+    - a check for a resistor on the module's OE;
+    - neither camera working alone.
+  - **The owner kept a module per camera** (§8).
+- **CR-09 corrected in `NEXT_BOARD_REV.md`:**
+  - **Its plan for the next layout allowed one on-board translator fed from a local 1.8 V
+    regulator.** That would drive a camera that is off. It now asks for a translator per camera,
+    each from its own camera's 1.8 V, with a VDDIO pin per camera on J4.
+  - **"The strobe inputs never read high" was too strong.** "Never guaranteed to read high" is
+    true; translation is still required.
+- No firmware change. Not committed.
+
+### 2026-11-23 - Board 5 bring-up started (owner): it is the COM10 board; Steps 1.3–1.4 PASS
+
+- **The owner brings up Board 5 now, before 7c.2.**
+  - USB to this PC and the PSU, no Pi, no camera.
+  - DMM and logic analyser on test points and header pins; **no soldered leads on this board**
+    (owner).
+  - The owner reports its TIA as the original-board rework (162 kΩ ∥ R80, 1.5 pF).
+- **Board 5 is the COM10 board** of the rework batch: UID `6093584a7790419d` (§6, 2026-11-03).
+  Its history carries over:
+  - ADC5V scale 1.0688, saved in slot A, seq 9. The config sectors survive the partition
+    table.
+  - ADC2 clipped at 8 % and 25 % beam duty, cause not found.
+  - Its R80 network has never been measured. The unmapped 280 kΩ and 160 kΩ readings across
+    U11 pins 1–2 (§6, 2026-11-03) may be this board's.
+  - **Next for it:** `BENCH_REWORK_CHECK.md` §1–§2, all unpowered, before any optical work.
+- **Before today it ran r5 flat.** `picotool info -a` in BOOTSEL:
+  - version 1.1, `binary start 0x10000000`, `binary end 0x10035dd4`, blocks at 0x138 and
+    0x35dc0: r5;
+  - **silicon A4**, QFN80, chipid `0x6093584a7790419d`.
+- **Step 1.3 PASS.**
+  - `picotool load build\pitrac_pt.uf2`, `reboot -u`, then `partition info`:
+    `0(A) 00002000->00100000 "PiTrac A"` and `1(B w/ 0) 00100000->001fe000 "PiTrac B"`.
+  - Then `load -p 1 -v -x build\pitrac.uf2`, verified OK.
+- **Step 1.4 PASS:**
+  - `id` → `version : 1.1 (partition B at 0x100000)`, `built : Oct 20 2026 14:59:52`, the
+    UID, `sysclk 150000000 Hz`;
+  - `upd` → `flash update boot, ON TRIAL: bought itself at the end of init`, `this image in
+    partition B`, `partner : ... UNKNOWN`.
+  - The partner reads UNKNOWN because A holds the rest of the old flat r5, as `BENCH_P8_PI.md`
+    §8.7 predicts.
+- **I was wrong:** my Step 1.3 commands put `partition info` and the image load straight
+  after `reboot -u`. The procedures had no wait either.
+  - Right after the reboot, `partition info` answered `...returned an error: rebooting`, and
+    the load `Communication with RP2350 device failed`.
+  - Both worked when repeated, and the failed load wrote nothing.
+  - A 5 s wait is now in `BRINGUP_NEW_BOARD.md` Step 1.3, `BENCH_P8_PI.md` §8.7 Step 2 and
+    `HANDOFF.md` §7. Step 1.3 also covers a board that arrives flashed flat.
+- **1.12 into A: PASS, its first board.** After `bootsel`, `picotool load -p 0 -v -x
+  build_v1.12\pitrac.uf2`. COM10 came back.
+  - `id` → `version : 1.12 (partition A at 0x002000)`, `built : Nov 18 2026 15:57:13`.
+  - `upd` → `flash update boot, ON TRIAL: bought itself at the end of init`, `this image in
+    partition A`, `partner : version 1.1, bought: the fallback`.
+  - Why 1.12: it passed independent review, and its machine code is 1.11's apart from the
+    version. Board 1 has run 1.11 since 2026-11-12, with §8.10 passed.
+- **`cfg` → `source : slot B seq 14`**, not the slot A seq 9 recorded on 2026-11-03. Five later
+  saves were never logged; asked the owner. The rest of `cfg`:
+  - scale 1.0688; phase 1343 ticks; gain 14.5;
+  - `hpf sel : TRACK = 0`; phase model fitted, pure delay; cal duty 25 %.
+  - `stat`: STANDBY, no fault, `5V_IN 5.202 V fresh`, `halt : boots 7`.
+- **§2 skipped (owner); its readings were taken at the first `on`,** as on Board 4. The owner
+  sent `on` before §4 and reports every reading as expected:
+  - the PSU at 5.202 V;
+  - VIR 35.77 V; TP2 12.31 V; TP7 2.59 V.
+  - Step 2.2 (the boost's frequency) was not done: no scope.
+- **§3 (E9) PASS, with the latch closed** (`LATCH_CONTROL(15) 1`): GPIO24, 0, 8 and 9 all read
+  0. Also: `D_COMPARATOR(46) 1`, GPIO27 0, `LED_YELLOW 1`.
+- **§4 PASS.** `adc5vcal 5.202` → scale **1.0687** (raw 4.867 V). `cfg save` → slot A, seq 15.
+  `adc5v` 5.202 V, which matches the DMM; `cfg` → `source : slot A seq 15`.
+- **Step 5.1 PASS.** On USB only, `adc5v` 4.871 V, `USB-only, latch INHIBITED`. `on` →
+  `FAULT`, `USB_POWER_ONLY`, latch 0.
+- **Step 5.2 PASS.** PSU on: `fault clear`, `on` → `BENCH_RUNNING`, 5V_IN 5.200 V, latch 1.
+- **Steps 5.3–5.5: PASS as reported by the owner.** The log ends at 5.2, so there are no
+  captures or numbers for them.
+- **Unpowered rework check (`BENCH_REWORK_CHECK.md` §1–§2): PASS as reported by the owner.**
+  **R80 measures 120 kΩ across its pads,** inside 119–122 kΩ: the 162 kΩ is connected. So the
+  2026-11-03 ADC2 clipping is not a wrong Rf. Optical crosstalk with no baffle remains the
+  likely cause, and §8 checks it when this board does optics.
+- The PSU current was not reported.
+- **The owner wants to skip most of the rest (2026-11-23; §8).** The proposed minimum before
+  a Pi:
+  - `link` in STANDBY;
+  - SW2 taped;
+  - `BENCH_P8_PI.md` "First seating", with the R39 check;
+  - one clean `on`/`off` cycle with the Pi;
+  - the link (§8.8).
+  - Deferred until this board needs them: §6–§11 (beam and optics), §12 (strobe current),
+    §13's rollback and shipping steps, and §8.0b's simulated Pi.
+  - **Later the same day, the owner chose to run §6–§12 before the Pi** (§8).
+- **`link` in STANDBY:** `lines : released: no Pi up`.
+- **Step 7.1 PASS:** `adc 2 256` → 3215 codes, 2.5908 V; TP7 2.59 V.
+- **Step 7.2 PASS:** `CONFIRMED: GPIO33=0 is TRACK`.
+  - GPIO33=0: 9.3 and 9.6 mV. GPIO33=1: 24.6 and 24.2 mV. Separation 2.6×.
+  - HOLD p-p 7.3 mV; drift 2.29 mV/s; **leakage 52 pA** (board 2: 52 pA).
+  - It ran right after `beam off`, without the 3-minute wait, and passed anyway.
+  - `cfg save` → slot A, seq 17. `cfg`: `hpf sel : TRACK = 0`.
+- **Step 6.1 PASS:** both slices `ENABLED ok`; funcsel 4 on GPIO31 and GPIO39; pad ISO 0;
+  counting.
+- **Steps 6.2 and 6.3: no analyser (owner).**
+  - `beam clamp` ran, and the beam was set back by the doc's sequence: 104166 Hz, 2 %, off.
+  - U9's width was not measured. 6.2 is covered by readback, then by §9.
+  - **A DMM method for 6.3 is now in Step 6.3:** TP5 read from the back at three settings.
+- **Step 6.4 not done.** The beam ramped to 25 %, but there was no 10-minute FLIR hold. It
+  goes into §9's warm-up.
+- **Step 6.5 PASS:**
+  - `A7` on SIO; `GPIO27 : SIO output, driven 0, pad 0 -> U5 pulse limiter armed`;
+  - gate DAC level 0; engine idle with GPIO25 SIO, pad 0.
+  - `panel rdy` cannot be seen: there is no front panel on J7.6 (`panel rdy 100` was mistyped).
+- **The test points are safe to probe from the back (owner's report; checked against the
+  PCB):**
+  - TP1–TP10 are through-hole, and on the back no other-net pad lies within 6 mm of any of
+    them.
+  - Every via is tented (board setup `tenting (front yes) (back yes)`, no per-via override).
+    The nearest are mask-covered GND vias: TP8 0.45 mm, TP3 0.62 mm, TP10 1.24 mm.
+  - The script that found this checks its front-side figures against the recorded ones:
+    TP7/R95 2.13 mm (recorded 2.12), TP9/C79 0.78 (0.78), TP10/R91 0.79 (0.79). TP2, TP3 and TP6
+    come out ~0.2 mm larger than recorded, so the recorded front figures stand as the
+    conservative ones.
+  - Written into `BRINGUP_NEW_BOARD.md` §2.1, Step 7.1, Step 12.2 part 5, and `HANDOFF.md` §3
+    rule 8.
+  - **A wrong reference fixed:** `BRINGUP_NEW_BOARD.md` cited the probe rule as `HANDOFF.md`
+    "§5 rule 8"; it is §3 rule 8. §5 rule 8 is the independent review.
+- **The owner has fitted a baffle at D12,** and has a wall to aim the beam at for §9.
+- Not committed.
+
+---
+
+### 2026-11-23 - Board 5 §8–§11 PASS: phase 1320 ticks (400 ns), vref 3.270 V, Vos +6.2 mV
+
+- **The owner's scrollback, one session.** The baffle is at D12, and there is a wall in front
+  for §9.
+  - No U9 readings: Step 6.3's DMM check is optional and was not done.
+  - **No FLIR temperature was reported, so Step 6.4 is still open** (asked). The beam ran at
+    25 % for about 7 minutes through §8–§9, and again through §10.
+- **§8 PASS:** aimed at open space, HPF in TRACK.
+
+  | duty | min | max | swing |
+  |---|---|---|---|
+  | 12 % | 3033 | 3245 | 212 codes = 171 mV |
+  | 25 % | 3056 | 3263 | 207 codes = 167 mV |
+
+  - Both captures sit far from the rails. The swing stops growing between 12 % and 25 %, the
+    plateau §8 calls a good sign.
+  - **Max linear duty ≥ 25 %.** The 2026-11-03 clipping is gone with the baffle fitted, and R80
+    measures right. So that clipping was optical, not the TIA. Its geometry was not recorded.
+- **§9 PASS.** `beam` first: 104166 Hz (TOP=1439), 25 %, phase 1343.
+  - **Run 1, at 266 s** (`warm : NO`): peak 78 %, committed 1318. Superseded.
+  - **Run 2, warm:**
+    - peak **55 %**; saturated 0 %; quad null 0.1 codes;
+    - h3/h1 0.104 (0.111 intrinsic, bar 0.161);
+    - **committed 1320 ticks, 400 ns**.
+  - The amplitude fell from 3675 to 2585 codes between the runs, faster than warm-up alone, so
+    the aim probably changed (not reported). The phase barely moved (1318 against 1320), as on
+    Board 4 (1333 at 69 %, 1332 at 78 %).
+  - **`cal model` PASS**, all five points:
+    - `theta(f) = 5.3832 + 4.351e-06 f − 5.393e-12 f²`;
+    - **residual 0.26°**; amp spread 6 %;
+    - **chain delay 396 ns at 80 kHz → 430 ns at 200 kHz, PURE DELAY** to within 1.21°.
+  - **Step 9.4:** Board 4 carries the same reported 120 kΩ / 1.5 pF rework and measured
+    487 ns. Board 5 measures 400 ns. They are 87 ns apart with the same TIA, inside the 95 ns
+    non-TIA spread that 9.4 warns of.
+    - No pre-rework `cal demod` exists for this board. The stored 1343 has no known source, so
+      there is no before/after.
+  - `beam off`, then `cfg save` → slot B, seq 18. `cfg`: phase 1320, `phase mdl: fitted, pure
+    delay (80000..200000 Hz)`.
+- **§10 PASS,** with the board unmoved.
+  - `beam on` went straight to 25 % shortly after §9's `beam off`, with no ramp and no 5-minute
+    re-warm. The LED was still warm, and Board 4 did the same with no effect on §10.
+  - **10.1:** at duty 0, `D_Comparator(46) = 1`; at duty 5 (level 51), `= 0`.
+  - **10.2, LOW,** two runs: both flipped at **0.16 %** (TP8 nominal 5.2 mV), with ADC5 at 12.9
+    and 9.7 mV.
+  - **10.3, HIGH:** `beam phase 1120`, which is §9's 1320 − 200 rather than − 280.
+    - `adc 5 100` → **3686 (2.970 V)**, above 10.3's 2000–2500.
+    - The point is still valid. The sweep flipped at **89.06 %** (TP8 nominal 2.9391 V), with
+      ADC5 there at **2.9188 V**.
+    - That is inside the DAC's range and inside U15's input range (an LM393 on +5 V, ~3.5 V).
+    - ADC5 moved 12.1 mV in the sweep: HOLD's drift, with the LED still warming.
+    - `BRINGUP_NEW_BOARD.md` 10.3 now says a reading up to ~3700 works.
+  - **10.5:**
+    - vref = (2.9188 − 0.0113)/(0.8906 − 0.0016) = **3.270 V** (3.268–3.272 over the two LOW
+      runs);
+    - Vos = 0.0113 − 3.270 × 0.0016 = **+6.2 mV** (+4.6 to +7.8, and ±2 from the DAC's first
+      levels);
+    - boards 2, 3 and 4: 3.268, 3.256 and 3.254 V; +11.0, +5.4 and −0.6 mV;
+    - both pass.
+  - **10.6, beam off:** ADC5 moved **2.4 mV** across the sweep, under 3 mV (Board 4 2.4).
+  - **10.7:** `threshold duty 0`, then `cfg save` → slot A, seq 19.
+- **§11 PASS:** `cfg` (slot A, seq 19):
+  - carrier 104166 Hz, phase 1320 ticks; threshold level 0;
+  - adc5v 1.0687; gain 14.5; path unset;
+  - `hpf sel : TRACK = 0`; phase model fitted, pure delay; cal duty 25 %.
+- **Docs:**
+  - `BRINGUP_NEW_BOARD.md`:
+    - 9.4 and 10.5 add Boards 4 and 5;
+    - 10.3 as above;
+    - Step 12.2 part 6 no longer names Board 5 as the board with leads. It has none (owner).
+  - The same correction in `NEXT_BOARD_REV.md` ("Board 5's role", twice) and §9 below.
+- **Open on Board 5:**
+  - Step 6.4's 10-minute FLIR hold;
+  - Step 6.3, which is optional;
+  - §12;
+  - then the Pi.
+- Not committed.
+
+---
+
+### 2026-11-23 - Board 5 Step 12.2 parts 2–5 PASS (dry, J3 disconnected)
+
+- **Part 2, rail down:**
+  - `pins` → `PULSE_LIMIT_DIS(27) 0`;
+  - `strobe` → `GPIO27 : SIO output, driven 0, pad 0 -> U5 pulse limiter armed`, `gate DAC :
+    level 0`, `may fire : +5V rail not ready`;
+  - `strobe pulse 20` → `REFUSED -- nothing fired`.
+- **Part 3, rail up:** `BENCH_RUNNING`, latch 1; `strobe` → `rail : up`, `may fire : yes`,
+  `may arm : yes`.
+- **Part 4:**
+  - `strobe pulse 20` → `completed, IRQ0 seen`, `GPIO25 after: low, SIO`;
+  - `clamptest 100` → `ERR: clamptest is for widths over 100 us`;
+  - `clamptest 200` → `completed, IRQ0 seen`.
+- **Part 5, TP3 from the back** (owner's DMM):
+
+  | command | TP3 | nominal | pass band |
+  |---|---|---|---|
+  | `strobe gate 50` | **4.94 V** | 4.950 V | 4.71–5.06 V |
+  | `strobe gate 90` | **8.91 V** | 8.914 V | 8.50–9.09 V |
+  | `strobe gate 0` | **0 V** | 0 | ≤ 30 mV |
+
+  Board 1 read 4.936 V at 50; Board 4 read 4.94 V, 8.94 V and 0 V.
+- **Step 12.1 PASS (owner): the gate-hold capacitor is fitted and measures 1 µF,** and every
+  connection check passes (each end < 1 Ω to its pad, ≈ 47 Ω to TP3, no hard short, R67
+  ≈ 56 kΩ).
+- **The owner asked whether to seat the Pi and cameras before 12.3. Advised no:** J8 and J4 stay
+  empty through 12.4, as §12 says.
+  - With a Pi powered, live mode arms no watchdog (the owner's decision, 2026-11-12). First
+    current on an unproven board is when the 1 s watchdog matters most.
+  - A strobe fault on first current would brown out the +5 V rail under a running Pi. The
+    ~3 A PSU limit has less headroom with a Pi drawing from it.
+  - The Pi's first seating has its own checks. Doing both firsts at once makes a failure
+    ambiguous.
+  - A camera on J4 is for 7c only (`HANDOFF.md` §3).
+- **Part 1 not reported yet** (R61 → GND, the two J3 joints, R65/R66's markings). It is
+  required before live current, in the power-down before 12.3.
+- **Step 6.4 assumed OK (owner):** no FLIR on hand (§8).
+- `stat` shows `halt : ... faults 1`. That counts latched faults since the telemetry began, so it
+  is most likely Step 5.1's deliberate `USB_POWER_ONLY`. `hist` names the last one.
+- Step 6.4's temperature: still not reported.
+- Not committed.
+
+---
+
+### 2026-11-23 - Board 5 Step 12.3 part 1: the ring PASS; ADC0 reads 10 codes, TP4 asked
+
+- The LED bank is on J3, and the rail is up (`BENCH_RUNNING`).
+- `strobe` shows `GPIO27 : ... U5 pulse limiter armed`, `live : OFF` and `may arm : yes`.
+- **`adc ringtest 100` PASS:**
+  - 200 of 200 pairs covered, 0 snapshot failures;
+  - widest bracket 14 cycles (≤ 40), residual −7 to +7;
+  - first sample ≤ +3 µs, 100 written ≤ +200 µs;
+  - board 1, after its snapshot fix: 14 cycles, −8 to +8.
+- **`adc 0 4096` → 10 codes (8.1 mV at the pin).** The pass line said "under 10".
+- **I was wrong:** I passed on the doc's "under 10 codes" without checking it.
+  - It is too tight. Board 1 read 9 codes at rest (2026-10-12), and its ring's first samples
+    9–12. That is the ADC's own offset, not current.
+  - The real gap: nothing checked a small standing current. 10 codes could also be 60 mA
+    through the bank with the gate at 0. The firmware's baseline check
+    (`STROBE_LIVE_BASELINE_MAX_CODES`, 40 codes, ~0.24 A) misses that, and so does the gate-0
+    firing, which measures against the baseline.
+  - **Fixed:** `BRINGUP_NEW_BOARD.md` 12.3 part 1, `BENCH_P6_STROBE.md` and
+    `BENCH_REWORK_CHECK.md` now say "about 10 codes, 12 at most". 12.3 part 1 adds a DMM on
+    TP4 from the back: under 2 mV, which is 15 mA.
+  - 12.3's VIR line now compares against C26, not a flat 36 V: Board 5's VIR is 35.77 V.
+- **Asked the owner for:**
+  - TP4's DMM reading;
+  - VIR at J3 pin 1's screw;
+  - Step 12.2 part 1's readings (R61, the J3 joints, R65/R66).
+- Not committed.
+
+---
+
+### 2026-11-23 - Board 5 §12.3–12.4 PASS: U5 clamp 134 µs; 9 A at level 436 (42.58 %)
+
+- **The owner went on from 12.3 part 1 without the TP4, VIR or 12.2 part 1 readings** (below).
+- **Part 2:** `LIVE: ARMED ... Watchdog ARMED (1 s)`. At gate 0: `within limits`, `no current
+  pulse above the ~72 mA floor`, baseline 11.6 codes (0.069 A).
+- **Part 3, the staircase:**
+  - 3–18 %: nothing above the floor;
+  - 21 %: 0.103 A; 24 %: 0.703 A; 27 %: 1.703 A, then 1.704 A.
+  - Every step `within limits`, 20 µs (10 samples), no `NOT CLEAN`. Peak at most 1.008 ×
+    plateau; the largest rise 1.0 A.
+  - First current at 21 %, as on board 1.
+  - The owner climbed one step past the first in-band step (24 %, 0.70 A), to 27 % (1.70 A).
+    That is still inside 0.5–2.5 A.
+- **Part 4,** at level 276 (26.95 %):
+  - `strobe pulse 20`: 1.704 A;
+  - `strobe clamptest 1000`: 1.722 A plateau (+1.1 %), **on 134 µs** (67 samples, ±2 µs),
+    `within limits`, no fault.
+  - **U5's clamp: 134 µs** (board 1 135 µs; band 118–137).
+- **12.4, `strobe cal 9`:**
+  - first current at level 220 (0.159 A);
+  - **SOLVED: level 436 (42.58 %, TP3 nominal 4.22 V)**;
+  - confirmation mean 8.975 A (−0.3 %), PASS;
+  - **session cap: level 461 (45.02 %)**.
+  - `strobe live`: the last shot read 8.973 A plateau, 9.026 A peak, 20 µs.
+  - Board 1: level 439 (42.87 %), 9.02 A.
+  - **The cap's refusal (`strobe gate 47`) was not run.** It tests the firmware, which board 1
+    passed (§6, 2026-11-10), so it was not asked again.
+- **Leave:**
+  - `live OFF: gate 0, engine stopped, GPIO25 low. Watchdog now off.`;
+  - `off` → `STANDBY`, latch 0;
+  - `hist`: boots 8, one more for the power-down to connect J3; faults 1, unchanged.
+- **What the live results cover from the unreported checks:**
+  - **J3's joints, and VIR at the screw:** clean, flat 9 A pulses. A cold J3 joint on board 1
+    gave no current at all.
+  - **R61:** U5's output passes pulses, and clamps at 134 µs.
+  - **R65/R66:** the solved level is within 0.3 points of board 1's. That is suggestive, not a
+    substitute for the markings, which are asked.
+  - **Not covered: TP4 at rest** (a small standing current at gate 0). Asked, for the next time
+    J3 is connected with the rail up.
+- **§12 PASS on Board 5,** with those two asks open. There was no FLIR on Q9/HS1.
+- **The Pi next. The first seating's R39 check needs clips on Board 5.** From the PCB, edge to
+  edge:
+  - R39's pads are 0.48 mm apart;
+  - R86 is 0.38 mm away and C74 0.57 mm. `BENCH_P8_PI.md` gave 1.0 and 1.4 mm, which were
+    centre distances.
+  - That is too tight for a hand-held tip (`HANDOFF.md` §3 rule 8).
+  - J8.37's own joints are 0.84 mm from J8.35, J8.38 and J8.39, too tight as well.
+  - **Added to "First seating": an equivalent check with J8 empty.**
+    - Push jumper wires into J8's socket at pins 37, 10 and 39 with the power off. Then read
+      J8.37 and J8.10 to J8.39 in `STANDBY`: ≈ 0 V.
+    - Whatever would push current into a seated, unpowered Pi drives these pins here.
+- `BRINGUP_NEW_BOARD.md` 12.3 part 4 and 12.4 add Board 5's clamp and solved level.
+- **I was wrong (by omission):** my Pi steps for Board 5 left the PSU limit at §12's ~3 A.
+  - Every Pi step in `BENCH_P8_PI.md` says **≥ 5 A** (8.2, 8.3, 8.5, 8.9b, 8.10).
+  - A Pi 5 booting on the board's rail could trip a 3 A limit and brown out. Corrected in chat.
+- **The owner asked why J3 comes off for the Pi.**
+  - It is the owner's own rule (§8, 2026-11-09): with a Pi seated, the strobe stays dry and the
+    beam off. §8.10 is the one approved exception.
+  - The procedures make "dry" physical: with the bank off, no firmware or hardware fault can
+    drive LED current from the rail the Pi runs on.
+  - Nothing in the Pi steps or in 7c needs the bank.
+- Not committed.
+
+---
+
+### 2026-11-23 - The owner hands over Board 5 and the Pi; neither is reachable yet
+
+- **The owner (away for hours):** board 1's Pi is now on Board 5, with both Mira220s on the
+  Pi's camera ports.
+  - J4 is not wired: no trigger or strobe between the board and the cameras. The lenses are
+    not set up yet.
+  - "Do everything you can on the board (COM10) and the Pi."
+  - The sudo password was given in chat. It is not written to any file.
+- **Neither is reachable from this PC:**
+  - **COM10 is not present.** Windows lists it as a remembered, absent device, and the only
+    ports are Bluetooth ones. USB alone powers the RP2354, so the board's USB is not connected
+    to this PC.
+  - **`pitrac2.local` does not resolve**, and nothing on 192.168.0.0/24 answers as it. The one
+    Raspberry Pi MAC there, 192.168.0.232 (`e4:5f:01`), has no SSH. Most likely the Pi is
+    seated on an unpowered board.
+- **Ready for when they appear,** with a watcher polling for COM10 or the Pi every 30 s:
+  - **Board, read-only first:** `id`, `stat`, `pins`, `link`, `hist`, `cfg`, `upd`. Then `on`
+    only from `STANDBY`, latch 0, no fault, with `pi : present 0  3v3 0`.
+  - **Then, per `BENCH_P8_PI.md` and 7c.2 Step 0:**
+    - the Pi's first power-up on Board 5;
+    - a read-only Pi survey;
+    - `Software/camera-comparison` copied again, with the old copy kept;
+    - the tool tests;
+    - `dtoverlay=mira220-nir,cam0` added after a backup, then a reboot. This is one sudo
+      call, with the password on stdin only;
+    - both sensors listed and configured;
+    - a free-running stream check, and one snapshot per camera for the lenses;
+    - the link (8.8 steps 3–4);
+    - one clean `off`.
+  - Nothing touches J3, J4, the beam or the strobe.
+- **`captures/review_2026-11-20/REVIEW_BRIEF_7c2.md` refreshed:**
+  - BRINGUP's hash, since Board 5's edits changed other sections, not Step 13.4;
+  - its line numbers;
+  - a note that 7c.2 now looks set for Board 5. The other pinned files are unchanged.
+- Not committed.
+
+---
+
+### 2026-11-23 - Board 5 powers board 1's Pi; 7c.2 Step 0 on camera 0 only (sudo refused)
+
+- **The owner connected the board's USB to this PC** and cleared the board to power the Pi.
+  - The board's log: `captures/COM10_2026-11-23_claude.txt`.
+  - The snapshots: `captures/p7c2_pi_2026-11-23/`.
+- **The board, read-only first:**
+  - `id`: 1.12 in A, `built Nov 18 2026 15:57:13`, UID `6093584a7790419d`.
+  - `stat`: `STANDBY`, fault none, 5V_IN 5.205 V, latch 0.
+  - **`pi : present 0  3v3 0` with the Pi seated and unpowered.** This is the guard left in place
+    of the skipped R39 check (§8), and it holds.
+  - `pins`: GPIO27 0, J8.37 released. `link`: lines released.
+  - `cfg`: slot A seq 21, phase 1320 ticks, threshold level 0, scale 1.0687, cal duty 25 %.
+    - It prints `BEAM IS AT 2.00 %`: the beam duty now set is 2 %, not the 25 % calibrated at.
+    - That is harmless with the beam off. Set it back to 25 % before any beam work, as the
+      warning says.
+  - `hist`: boots 9, faults 1. The fault is the old `USB_POWER_ONLY` from boot 7.
+- **`on`:**
+  - `PI_BOOTING` at 3 s, with latch 1 and the Pi's 3V3 up.
+  - **`RUNNING` with userspace 1 within 18 s.**
+  - 5V_IN 5.19–5.20 V with the Pi and two idle cameras.
+  - Watchdog off, as designed while a Pi is powered.
+- **The Pi, read-only survey:**
+  - Pi 5 Rev 1.1, kernel 6.18.50+rpt-rpi-2712, `throttled=0x0`.
+  - `config.txt` holds `camera_auto_detect=0` and `dtoverlay=mira220-nir` only.
+  - One sensor, `mira220 11-0054`. The driver check passes.
+  - `pitrac-link` ping, info, status and hist answer from Board 5 (1.12).
+  - No pipewire or wireplumber units.
+- **The camera kit, copied again.** The Pi's old copy is kept as
+  `camera-comparison.before-20261123-194527`. The four hashes pinned in `REVIEW_BRIEF_7c2.md`
+  match on the Pi.
+- **7c.2 Step 0.1 PASS, the first run on a Pi:**
+  - `test-trigger.sh`: 30 checks passed;
+  - `test-trigger-capture.sh`: 47;
+  - the unit tests: 17, OK.
+  - The Pi has the real `i2ctransfer`, `v4l2-ctl` and `media-ctl`, so I checked first that the
+    tests shadow each one with a fake.
+- **Step 0.2 not done: sudo refused.**
+  - The installed overlay has the `cam0` override, read from its `.dtbo`.
+  - The password given today was rejected, once. It reached the Pi intact: 6 bytes after
+    stripping PowerShell's BOM and CR.
+  - The password given on 2026-11-18, which worked then, was also rejected, once.
+  - On 2026-11-18 I advised changing that password. So the Pi's password has probably changed
+    since, and today's message probably has a typo.
+  - I tried nothing more. `config.txt` is unchanged and the Pi did not reboot.
+  - Camera 1 (CAM/DISP 0) stays invisible: Step 0.3 would list one sensor.
+- **Camera 0 alone** (no root needed):
+  - **Configured** on bus 11 into `~/camera-c0-20261123-195017`, `CONFIGURE_RC=0`:
+    1600×1400 GREY, stride 1600, exposure 1000 µs (124 lines), 89.08 fps.
+  - **Free-running:** 270 frames, rc 0, in 3.50 s including start-up. v4l2-ctl's running average
+    reached 78.9 fps and was still climbing towards 89.08.
+  - **The snapshots are too dark to set up the lenses:**
+    - mean 14.2 of 255 at 1000 µs, and 14.5 at 11 000 µs, the full-rate maximum;
+    - the maximum is 33–34.
+  - Stretched over codes 11–33, the 11 ms frame shows the room.
+  - The brightest area rises only from 14.2 to 15.2 codes between 1 and 11 ms. The room is
+    nearly dark in NIR.
+  - So this does not prove that the exposure control works. Setting up the lenses needs NIR
+    light: daylight, an incandescent lamp, an IR lamp, or the strobe.
+- **The link (`BENCH_P8_PI.md` 8.8 steps 3–4): 1000 pings, 0 failed.** The board's `link`:
+  1008 good frames, 0 CRC errors, 0 junk bytes.
+- **The Pi after streaming:** `throttled=0x0`, EXT5V 5.184 V, 38.9 °C. No under-voltage or
+  camera errors in the kernel log.
+- **`off`:**
+  - `SHUTTING_DOWN`, then `STANDBY` about 10 s later, with latch 0, `pi : present 0  3v3 0` and
+    J8.37 released.
+  - `hist`: shutdown requests 1, read down in time 1, timed out 0, power cuts 0.
+  - GPIO27 was 0 throughout.
+- **On Board 5, `BENCH_P8_PI.md` "First seating" passes as far as it can run from here:** the
+  guard, one clean `on`/`off`, and the link.
+  - Not visible from here, so the owner's to confirm: SW2 taped, the Pi's USB-C unplugged, and
+    the PSU limit ≥ 5 A.
+- **Left:**
+  - Board 5 in `STANDBY`, with the PSU and USB on and the Pi off.
+  - J3, J4, the beam and the strobe untouched.
+  - The password was sent on stdin only, and never written to a file.
+- **Docs:**
+  - `CLAUDE.md`/`AGENTS.md` say 7c.2 is now on Board 5.
+  - `CHANGELOG.md` records the Pi tests and the Pi on Board 5.
+  - **Stale text fixed:** `DEVELOPER_GUIDE.md` said three times that the Pi side of RPI5_ON
+    (`Hardware/firmware/pi/`) was not yet run on a Pi. It has run on a seated Pi since Phase 8
+    (2026-11-09).
+  - **Left for the owner's decision:** the 7c.2 board-state table still says board 1. That file
+    is pinned in `REVIEW_BRIEF_7c2.md`.
+- Not committed.
+
+---
+
+### 2026-11-23 - 7c.2 Step 0 PASS on Board 5: both Mira220s listed and configured
+
+- **The owner, back:**
+  - gave the Pi's current sudo password. It is not written to any file;
+  - confirmed SW2 is taped and the Pi's USB-C is unplugged. The PSU limit was not stated, but
+    the Pi ran at 5.19–5.20 V throughout;
+  - allowed `beam duty 25` from COM10 at any time.
+- **Found:** the board `RUNNING` with the Pi up for 148 s (the owner's `on`). `cfg` was at slot B
+  seq 22: a save since 19:57, not mine.
+- **`beam duty 25`:** `duty <- 25.00 %  (level 360 of 1440, effective 25.00 % at the LED)`.
+  - `beam`: off, both PWM slices off, the counter frozen. `cfg`'s warning is gone.
+  - `beam_set_duty` writes only the compare level. Light needs `beam on`, which was not sent.
+  - **2 % is the boot default** (`beam.c`: "start low; ramp up deliberately"). The live duty is
+    not saved in `cfg`, so the warning returns after each power-up, until `beam duty 25`.
+- **Step 0.2:**
+  - Before the reboot: no camera in use, and `config.txt` unchanged. The owner's SSH session
+    dropped at the reboot.
+  - Backup: `/boot/firmware/config.txt.before-7c2.20261123-212037`, with a copy in
+    `~/claude-setup`.
+  - The diff is one line, `dtoverlay=mira220-nir,cam0`, right after `dtoverlay=mira220-nir`.
+  - Then the reboot.
+- **The Pi's reboot on Board 5, as in `BENCH_P8_PI.md` 8.6:**
+  - The board stayed `RUNNING` with latch 1 and 5V_IN 5.19–5.20 V.
+  - It printed `DOWN WITHOUT A REQUEST` about 8 s in, then `read up again ... a Pi reboot`
+    by 20 s.
+  - `hist`: down unrequested 1, came back 1, power cuts 0.
+- **Step 0.3 PASS:** `mira220 10-0054` on `/dev/media1` and `mira220 11-0054` on `/dev/media3`.
+  So B0 = 11 and B1 = 10.
+- **Step 0.4 PASS:** both configurations end `Configured: …`.
+  - Both: 1600×1400 GREY, stride 1600, 1000 µs (124 lines), 89.08 fps.
+  - Camera 0 is `/dev/video0` and `/dev/v4l-subdev2`. Camera 1 is `/dev/video8` and
+    `/dev/v4l-subdev5`.
+  - The final configurations, made after the 11 ms snapshots so both sensors hold 1000 µs again:
+    `~/camera-c0-20261123-212517` and `~/camera-c1-20261123-212517`, named in
+    `~/claude-setup/7c2-configs.env`.
+- **So 7c.2 Step 0 PASS.** The tool tests passed earlier today (the entry above).
+- **Each camera, free-running:** 270 frames, rc 0, 3.50 s with start-up. `throttled=0x0`.
+- **Snapshots** (`captures/p7c2_pi_2026-11-23/`, the `2124_` and `2125_` files):
+  - **Camera 0 shows the room,** dark: mean 14.1–14.3, max 33–34.
+  - **Camera 1 shows no scene.** Its maximum is 25 at both 1 ms and 11 ms. Stretched over codes
+    12–25, the frame is column noise only.
+  - So no light reaches camera 1: a cap, no lens, or the camera facing something dark. Its
+    sensor streams normally.
+  - Steps 1–5 count frames and measure levels, so they do not need an image. Setting up the
+    lenses does, and it needs NIR light.
+- **My slips, no harm:** two one-line `ssh` commands hit `HANDOFF.md`'s PowerShell quoting
+  trap. Both only read. One waited on stdin and was stopped. Everything after went through
+  scripts, run with `ssh -n`.
+- **Left:**
+  - the board `RUNNING` with the Pi up, as the owner left it;
+  - the beam off, at 25 %;
+  - J3 and J4 untouched.
+- **Next: 7c.2 Steps 1–5.** They need module #1 wired and J4 connected, all with the power off,
+  plus the analyser. The owner's call on repeating module #0's checks on Board 5 is still open
+  (§10).
+- Not committed.
+
+---
+
+### 2026-11-24 - The supply is the LRS-75-5; the PC stays on J6 for 7c.2
+
+- **The owner:** the supply is a Mean Well LRS-75-5, the one `WIRING_DIAGRAM.md` §2 specifies.
+  - It is rated 14 A at 5 V (70 W), and its overload protection trips above that.
+  - So the procedures' "PSU limit ≥ 5 A" is met.
+  - It has no settable current limit. Lines that ask for a lower limit assume a bench supply.
+- **The owner is wiring both cameras, each through its own TXS0108E.**
+  - Found at 09:35: J6 unplugged, but the board still `RUNNING` on the supply. The Pi had been up
+    for 12 h; `pitrac-link status`: 5V_IN 5.192 V, fault none.
+  - **Advised:** take the Pi down cleanly before the supply goes off. Either a short press of the
+    panel button, under 5 s (the same as `off`; `power_fsm.c`), or J6 back on this PC for
+    `off`. A press of 5 s or more forces the power off without the Pi's shutdown.
+- **The owner asked whether the PC is still needed, or whether the Pi can do everything.** For
+  7c.2, the PC is needed:
+  - **`pitrac-link` has `ping`, `info`, `status`, `hist`, `upd-status`, `abort` and `update`**
+    (`Hardware/firmware/pi/pitrac_link.py`), and nothing else. Steps 1–5 use the CLI on J6:
+    `gpio 10 1`, `cam trig`, `cam shot`. Shot messages on the link are still pending (`id`).
+  - The analyser for Steps 1–5 runs on the PC.
+  - COM10 on this PC is how I reach the board's CLI.
+- **J6 to one of the Pi's USB-A ports instead:** not covered by any procedure.
+  - On paper, J6's VBUS reaches +5V_IN only through D8, which the 5.20 V supply holds
+    reverse-biased (`The_One_Board_To_Rule_Them_All.md`).
+  - 1.12 also refuses USB reboots, which would cut a seated Pi's power.
+  - Not checked against the netlist and not tried. It needs that check, and the owner's go-ahead,
+    before it is tried.
+- **The owner asked whether A2 should also join A5, and B2 join B5.** No: channel 5 doubles only
+  channel 1, the trigger.
+  - Joining channel 2 to it would tie the camera's strobe output to its own REQ EXP input, and
+    J4.7/J4.8 (GPIO8/9 inputs) to J4.3/J4.4 (GPIO10's output).
+  - Channel 1 needs the help because REQ EXP has a 12 kΩ pull-down on the camera: 1.277 V with
+    one channel, 1.490 V with two (7c.0, 7c.1).
+  - Channel 2 drives an RP2354 input. It read 2.754 V at the row on one channel, and 7c.1's
+    handshake completed on it.
+- **`WIRING_DIAGRAM.md` §7.2's board side checked against the netlist:** it matches.
+  - J4.1, J4.2, J4.5 and J4.6 are GND.
+  - J4.3 and J4.4 are one net, to GPIO10 through R18.
+  - J4.7 goes to GPIO8 through R19, and J4.8 to GPIO9 through R24.
+  - J5.2 is +3.3VA.
+  - This covers part of `REVIEW_BRIEF_7c2.md` §4 item 2. The camera side can only be checked
+    against §7.1 B, the owner's transcription of the Mira220 schematic.
+- **The owner was wiring from `PITRAC_V2_TECHNICAL_GUIDE.html` Figure 2.1 (`#fig-full-wiring`).**
+  - That drawing is the old one-module wiring: channels 1–4, `B5..B8 & A5..A8 = NC`, and camera
+    1's P1.5 marked "LEAVE NC".
+  - Only its caption said it was superseded.
+- **I was wrong:**
+  - **On 2026-11-20 I left both drawings unchanged,** with only a caption note. That was not
+    enough: the owner wired from Figure 2.1.
+  - **My captions for Figures 2.1 and 2.2 gave the B5/A5 bridge for camera 1's module only.**
+    Both modules need it.
+- **Fixed in the guide:**
+  - **Figures 2.1 and 2.2 now carry a red "superseded" panel on the drawing itself.** It lists
+    the per-camera wiring, pin by pin. Figure 2.2's J4 pad drawing stays visible, because it is
+    correct.
+  - Both captions now give the bridge on both modules, and channel 2 unbridged.
+  - Figure 2.3's caption, and the J5.2 label, name both modules' VB.
+  - Both drawings render cleanly in headless Edge and parse as XML.
+- **Then redrawn, at the owner's request** ("I prefer that graphical representation"). The
+  panels are gone.
+  - **Figure 2.1:** a module per camera, each beside its camera.
+    - Each module's VB, B1+B5, B2 and GND rows face the camera's P1.5, P1.7, P1.6 and P1.1
+      rows.
+    - The J4 wires do not cross. J5.2's Y-splice reaches module #0 without a crossing.
+    - Module #1's lead crosses three signal wires, drawn over them with a gap.
+    - Camera 1's P1.5 now feeds module #1's VA + OE; it was "LEAVE NC". The common camera
+      ground bus is gone: each module grounds its own camera.
+  - **Figure 2.2:** redrawn as two chains, each J4 → module → P1.
+    - Each 20-pin breakout pin by pin, VA…OE against VB…GND, as `WIRING_DIAGRAM.md` §7.1 C.
+    - The B1–B5, A1–A5 and VA–OE jumpers are drawn on the breakout.
+    - Each camera's P1, pins 9 to 1, is labelled with its own module's pins.
+    - J4's pad map is kept, with a pin list per camera and the J4 nets from the netlist.
+    - Generated by a script so the two halves are identical but for J4 and the labels.
+  - The camera-to-port labels say they are 7c.2's bench assignment (camera 0 on CAM/DISP 1).
+  - Both captions rewritten. Nothing in the guide still says "single" module, or uses
+    channels 3/4.
+  - Both drawings parse as XML and were checked by eye in headless Edge.
+- **`REVIEW_BRIEF_7c2.md`:**
+  - The guide's hash refreshed to `0C91491B…790B4B28`, with what changed. The other pinned
+    files are unchanged.
+  - Item 2 of §4 now includes both drawings.
+- Not committed.
+
+---
+
+### 2026-11-24 - 7c.2 Steps 1–5 on Board 5, firmware and Pi side: PASS, with the buses swapped; no LED current in the first live session
+
+- **The owner, before an hour away (§8):**
+  - both modules wired, each module's VA and OE checked unpowered to its own camera's P1.5;
+  - lenses with 850 nm filters on both cameras; the panel button wired;
+  - the LED bank on J3, with live firing allowed up to 9 A;
+  - no analyser.
+- **Board state:** Board 5, image 1.12, the LRS-75-5 at 5.20 V. `on` at 12:15 → `RUNNING`, with the
+  Pi up. Beam off, detect disarmed.
+  - Logs: `captures/COM10_2026-11-24_claude.txt` and `captures/strobe_focus_2026-11-24_122511.log`.
+- **A deviation from 7c.2's board state: J3 was connected** (7c.2 says disconnected).
+  - The dry steps ran with the gate at 0 and live mode off. Then the firmware cannot command LED
+    current (`strobe` → `DRY`).
+- **Step 0 again (a new boot):** both sensors listed (`mira220 10-0054`, `mira220 11-0054`), and
+  both configured at 1000 µs.
+- **Steps 1–2, the firmware's side (no analyser).**
+  - **How:** each camera streamed alone, free-running, for 600 frames (89.07–89.11 fps), while
+    `pins` was sampled 40 times. GPIO10 stayed low throughout.
+  - **With B0 = 11, as on board 1:** the bus 11 camera put GPIO9 high in 6 of 40 samples and
+    GPIO8 in 0. The bus 10 camera put GPIO8 high in 7 and GPIO9 in 0.
+    - **The buses are the other way round,** the case Step 1's note covers. I swapped them and
+      configured into new directories.
+  - **With B0 = 10, B1 = 11:**
+    - camera 0 → GPIO8 high in 3 of 40, GPIO9 in 0;
+    - camera 1 → GPIO9 high in 3 of 40, GPIO8 in 0.
+    - **Not crossed.**
+  - **On this bench, then, camera 0 (module #0, J4.7) is on bus 10 = CAM/DISP 0, and camera 1
+    (module #1, J4.8) is on bus 11 = CAM/DISP 1.** That is the reverse of 7c.2's table and of the
+    guide's figure labels, which say so are only the bench assignment. Record it in
+    `WIRING_DIAGRAM.md` §6.2 when 7c.2 passes.
+  - Each strobe passes only while its own camera streams. So each module's VA and A2 come from
+    the same camera; the owner's continuity check puts VA on that camera's P1.5.
+  - **Not done, because they need the analyser:**
+    - Step 1's `gpio 10 1` isolation check;
+    - Step 2's trigger levels: under 0.2 V with the camera off; 1.40–1.90 V on, with dips
+      ≥ 1.26 V;
+    - the strobe levels: ≥ 2.5 V high and ≤ 0.4 V low.
+    - I did not raise GPIO10 with a camera off.
+- **Step 3 PASS, firmware and Pi:**
+  - both cameras printed `slave: 0x1001 0x41 -> 0x00, 0x1003 0x08, running.`, then `READY`;
+  - no triggered frame for 26 s;
+  - `pins` and `cam` show both strobes at 0.
+- **Step 4 PASS, firmware and Pi:** three `cam trig 0 50000`.
+  - Each time: `HANDSHAKE: complete`, `both strobes high at t_cam = 0.227 us`, FIRE at once, the
+    trigger released at 1000.307 µs, and the pad low afterwards.
+  - Three frames per camera, `free_running_after_ready: no`.
+  - `pairs: 3`, unpaired 0, `status: complete`. `delta_us` 9–10 (bus 11's device time minus bus
+    10's).
+- **Step 5 PASS, firmware and Pi:** nine `cam shot`, at 50, 200 and 300 µs, three times each.
+  - Every one `FIRED: handshake complete, dry burst complete`, with `t_cam` 0.207 or 0.240 µs.
+  - FIRE at the first delay (49.993, 199.993 and 299.993 µs). The burst's first edge FIRE + 4–5
+    µs; the trigger released at FIRE + 5565 µs.
+  - `triggered_frames: 9` on each camera; `pairs: 9`, `status: complete`.
+  - The frame means are 13.91–13.98 (camera 0) and 14.38–14.50 (camera 1). That is black level:
+    nothing lights the scene.
+- **Twelve handshakes in all, `t_cam` 0.207–0.240 µs,** as on board 1 (0.21–0.24 µs).
+  - **Not recorded:** each camera's own delay, the skew between them, and `t_cam` against the
+    analyser (±0.1 µs). **7c.2 has not passed** until the analyser parts run.
+- **The ambient check:** each camera free-running at 11000 µs for 6 s (490 frames).
+  - Means 13.99 and 14.60; the brightest pixels 25 and 32.
+  - Behind 850 nm filters the room is black, so focusing needs the strobe.
+- **Live: BRINGUP 12.3 part 1's firmware checks PASS:**
+  - `adc 0 4096` → 9 codes;
+  - `adc ringtest 100` → 200 of 200 covered;
+  - `strobe` → U5 armed, `may arm : yes`, the Pi PRESENT.
+- **Live session 1 (12:25, the first version of `tools/strobe_focus.ps1`): no LED current at all.**
+  - `LIVE: ARMED`. At gate 0, 20 µs: `within limits`, no current.
+  - `strobe cal 9` climbed in 20-level steps from level 0 to the 70 % ceiling (level 717, TP3
+    nominal 6.93 V). **Nothing above ~72 mA at any step:** `CAL FAILED: CEILING`. The last
+    shot's baseline was 11.1 codes.
+  - `strobe live off` → live OFF, gate 0, no fault. Not re-armed.
+  - On 11-23 this board gave its first current at 21 % and 9 A at 42.58 %. So this is **an open
+    load:** J3 not seated, the bank's polarity, or a light that is not 11-23's bank. It needs
+    hands, with the PSU and USB off.
+- **I was wrong (my slip, no harm):** the first `strobe_focus.ps1` went from the gate-0 pulse
+  straight to `strobe cal 9`.
+  - BRINGUP 12.3 climbs by hand first, and **stops if nothing has flowed by 30 %**: an open
+    load. 12.4's cal comes only after current has been seen.
+  - So the cal climbed to 70 % into an open load. No current flowed. Had a loose contact closed
+    above 30 %, the first pulse could have passed 9 A before the firmware's 10.8 A stop.
+  - **Fixed:** the script now runs 12.3's staircase before any cal: 3 % steps, 20 µs each. It
+    stops on a jump over 2 A, on a first current over 2.5 A, or on nothing by 30 %. **The fixed
+    path has not run on a board.**
+- **New, for focusing the lenses (the owner's next step):**
+  - **`Hardware/firmware/tools/strobe_focus.ps1`:**
+    - BRINGUP 12.3 part 1's firmware checks, then arm, then the gate-0 pulse;
+    - the staircase, then `strobe cal <A>` (1–9 A, default 9), which must solve at ≤ 60 %;
+    - then one pulse (default 100 µs) every 500 ms. Each is judged: `within limits`, one pulse,
+      the plateau ≤ A × 1.06 + 0.1, the on-time ± 4 µs;
+    - at most 24 mC per 10 s, 80 % of the firmware's budget;
+    - `strobe live off` at every exit, including `q` and Ctrl-C.
+    - It never raises a firmware limit.
+  - **The preview:** `preview/server.py` and `focus-preview.sh --hold-flash`.
+    - A free-running camera at 11000 µs (89 fps) catches almost every flash, but in one frame
+      of ~90. The 10 fps preview would mostly miss it.
+    - `--hold-flash` shows the latest frame whose sampled mean is ≥ 3 codes or 20 % above a
+      baseline of the unlit frames, for up to 3 s.
+    - Four new tests. All 66 preview tests pass on the PC and on the Pi.
+    - On the Pi, camera 0 at 11000 µs: live, 89.08 fps, baseline 13.99, no flash frames (there
+      is no light).
+    - SHA256: `server.py` `c1165b2b…32bac30`, `focus-preview.sh` `a526d962…e6f9488`, the same on
+      the Pi.
+  - `FOCUS.md` gains the option and a section on focusing by the strobe. `DEVELOPER_GUIDE.md` and
+    `HANDOFF.md` list the tool.
+- **The preview through a tunnel from the PC works,** but on local port 8766: the PC's own port
+  8765 is taken by the owner's design workbench (`tools.design_workbench.launcher --port 8765`,
+  running since 11-20).
+  - `ssh -4 -T -L 127.0.0.1:8766:127.0.0.1:8765 pitrac2 bash claude-setup/focus_cam.sh 1` →
+    `http://127.0.0.1:8766/api/status`: live, 89.08 fps, 11000 µs, `hold_flash` on; the page
+    HTTP 200.
+  - `~/claude-setup/focus_cam.sh <0|1>` on the Pi configures a fresh 11000 µs config and starts
+    the hold-flash preview. Tested on both cameras.
+  - `FOCUS.md` now says to use `127.0.0.1` and another local port when 8765 is taken.
+- **I was wrong (my slip): GPIO10 went high for 5 ms with both cameras off.**
+  - A 100-shot soak's `trigger-capture.sh` refused `--frames 100` (its limit is 50). My command
+    did not check for `READY` before sending the shots.
+  - The first `cam shot 200` timed out at 5000 µs: `CAM_TIMEOUT: trigger dropped, nothing
+    fired, fault latched`. The other 99 were refused.
+  - Both cameras were idle, so both modules had VA at 0 V: the case of Step 1's isolation test,
+    which I had said I would not run without the analyser. The modules isolate with VA at 0 V,
+    so the risk was low, but it was not what the owner allowed ("while both cameras stream").
+  - `fault clear` in `RUNNING` cleared only the code: `power_fsm.c` drops the acknowledgement
+    outside PS_FAULT. Then `fault : none`, `RUNNING`, the Pi up, latch 1. `hist` faults 1 → 2.
+  - **Fixed:** the soak script now sends nothing until the Pi's log shows `READY`, and stops at
+    the first shot that is not `FIRED`. Its next run stopped correctly, with nothing sent,
+    because the sensors still held the focus test's 11000 µs (`Sensor exposure changed`). Both
+    were reconfigured at 1000 µs.
+- **Soak, 7c.2 Step 5's dry shot, both cameras in slave mode: 50 of 50 `FIRED: handshake
+  complete, dry burst complete`.**
+  - `cam shot 200` once a second; `t_cam` 0.240 µs ×44 and 0.207 µs ×6.
+  - The Pi: `triggered_frames: 50` on each camera, `free_running_after_ready: no`, `pairs: 50`,
+    `status: complete`. `delta_us` 9–10.
+  - With Steps 4–5, **62 handshakes on Board 5 with two cameras, every one complete and every
+    frame paired.**
+- **The Pi link, after all of it (`BENCH_P8_PI.md` 8.8 steps 3–4, from the Pi):**
+  - `pitrac-link ping` → protocol 1, version 1.12; `status` → `RUNNING`, fault none;
+  - `hist` → faults 2, the last `CAM_TIMEOUT` (the slip above);
+  - **1000 pings, 0 failed.**
+- **J3 fixed by the owner (13:00, boot 11). Live sessions 2 and 3 PASS, with `strobe_focus.ps1`'s
+  fixed path** (logs `captures/strobe_focus_2026-11-24_130043.log` and `_130243.log`):
+  - ADC0 at rest 9 codes; `adc ringtest 100` PASS; at gate 0, no current;
+  - **the staircase:** nothing to 18 %; 21 % → 0.094 and 0.099 A; 24 % → 0.677 and 0.687 A,
+    in band. On 11-23 the figures were 0.103 and 0.703 A;
+  - **`strobe cal 9` → level 437 (42.68 %), confirmation mean 9.015 A, session cap 461,** both
+    times (11-23: level 436, 8.975 A);
+  - then 10 and 6 flashes, 100 µs every 500 ms: 9.053–9.058 A plateau, on 100 µs, every one
+    `within limits`. The last pulse peaked at 9.096 A, 0.906 mC;
+  - `strobe live off` each time. `fault : none`.
+- **The flashes light the cameras** (each free-running at 11000 µs, 89 fps):
+  - **camera 0:** 10 lit frames out of 6635, one per flash. Mean 27.0 against a 13.97 baseline;
+    brightest pixel 122. A golf ball on the carpet, **far out of focus**;
+  - **camera 1:** 6 lit frames, one per flash, mean 34.6; brightest pixel 230. The cal's 20 µs
+    steps show too, at 17.6–18.7. The ball's dimples and logo are sharp: **nearly in focus**.
+  - Frames: `captures/p7c2_pi_2026-11-24/` (`1301_cam0_*`, `1303_cam1_*`).
+  - The browser preview shows raw values with no stretch (by design). Camera 0's ball is
+    mid-grey on a darker floor.
+- **The lenses (owner, 13:10):** two sets, labelled **A4** and **A5**. One has an 850 nm bandpass
+  filter and the other a 940 nm one; which is which is not known. **A4 is fitted** to both
+  cameras.
+  - The flash reads up to 230 through A4, so A4 passes the strobe's wavelength. A mismatched
+    bandpass would leave the flash near black level.
+  - The design is 850 nm (D11; `Hardware/Calibration`'s "final 850 nm filter"). The strobe
+    LEDs' part and wavelength are not recorded in the repo: asked.
+  - Offered: an A/B with one A5 lens on camera 0, comparing the lit frame's mean (A4: +13.1
+    codes over the baseline).
+  - **The owner focuses with A4.**
+- **`tools/focus_meter.py` (new), for the focusing:** a live sharpness score of each full
+  flash-lit frame from the hold-flash preview, read through the tunnel. The score is the
+  normalised gradient energy in a 500 × 500 box on the brightest area; within 95 % of the peak
+  is marked, as in `The_One_Board_To_Rule_Them_All.md` §18.2.
+  - **First run, camera 1** (10 flashes): it scored the cal's dim 20 µs flashes at 36–48 (noise)
+    and the full flashes at 10.48–10.54. Fixed: only frames within 10 % of the brightest of the
+    last 10 are scored, and the peak resets when much brighter frames arrive.
+  - **Second run, camera 0** (8 flashes): full flashes 4.11–4.14. One flash lit a frame only
+    partly (ROI mean 17.2 against 29.5) and scored 7.14: the case the 10 % rule now skips.
+  - An offline check with synthetic frames (dim, full, partial, sharp, blurred) gives the
+    expected scores, skips and reset.
+  - **The starting points:** camera 0 at ~4.1 (far out of focus), camera 1 at ~10.5 (nearly in
+    focus).
+  - These runs re-solved 9 A at level 437 (9.022 A) and 436 (8.972 A). Every flash was within
+    limits, with `strobe live off` each time.
+- **Focused (owner, with the A4 lenses), then the flash width measured (13:51,
+  `captures/strobe_focus_2026-11-24_135102.log`):**
+  - **`strobe_focus.ps1 -WidthUs` now takes a list** (`"100,20,10"`, with `-Count` pulses at
+    each), after one staircase and cal. It is a string, split on commas, because `powershell
+    -File` passes a list as one string and an `[int[]]` read it as 1002010. That was refused
+    (over 100), so nothing fired. Refusals tested: no `-Count`, a width under 5, a period over
+    budget, a non-number.
+  - **The session:** staircase 21 % → 0.107 A, 24 % → 0.706 A; `strobe cal 9` → level 436, 8.972
+    A. Then six pulses each, every one `within limits`: 100 µs 9.010–9.014 A; 20 µs 8.972–8.978
+    A, on 20 µs; 10 µs 8.950–8.954 A, on 10 µs.
+  - **Both cameras free-running at 11000 µs** (`flash_widths.sh`, 5301 frames each). Every
+    flash landed whole: 6 of 6 at each width on both cameras.
+  - **Frame mean above black, 100 / 20 / 10 µs:** camera 0 +14.17 / +2.88 / +1.39; camera 1
+    +19.70 / +3.99 / +1.98. That is 0.203× and 0.098–0.100× of 100 µs: linear in width.
+  - **The ball** (median of its disk above half its peak, black subtracted; the noise from two
+    frames' difference):
+
+    | | 100 µs | 20 µs | 10 µs |
+    |---|---|---|---|
+    | camera 0 ball | 90.0 codes, noise 1.40, SNR 64 | 17.5, 0.77, SNR 23 | 9.0, 0.48, SNR 19 |
+    | camera 1 ball | 89.5, 1.39, SNR 64 | 17.5, 0.74, SNR 24 | 9.0, 0.48, SNR 19 |
+
+  - **Noise against signal** gives roughly 45–55 electrons per 8-bit code at gain 1. So the
+    ball collects ~450 e⁻ per pixel at 10 µs and ~900 at 20 µs. SNR 19 at 10 µs is close to
+    √450: the light, not the readout, sets it. More gain or 12-bit output would use more codes
+    but would not raise the SNR; only more light would.
+    **⚠ Wrong: see the 14:06 entry below.** The "noise" is the difference of two flashes, and
+    most of it is a ~4 % flash-to-flash term, not photon noise. 12-bit raised the SNR by up to
+    29 %.
+  - **By eye** (`captures/p7c2_pi_2026-11-24/1351_widths/`, crops brightness-matched to 100 µs):
+    - 20 µs: a clean outline and the logo, with faint dimples;
+    - 10 µs: a clean outline and the logo just readable; the dimples are lost in the noise.
+  - **Focus:** both cameras show the dimples and the carpet fibres across the frame.
+    `focus_meter`'s score on a 500 × 500 box on the ball, at 100 µs: camera 0 45.5 (from about 4
+    before focusing), camera 1 26.5.
+  - **The geometry is not the design's.** The ball measures ~116 px across on camera 1 and
+    ~98 px on camera 0. With the design lens (Spinel ND3630, 3.60 mm F/3.0), that puts it ~0.47
+    and ~0.56 m from the cameras. The design (`Hardware/Stand/README.md`) has CAM0 376.6 mm
+    and CAM1 465.1 mm from the resting ball, and the strobe ~0.42 m from it, aimed at −16°.
+    The bench LED bank's position and aim are not recorded. **Illumination goes as 1/d²** from
+    the bank to the ball, so these levels hold only for this bench.
+- **Camera gain (owner's question, 14:00): there is none to raise.**
+  - The driver on the Pi (`pitrac-mira220-nir`, `mira220.c`) fixes analogue gain at min = max
+    = 1 (`MIRA220_ANALOG_GAIN_MIN/MAX`) and registers the control with no handler.
+  - `v4l2-ctl --list-ctrls-menus` agrees: `analogue_gain min=1 max=1` on both cameras.
+  - The Mira220 driver posted for the mainline kernel says the sensor has no analogue gain
+    (LKML, 2026-03). Sister sensors (Mira016, Mira050) do have gain steps.
+  - Digital gain would only scale values afterwards.
+- **8-bit against 12-bit, same scene, 20 / 14 / 10 µs at 9 A, six flashes each (14:06 and
+  14:07, both cameras at 11000 µs and 89.08 fps; 12-bit is Y12P, 2400 stride, 3.36 MB per
+  frame, no frames dropped):**
+  - Every flash `within limits`: 9.02 / 9.01 / 9.01 A, then 8.98 / 8.96 / 8.95 A. The 14 µs pulse
+    read `on 16 us` once (2 µs samples; within ±4).
+  - **The ball, in 8-bit-equivalent codes above black** (two full flashes per width; their
+    brightness ratio is 0.995–1.000):
+
+    | | 20 µs | 14 µs | 10 µs |
+    |---|---|---|---|
+    | camera 0, 8-bit | 18.0, SNR 21.8 | 12.0, SNR 19.9 | 9.0, SNR 18.2 |
+    | camera 0, 12-bit | 17.6, SNR 24.6 | 11.9, SNR 23.1 | 8.75, SNR 22.7 |
+    | camera 1, 8-bit | 17.5, SNR 22.7 | 11.5, SNR 19.3 | 8.5, SNR 17.6 |
+    | camera 1, 12-bit | 17.3, SNR 24.3 | 11.7, SNR 22.6 | 8.6, SNR 22.8 |
+
+  - **12-bit raises the SNR by ×1.07–1.13 at 20 µs, ×1.16–1.17 at 14 µs and ×1.25–1.29 at
+    10 µs**, with no cost in frame rate. In 8-bit, the ball's median lands on whole codes.
+  - **Dark noise (two unlit frames):** 8-bit 0.24 / 0.39 codes; 12-bit 0.18 / 0.18
+    (8-bit-equivalent).
+  - **A flash-to-flash term, unexplained:** on the ball, the two-flash difference grows in
+    proportion to the signal, about 4 % of it at every width. That holds the SNR near 23–25 from
+    10 to 20 µs.
+    - It is **not** the flash's total (the scale-matched difference is unchanged).
+    - It is **not** movement: phase correlation finds 0.001–0.06 px shifts, and realigning
+      changes nothing.
+    - Unresolved; the LED bank's illumination pattern varying from flash to flash is one
+      candidate. A single frame's own noise on the ball is lower than these SNRs suggest.
+  - **I was wrong** (13:51, above): "only more light would" raise the SNR rested on this
+    two-flash noise, and 12-bit has now raised it.
+  - Crops: `captures/p7c2_pi_2026-11-24/1406_depth/`.
+  - **Today's scripts are kept in `captures/p7c2_pi_2026-11-24/scripts/`** (gitignored, local):
+    - on the PC: `run_widths.ps1`, `soak_shots.ps1` (gated on `READY`), `sample_strobes.ps1`,
+      `board_cli.ps1`, and the analyses (`depth_analyse.py`, `near_analyse.py`, `shift_test.py`,
+      `focus_compare.py`);
+    - for the Pi (`pi/`): `flash_widths.sh` (8/12-bit, keeps lit frames) and `focus_cam.sh`.
+    - The Pi keeps its copies in `~/claude-setup/`.
+- **The ball moved ~7 cm closer (owner), 12-bit, 6 flashes each at 100 / 20 / 14 / 10 µs (14:19,
+  `captures/p7c2_pi_2026-11-24/1419_near/`):**
+  - All 24 flashes `within limits`: 9.06 / 9.02 / 9.02 / 9.00 A.
+  - Each camera missed one flash out of 24, a flash falling between two frames at 11.0 ms of
+    11.23 ms. The analysis now places flashes by their measured period (~508 ms: Windows sleeps
+    round up), so a missed one does not shift the groups.
+  - **Focus held:** at native resolution, before (13:51) and after, the dimples, the printed
+    text and the carpet fibres are as sharp on both cameras. No refocus.
+  - **The ball is larger:** ×1.17 across on camera 0 (~98 → ~115 px) and ×1.20 on camera 1
+    (~117 → ~140 px), measured on the crops. So it is ~15–17 % closer to each camera. With a
+    7 cm move, that puts it at roughly 0.35–0.41 m now, near the design's 0.38–0.47 m. Both
+    estimates are rough.
+  - **The ball's brightness, 12-bit, in 8-bit-equivalent codes:** 100 µs ~115–117 (SNR ~73);
+    20 µs 23.3 / 22.8 (SNR 29.7, from 25–26); 14 µs 15.4 / 15.1 (SNR ~23.5); 10 µs 10.9 / 10.8
+    (SNR ~24). **×1.18–1.30 brighter than before the move.**
+  - The automatic radius and limb-edge numbers from `near_analyse.py` are **not valid**: its 35 %
+    threshold took in lit carpet. Not used.
+- **Left:** Board 5 `RUNNING` (boot 11), the Pi up, live OFF, gate 0, beam off, `fault : none`.
+  No preview or capture is running. Both cameras are focused (A4) and left configured at 12-bit,
+  11000 µs: reconfigure before any 7c.2 step.
+- Not committed.
 
 ---
 
@@ -7373,6 +8939,81 @@ firmware/
       otherwise.
   - Changed in `CLAUDE.md`/`AGENTS.md`, `HANDOFF.md` rules 3 and 6, §1 here,
     `DEVELOPER_GUIDE.md`, `ARCHITECTURE.md` and the 7c section.
+- 🔵 **The detected-shot path: D1–D8 (owner, 2026-11-20).** In full in `SHOT_PATH_PLAN.md` §3a.
+  - **D3 changes a reviewed live-strobe limit, by the owner's decision.**
+    - The live span limit rises from 30 ms to 150 ms.
+    - The readback watches the first 30 ms. Later pulses fire unwatched, but are booked and
+      counted against the 6 mC per burst and the pacing.
+    - It is made in WP5, under independent review. Until then `STROBE_LIVE_SPAN_MAX_US` stays
+      30 ms.
+  - The rest:
+    - D1: measure, then core 0 or 1;
+    - D2: switch to BURST at the trailing edge;
+    - D4: upstream PiTrac's driver pattern as the live fallback;
+    - D5: the workbench regenerates its table under the firmware's rules;
+    - D6: the analog mic for after the shot only;
+    - D7: the table compiled in;
+    - D8: pulse 0 fixed at a width that keeps a 100 m/s shot sharp.
+- 🔵 **A TXS0108E per camera (owner, 2026-11-20).** The documented single module took its 1.8 V
+  from camera 0 only. Because a Mira220's 1.8 V is up only while it streams, that module would
+  drive camera 1's pins while camera 1 was unpowered.
+  - Each module's VA and OE come from its own camera's P1.5. Each module bridges channel 5 onto
+    its trigger channel.
+  - Changed in `WIRING_DIAGRAM.md` §1 and §7, `BRINGUP_NEW_BOARD.md` Step 13.4, the technical
+    guide and `BENCH_P5_P7_MIC_CAMERA.md` 7c.2.
+  - **Kept, 2026-11-21 (owner),** after two alternatives were considered (§6, 2026-11-21):
+    - a resistive divider on the trigger with the strobe direct;
+    - one module, its OE driven from camera 1's 1.8 V.
+- 🔵 **Board 5: most of the remaining bring-up skipped (owner, 2026-11-23).**
+  - **Done:** §0–§5, every gate that protects a Pi, and the R80 check.
+  - **Deferred until Board 5 needs them:**
+    - §6–§11 (beam and optics);
+    - §12 (strobe current);
+    - §13's rollback and shipping steps;
+    - `BENCH_P8_PI.md` §8.0b (the simulated Pi).
+  - **This overrides two rules for this board only:**
+    - `BRINGUP_NEW_BOARD.md` ("finish §6–§11 before any optical or Pi work");
+    - `BENCH_P8_PI.md` §8.0's per-board §8.0b and rollback lines.
+  - **Why the rollback is skipped:** a rollback test on Board 5 now would cost its fallback.
+    Loading the test image into B overwrites r5. Buying anything not newer than 1.12 back into
+    B then erases 1.12 in A. Board 1 has already shown the boot ROM's rollback (§8.7).
+  - **Kept before a Pi:**
+    - `link` in STANDBY;
+    - SW2 taped;
+    - the first seating's R39 check;
+    - one clean `on`/`off` cycle with the Pi, and the link.
+  - **Guards until the deferred sections run:**
+    - the beam at its 2 % start or off;
+    - J3 disconnected, and no `strobe live`.
+  - **Changed the same day (owner): §6–§12 now run on Board 5 before the Pi,** with no
+    soldered leads.
+    - That is the beam and detection calibration (§6–§11) and the strobe (§12).
+    - Still deferred: §13's rollback and shipping steps, and §8.0b's simulated Pi.
+    - The Pi will be board 1's, with its overlays and `pitrac-link` already installed.
+    - **No logic analyser either, unless it is essential (owner).** The test points are read
+      with a hand-held DMM **from the back**. The PCB confirms that is safe (§6, 2026-11-23).
+      - §6.2: by readback and §9;
+      - §6.3: by the DMM method now in `BRINGUP_NEW_BOARD.md` Step 6.3;
+      - Step 12.2 part 5: TP3 from the back;
+      - Step 12.2 part 6 is skipped. U5's clamp is measured with current, in 12.3 part 4.
+    - **The first seating's R39 check skipped (owner, 2026-11-23),** with its no-clip
+      equivalent (J8.37 and J8.10 through jumper wires in the empty socket).
+      - What it would have caught: a fault on this board driving J8.37 or J8.10 into the
+        unpowered Pi. R39's 1 kΩ limits that to ~2.6 mA.
+      - The firmware side is shown: `pins` reads `RPI5_SHUTDOWN(43)` `released`, and `link`
+        reads `released`. 1.12's machine code is 1.11's, and board 1 read 0 V across R39.
+      - The guard left: with the Pi seated and unpowered, `stat` in `STANDBY` must read
+        `pi : present 0  3v3 0` before `on`. A Pi back-powered through its GPIOs would show
+        `3v3 1`.
+    - **Step 6.4 assumed OK (owner, 2026-11-23):** no FLIR on hand. The beam LED's temperature
+      at 25 % is unmeasured on this board, though it ran at 25 % through §8–§10. Measure it
+      when the FLIR is back, before long sessions at 25 % (Board 4: 92.9 °C; limit 98 °C).
+- 🔵 **Board 5, 2026-11-24 (owner), before an hour away from the bench:**
+  - **Both modules' VA (and OE) checked with the power off,** each to its own camera's P1.5
+    only. Trigger tests (GPIO10 high) may run while both cameras stream.
+  - **Live strobe allowed up to 9 A with nobody at the bench,** under the firmware's guards
+    and the 25 % duty rule. The LED bank on J3 is rated **9 A pulsed, 1 A continuous** (owner).
+  - **No analyser:** 7c.2's analog checks wait for the owner.
 
 ---
 
@@ -7504,7 +9145,7 @@ firmware/
            cannot hold current on. So the watchdog buys little against that cost.
          - **Decided (owner, 2026-11-12):** not armed while a Pi is powered; armed as now
            without one (§8).
-      3. **The bench test, on a board with leads** (board 1, or Board 5 once up). Written as
+      3. **The bench test, on a board with leads** (board 1). Written as
          `BENCH_P8_PI.md` §8.10 (2026-11-12), approved by the owner the same day, to run
          on a corrected reviewed image (1.8 and 1.9 did not pass):
          - +5 V on J7.5 (a jumper lead; J8 is under the Pi), triggered from U5 Q;
@@ -7880,6 +9521,184 @@ firmware/
 ---
 
 ## 10. Next session — start here
+
+> ### 2026-11-24: 7c.2 Steps 1–5 PASS on the firmware's side; no LED current; a focus tool
+>
+> - **Done** (§6, 2026-11-24; the owner's settings in §8):
+>   - **7c.2 Steps 3–5 PASS on the firmware and Pi side,** both modules wired. Twelve
+>     handshakes with `t_cam` 0.207–0.240 µs; 3 + 9 pairs, none unpaired; no untriggered
+>     frames.
+>   - **Steps 1–2's strobe mapping:** not crossed.
+>     - **Camera 0 (J4.7) is on bus 10 = CAM/DISP 0, camera 1 (J4.8) on bus 11 = CAM/DISP 1.**
+>       That is the reverse of 7c.2's table; the configs follow it.
+>     - On the Pi, `~/claude-setup/7c2-configs.env` has B0=10, B1=11.
+>   - **No LED current at first:** `strobe cal 9` reached the 70 % ceiling with nothing above
+>     ~72 mA. **The owner then fixed J3.** The script's fixed path found first current at 21 %
+>     and solved 9 A at level 437 (42.68 %), 9.015 A. Flashes of 9.05 A × 100 µs light both
+>     cameras' frames. Camera 0 is far out of focus; camera 1 is nearly in focus.
+>   - **For focusing:** `tools/strobe_focus.ps1` (live, paced flashes) and `focus-preview.sh
+>     --hold-flash`. See `Software/camera-comparison/FOCUS.md`, "Focusing by the board's
+>     strobe".
+>   - **A soak of 50 dry `cam shot 200`:** 50 of 50 complete, all paired. That makes 62
+>     two-camera handshakes on Board 5.
+>   - **I was wrong, twice.**
+>     - The first version of the script skipped 12.3's 30 % open-load stop. Fixed; the fixed
+>       path has not yet run.
+>     - A soak command that didn't wait for `READY` raised GPIO10 for 5 ms with both cameras
+>       off: `CAM_TIMEOUT`, cleared with `fault clear`. Fixed. The risk was low, because the
+>       modules isolate with VA at 0 V.
+>   - **On the PC, use local port 8766 for the tunnel:** 8765 is the design workbench's.
+> - **Left:** Board 5 `RUNNING`, the Pi up, live OFF, gate 0, beam off, `fault : none`.
+> - **Later the same day (§6):** J3 fixed (13:00); both cameras focused with the A4 lenses; the
+>   flash width measured, at 8- and 12-bit, and with the ball 7 cm closer. The Mira220 has no
+>   analogue gain.
+> - **Next, in order:**
+>   1. **7c.2 with the analyser** (fitted unpowered): Step 1's isolation, Step 2's levels, and Steps
+>      4–5's delays, skew and `t_cam` against the analyser.
+>      - Then 7c.2 passes. The buses go into `WIRING_DIAGRAM.md` §6.2, and 7c.2's table and the
+>        guide's figure labels change to this bench's camera 0 on CAM/DISP 0.
+>      - The owner's open call (repeat 7c.0/7c.1's module checks on Board 5) can fold into the
+>        same session.
+>   2. **The independent 7c.2 review** (`captures/review_2026-11-20/REVIEW_BRIEF_7c2.md`; refresh
+>      its pinned hashes first). Add `tools/strobe_focus.ps1` to a review: it commands live
+>      current.
+>   3. **The shot path** (`SHOT_PATH_PLAN.md`): WP0 (measure the superloop latency and the
+>      comparator chatter), then WP1 (host-only strobe profiles, validator, LUT); WP2–WP6 after.
+>   4. **Light:** the unexplained ~4 % flash-to-flash term (a flat white card at 20 µs would
+>      show whether it is the LED pattern); the pulse width and bit depth; the bank at its
+>      design spot (~0.42 m from the ball, −16°; 10 of 20 positions fitted).
+>   5. **Mechanics:** lock the lenses; the cameras on the stand; then
+>      `Hardware/Calibration`'s procedure at 850 nm.
+>   6. **Housekeeping:** Board 5's asks (TP4 at rest, R65/R66, the 6.4 FLIR check); board 1's
+>      1.12 install. Everything through 2026-11-24 is committed (the owner asked; `CHANGELOG.md`'s
+>      2026-11-24 section lists it).
+
+> ### 2026-11-23: Board 5 bring-up (owner), then board 1's Pi on it; 7c.2 Step 0 PASS
+>
+> - **Board 5 is the COM10 board** (UID `6093584a7790419d`; §6, 2026-11-03 and 2026-11-23).
+>   Silicon A4. USB and PSU only. No soldered leads (owner).
+> - **Done:**
+>   - `BRINGUP_NEW_BOARD.md` Steps 1.3–1.4: the partition table, and r5 in B;
+>   - **1.12 in A, bought**, its first board;
+>   - §2's readings at the first `on` (owner skipped J2): VIR 35.77 V, TP2 12.31 V, TP7 2.59 V;
+>   - §3 PASS;
+>   - §4 PASS: scale 1.0687, slot A, seq 15;
+>   - §5 PASS: 5.1 and 5.2 in the log, 5.3–5.5 reported by the owner;
+>   - the unpowered rework check PASS: **R80 120 kΩ**.
+> - **§6–§12 before the Pi (owner, 2026-11-23, §8),** with no soldered leads and no analyser.
+>   Test points are read with a DMM from the back, which the PCB shows is safe.
+>   - **Done:** §7.1, §7.2, §6.1 and §6.5.
+>   - **§8–§11 PASS** (§6, 2026-11-23):
+>     - the baffle holds to 25 %;
+>     - phase 1320 ticks (400 ns), `cal model` PURE DELAY, residual 0.26°;
+>     - vref 3.270 V, Vos +6.2 mV, crosstalk 2.4 mV;
+>     - saved in slot A, seq 19.
+>   - **Open:**
+>     - Step 6.4's FLIR hold: assumed OK by the owner, with no FLIR on hand (§8). Measure it
+>       when the FLIR is back.
+>     - Step 6.3, the DMM U9 check, optional.
+>   - **§12:** TP3 is read from the back, and part 6 is skipped.
+>     - **Step 12.2 parts 2–5 PASS** (§6): TP3 4.94 / 8.91 / 0 V.
+>     - **Step 12.1 PASS:** the capacitor is fitted, 1 µF, and every DMM check passes (owner).
+>     - **J8 and J4 stay empty through 12.4** (§6): the Pi and cameras go on after §12.
+>     - **12.3–12.4 PASS** (§6): U5's clamp 134 µs; 9 A at level 436 (42.58 %, TP3 4.22 V),
+>       confirmed at 8.975 A; session cap 461.
+>     - **Asked:** TP4 at rest (under 2 mV) the next time J3 is on with the rail up; R65/R66's
+>       markings.
+> - **2026-11-23, later: board 1's Pi on Board 5, with both Mira220s on the Pi** (§6, "Board 5
+>   powers board 1's Pi").
+>   - **"First seating" PASS as far as it runs from this PC:**
+>     - `pi : present 0  3v3 0` before `on`, the guard left after the R39 check was skipped
+>       (§8);
+>     - one clean `on`/`off`;
+>     - 1000 pings, 0 failed.
+>     - SW2 taped and the Pi's USB-C unplugged: confirmed by the owner. The supply is the
+>       design's Mean Well LRS-75-5, rated 14 A, so "limit ≥ 5 A" is met (§6, 2026-11-24).
+>     - A Pi reboot keeps the rail up (8.6): down unrequested 1, came back 1, power cuts 0.
+>   - **7c.2 Step 0 PASS** (§6, "7c.2 Step 0 PASS on Board 5"):
+>     - the tests pass on the Pi;
+>     - `dtoverlay=mira220-nir,cam0` is added, after a backup;
+>     - `mira220 10-0054` and `mira220 11-0054` are listed, and both are configured at
+>       1000 µs. B0 = 11, B1 = 10;
+>     - each camera streams free-running.
+>   - **Camera 1 sees no light** (a cap, no lens, or facing something dark). Camera 0 sees the
+>     room, dark in NIR.
+>   - **Left:** the board `RUNNING` with the Pi up (the owner's `on`), the beam off at 25 %, J3
+>     and J4 empty.
+> - **Next:**
+>   - **7c.2 Steps 1–5:** module #1 wired and J4 connected, all with the power off, plus the
+>     analyser.
+>   - **7c.2 now runs on Board 5, not board 1** (the owner moved the Pi). Board 5's J4 and J5
+>     have never carried the handshake, and 7c.2 takes module #0 as proven by 7c.0 and 7c.1 on
+>     board 1. **For the owner to decide:** repeat 7c.0 Steps 1–3 and 7c.1 Step 0 on Board 5,
+>     with module #0 alone, before 7c.2 Step 1.
+>   - **NIR light for the lenses,** and camera 1's lens or cap checked.
+> - §6 and §12 have passed, so the earlier beam and J3 guards are lifted. The owner accepts 6.4
+>   untested (§8).
+> - **The beam's duty boots at 2 %** (`beam.c`), so `cfg` warns after each power-up. Send
+>   `beam duty 25` (owner: any time) before beam work. It sets the level only; the beam stays
+>   off.
+
+> ### 2026-11-20: 7c.3 PASS (desk); D1–D8 decided; 7c.2 written; next, 7c.2 on board 1
+>
+> - **7c.3 PASS** (§6, 2026-11-20). The first-flash latency now decides how many freezes fit:
+>   four at 100 m/s within 289 µs of the trailing edge (47.33 mm spacing).
+> - **Correction:** the live readback's baseline is ready 198–200 µs after the switch to
+>   BURST, not ~0.4 ms (§6).
+> - **Next:**
+>   - **the owner decided D1–D8 the same day** (§8; `SHOT_PATH_PLAN.md` §3a). Next in the plan:
+>     WP0.1 (a loop-latency counter, no behaviour change), WP0.3 from the logs, and WP1
+>     (host-only). The workbench side regenerates its table (D5, D8);
+>   - **7c.2, written 2026-11-20** (§6), is next on board 1, with no reflash.
+>     - A TXS0108E per camera: the owner's choice (§8).
+>     - **An independent review of its wiring and procedure is briefed** (the owner's request,
+>       2026-11-20): `captures/review_2026-11-20/REVIEW_BRIEF_7c2.md`. Not required by
+>       `HANDOFF.md` §5 rule 8, since no firmware changed. Recommended before module #1 is wired.
+>     - Copy `Software/camera-comparison` to the Pi first: the two-camera tools, with the fixed
+>       `trigger-capture.sh`.
+>     - No firmware change: the handshake already waits for both strobes;
+>   - at the next power-up, as before: the fixed `trigger-capture.sh` onto the Pi, its frames
+>     pulled, and 1.12 installed (`BENCH_P8_PI.md` §8.9c).
+> - Not committed.
+
+> ### 2026-11-16: a route to 7c.1 — switch the Mira220 to slave mode after each stream start
+>
+> - **Upstream PiTrac does it** (`feature/pico`, commit `afe689e`; §6, 2026-11-16).
+>   - It makes a few I²C register writes at 0x54 after the stream starts.
+>   - Our driver puts the sensor back in master mode on every start, so the switch follows each
+>     start.
+> - **Correction:** the driver writes `0x1001 = 0x41`, not 0 (§6, 2026-11-16).
+> - **Next, unchanged:** `BENCH_P5_P7_MIC_CAMERA.md` 7c.0 on board 1, image 1.11, no reflash.
+>   - **The Pi is set up** (2026-11-18, §6): the driver, the overlay (CAM/DISP 1) and the camera
+>     kit. The Mira220 probes on I²C bus 11 and streams at 88.96 fps.
+>   - **7c.0 Step 1 PASS** (2026-11-18, §6). Step 3's strobe checks pass from the same
+>     capture. The A1/A2 probe labels look swapped: ch2 carries the trigger at the camera.
+>   - **7c.0 PASS** (2026-11-18, §6). Step 2 held 1.277 V, only 17 mV above VIH, and dipped to
+>     1.04 V at strobe falls.
+>   - **7c.1 Step 0 PASS** (§6): 1.490 V with channel 5 bridged, and no dips at strobe falls.
+>   - **7c.1 PASS** (§6):
+>     - one frame per trigger, and none without one;
+>     - **t_cam 0.21–0.24 µs** (0.17–0.18 µs on the analyser), not the assumed 100–300 µs;
+>     - the strobe follows REQ EXP on both edges.
+>   - **Next:**
+>     - at the next power-up: copy the fixed `trigger-capture.sh` to the Pi, and pull the
+>       frames to compare brightness;
+>     - 7c.2 when there is a second Mira220;
+>     - **Image 1.12 passed independent software review** (§6, V112-N1 through N3).
+>       Board 1 still runs 1.11 in A with 1.7 in B.
+>     - **Its install is `BENCH_P8_PI.md` §8.9c** (written 2026-11-18). V112-N1–N3 wait for the
+>       next image.
+>     - **The stand's geometry** is in `Hardware/Stand/README.md` (2026-11-19, §6). It is the
+>       input for 7c.3, and its two timing models disagree (§4.1 there).
+>     - **The detected-shot path is planned** in `SHOT_PATH_PLAN.md` (2026-11-20, §6).
+>       Decisions D1–D8 wait for the owner. WP0 (measurements only) can start without them.
+> - **Then 7c.1, now written** (owner's go-ahead; §6, 2026-11-16, "7c.1 written"):
+>   - the Pi tools `trigger-capture.sh` and `mira220-trigger.sh` (`Software/camera-comparison`,
+>     `TRIGGER.md`), used on board 1's Pi on 2026-11-18;
+>   - its first measurement: whether ILLUM TRIG pulses in slave mode (Step 2).
+>   - On the Pi first: `i2c-tools`, the camera's `/dev/i2c-<bus>`, and membership of the
+>     `i2c` group, not `sudo` (7c.1, "The Pi tools").
+> - Not committed. `e23aa65` holds everything to 2026-11-16 before this block.
 
 > ### 2026-11-13: 7c allowed (owner) — 7c.0 next on board 1; 7c.1 needs the Mira220's trigger mode
 >

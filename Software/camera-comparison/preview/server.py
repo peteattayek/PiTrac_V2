@@ -43,6 +43,21 @@ except ImportError:
 
 LOG = logging.getLogger("pitrac.focus")
 MAX_FRAME_AGE = 2.0
+# --hold-flash: for focusing by the board's paced strobe (Hardware/firmware/tools/strobe_focus.ps1).
+# A flash lights one free-running frame in ~90, which a 10 fps preview would mostly miss, so the
+# preview shows the latest frame that is clearly brighter than the dark baseline, for up to
+# FLASH_HOLD_S, then the latest frame again.
+FLASH_HOLD_S = 3.0
+FLASH_SAMPLE_STEP = 97      # bytes between brightness samples (prime: no column aliasing)
+FLASH_MIN_RISE = 3.0        # a lit frame is this many codes above the baseline ...
+FLASH_RISE_FRACTION = 0.2   # ... or this fraction above it, whichever is larger
+FLASH_BASELINE_ALPHA = 0.05  # the baseline follows unlit frames only
+
+
+def frame_brightness(frame: bytes) -> float:
+    """Mean of a sparse byte sample: cheap enough for every frame at 89 fps."""
+    sample = frame[::FLASH_SAMPLE_STEP]
+    return sum(sample) / len(sample)
 CAPTURE_LINE = re.compile(
     r"^\s*cap dqbuf:.*?\bseq:\s*(\d+)\s+bytesused:\s*(\d+).*?\bts:\s*(\d+\.\d+)"
 )
@@ -247,8 +262,9 @@ def encode_png(config: CameraConfig, frame: bytes) -> bytes:
 
 
 class FrameStore:
-    def __init__(self, config: CameraConfig) -> None:
+    def __init__(self, config: CameraConfig, hold_flash: bool = False) -> None:
         self.config = config
+        self.hold_flash = hold_flash
         self._lock = threading.Lock()
         self._frame: bytes | None = None
         self._frame_id = 0
@@ -260,6 +276,9 @@ class FrameStore:
         self._timing_warnings = 0
         self._diagnostic_frames = 0
         self._generation = 0
+        self._baseline: float | None = None
+        self._lit: tuple[int, bytes, float] | None = None
+        self._lit_frames = 0
 
     def reconfigure(self, config: CameraConfig) -> None:
         with self._lock:
@@ -273,6 +292,9 @@ class FrameStore:
             self._diagnostics.clear()
             self._timing_warnings = 0
             self._diagnostic_frames = 0
+            self._baseline = None
+            self._lit = None
+            self._lit_frames = 0
 
     @property
     def generation(self) -> int:
@@ -282,12 +304,21 @@ class FrameStore:
     def publish(self, frame: bytes) -> None:
         if len(frame) != self.config.sizeimage:
             raise PreviewError("Capture frame length differs from the configured sizeimage")
+        level = frame_brightness(frame) if self.hold_flash else 0.0
         with self._lock:
             if self._error is not None or self._stopped:
                 return
             self._frame = frame
             self._frame_id += 1
             self._received_at = time.monotonic()
+            if self.hold_flash:
+                if self._baseline is None:
+                    self._baseline = level
+                elif level > self._baseline + max(FLASH_MIN_RISE, FLASH_RISE_FRACTION * self._baseline):
+                    self._lit = (self._frame_id, frame, self._received_at)
+                    self._lit_frames += 1
+                else:
+                    self._baseline += FLASH_BASELINE_ALPHA * (level - self._baseline)
 
     def fail(self, message: str) -> None:
         with self._lock:
@@ -338,9 +369,18 @@ class FrameStore:
                 raise PreviewError("Waiting for the first raw frame.")
             if time.monotonic() - self._received_at > MAX_FRAME_AGE:
                 raise PreviewError("No recent raw frame; this camera is not live.")
+            if self._showing_flash():
+                assert self._lit is not None
+                return None if self._lit[0] <= after else self._lit
             if self._frame_id <= after:
                 return None
             return self._frame_id, self._frame, self._received_at
+
+    def _showing_flash(self) -> bool:
+        # Called with the lock held. Frame ids only grow, so a newer lit frame always has an id
+        # above anything already served, and the switch back to the latest frame does too.
+        return (self.hold_flash and self._lit is not None
+                and time.monotonic() - self._lit[2] <= FLASH_HOLD_S)
 
     def status(self) -> dict[str, object]:
         with self._lock:
@@ -372,6 +412,10 @@ class FrameStore:
                 "timing_warnings": self._timing_warnings,
                 "diagnostics": list(self._diagnostics),
                 "exposure_generation": self._generation,
+                "hold_flash": self.hold_flash,
+                "flash_frames": self._lit_frames,
+                "showing": "flash" if self._showing_flash() else "latest",
+                "flash_baseline": None if self._baseline is None else round(self._baseline, 2),
             }
 
 
@@ -1027,6 +1071,8 @@ def main() -> int:
     parser.add_argument("--buffers", type=int, default=32)
     parser.add_argument("--transport", choices=("jpeg", "raw"), default="jpeg")
     parser.add_argument("--jpeg-quality", type=int, default=90)
+    parser.add_argument("--hold-flash", action="store_true",
+                        help="show the latest flash-lit frame for up to %g s (focusing by strobe)" % FLASH_HOLD_S)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     if (not 1024 <= args.port <= 65535 or not 1 <= args.preview_fps <= 10
@@ -1043,7 +1089,7 @@ def main() -> int:
         ]
         if not configs:
             raise PreviewError("No camera configurations found")
-        state = PreviewState({config.name: FrameStore(config) for config in configs},
+        state = PreviewState({config.name: FrameStore(config, args.hold_flash) for config in configs},
                              args.preview_fps, args.transport, args.jpeg_quality)
         web_root = Path(__file__).resolve().parent.parent / "web"
         for asset in ("index.html", "preview.js", "decoder.js", "stream.js", "exposure.js",
@@ -1069,6 +1115,8 @@ def main() -> int:
         LOG.info("Raw focus preview: http://127.0.0.1:%d (SSH tunnel required from another computer)", args.port)
         LOG.info("No image files are written. Stop this preview before recording.")
         LOG.info("Browser default: %s at up to %d fps; capture settings unchanged", args.transport, args.preview_fps)
+        if args.hold_flash:
+            LOG.info("Hold-flash: the latest flash-lit frame is shown for up to %g s", FLASH_HOLD_S)
         while not stop.wait(0.2):
             exposure_control.check()
     except (OSError, ControlError, subprocess.SubprocessError) as error:

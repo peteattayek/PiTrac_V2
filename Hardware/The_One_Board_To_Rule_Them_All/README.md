@@ -4,6 +4,7 @@ This is the Rev V1 controller for the PiTrac V2 golf launch monitor. It detects 
 ball crossing the infrared beam, times the cameras and strobe, and interfaces with
 the Raspberry Pi. **To edit the board, open the [KiCad 10 project](The_One_Board_To_Rule_Them_All.kicad_pro).**
 To read the circuit without KiCad, open the [schematic PDF](exports/The_One_Board_To_Rule_Them_All.pdf).
+The [external IR LED array](../IR_LED_Strobe/README.md) driven by J3 has its own PCB project.
 
 | Where | What's in it |
 |---|---|

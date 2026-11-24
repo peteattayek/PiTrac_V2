@@ -26,6 +26,10 @@
 // Image 1.11, review finding V110-F1: the Pi's 3V3 rising DURING the commands'
 // own 50 ms wait (g_rise_in_sleep, the way the 1.10 review's probe raised it),
 // and the watchdog left as it was by a refusal at the second check.
+//
+// Image 1.12, review note V111-N2: the same rise while the command's message is
+// going out, before the sleep (g_rise_in_print). The second check refuses it too,
+// and the message no longer pins every rise on the 50 ms wait.
 
 #include <assert.h>
 #include <errno.h>
@@ -512,6 +516,10 @@ static bool s_overlap;          // config_store.c's: the image overlaps the conf
 
 // What the copied commands print, kept for the checks and passed on to stdout.
 static char g_out[2048];
+// g_rise_in_print: the Pi's 3V3 rises while the command's own attempt message
+// ('resetting...' / 'rebooting to BOOTSEL...') is printed -- before its sleep
+// (image 1.12, V111-N2). One-shot.
+static bool g_rise_in_print;
 static int capture_printf(const char *fmt, ...) {
     size_t n = strlen(g_out);
     va_list ap;
@@ -519,6 +527,11 @@ static int capture_printf(const char *fmt, ...) {
     int r = vsnprintf(g_out + n, sizeof g_out - n, fmt, ap);
     va_end(ap);
     fputs(g_out + n, stdout);
+    if (g_rise_in_print && (strstr(g_out + n, "resetting...") ||
+                            strstr(g_out + n, "rebooting to BOOTSEL..."))) {
+        g_pin[PIN_PI_3V3_SENSE].in = true;
+        g_rise_in_print = false;
+    }
     return r;
 }
 #define printf capture_printf
@@ -665,7 +678,8 @@ static bool reset_rise_in_wait(void) {
     CHECK(power_pi_3v3_sensed() && !power_pi_present());
     CHECK(has(g_out, "resetting..."));             // past the entry check ...
     CHECK(has(g_out, "REFUSED: a Pi's 3V3 is sensed (GPIO24), not yet classified"));
-    CHECK(has(g_out, "Nothing was done: the Pi's 3V3 rose during the 50 ms wait before 'reset'"));
+    CHECK(has(g_out, "Nothing was done: the Pi's 3V3 rose after the first check"));
+    CHECK(has(g_out, "message or the 50 ms wait), before 'reset'"));
     CHECK(pitrac_watchdog_enabled());              // ... and the watchdog kept
 
     boot(false);                                   // bootsel, the watchdog not armed
@@ -699,6 +713,30 @@ static bool reset_rise_in_wait(void) {
     boot(false);
     g_rise_in_sleep = true;
     CHECK(forced_bootsel_admitted());
+    return true;
+}
+
+// V111-N2: the 3V3 rises while the attempt message is printed, after the entry
+// check and before the sleep. Refused at the second check like a rise in the
+// wait, with the watchdog kept; the message names the whole interval.
+static bool reset_rise_in_message(void) {
+    boot(false);
+    CHECK(power_fsm_state() == PS_BENCH_RUNNING);
+    CHECK(!power_pi_maybe_present());
+    pitrac_watchdog_enable(true);
+    g_rise_in_print = true;
+    CHECK(!plain_reset_admitted());
+    show("Plain reset, the 3V3 risen while its message printed");
+    CHECK(!g_rise_in_print);                       // the rise happened in the message
+    CHECK(has(g_out, "resetting..."));
+    CHECK(has(g_out, "Nothing was done: the Pi's 3V3 rose after the first check"));
+    CHECK(pitrac_watchdog_enabled());
+
+    boot(false);
+    g_rise_in_print = true;
+    CHECK(!plain_bootsel_admitted());
+    CHECK(!g_rise_in_print);
+    CHECK(has(g_out, "before 'bootsel'"));
     return true;
 }
 
@@ -748,7 +786,7 @@ int main(int argc, char **argv) {
         TEST(settled_sessions), TEST(pi_booting_refuses_arm),
         TEST(shutdown_ends_live), TEST(operator_watchdog),
         TEST(reset_late_pi), TEST(reset_powering_on), TEST(reset_settled),
-        TEST(reset_rise_in_wait),
+        TEST(reset_rise_in_wait), TEST(reset_rise_in_message),
 #undef TEST
     };
     if (argc == 2) {

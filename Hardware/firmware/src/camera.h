@@ -10,8 +10,9 @@
 // Everything here is NON-BLOCKING: shot.c starts a handshake and polls it from
 // the superloop.
 //
-// 🔴 J4 STAYS OFF A CAMERA until CR-09 is settled (the Mira220's I/O is 1.8 V and
-// not 3.3 V tolerant; NEXT_BOARD_REV.md). Nothing here can tell what is on J4.
+// 🔴 J4 is 3.3 V. A Mira220 (1.8 V I/O, not 3.3 V tolerant; NEXT_BOARD_REV.md
+// CR-09) goes on it only through a TXS0108E module, as in BENCH_P5_P7_MIC_CAMERA.md
+// 7c. Nothing here can tell what is on J4.
 // The trigger is driven only with the +5 V rail up (a camera on J4 is powered
 // from the Pi, which is on that rail), and it drops on every route to rail-down.
 //

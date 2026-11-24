@@ -8,7 +8,7 @@ Complete harness and connector wiring guide for the **Next Gen PiTrac controller
 1. **5.2 V Main Power (`J1`) and Optional Panel Switch/LEDs (`J7`)**
 2. **External IRLED / IRLED2 Strobe Array Board (`J3`)**
 3. **Raspberry Pi 5 (`J8` 40-pin socket + dual MIPI CSI-2 camera ribbons)**
-4. **2 × ams-OSRAM Mira220 Camera Boards via a Single HiLetgo `TXS0108E` Level Converter (`J4` + `J5.2`)**
+4. **2 × ams-OSRAM Mira220 Camera Boards, each via its own HiLetgo `TXS0108E` Level Converter (`J4` + `J5.2`)**
 5. **Optional External Digital Microphone (`J5`) — both I²S (3-wire) and PDM (2-wire)**
 
 > **Sources verified against hardware netlists:**
@@ -39,8 +39,8 @@ Read every item before stripping wire or seating a connector:
 
 1. **Wire and re-seat ONLY while completely unpowered.** Both the **5.2 V PSU (`J1`)** and **USB-C (`J6`)** must be unplugged (USB-C alone keeps `+3V3` and `+3.3VA` live), and wait for `VIR` (`36 V`) bulk capacitors to discharge.
 2. **NEVER wire `J4` directly to a Mira220 camera.** Mira220 digital I/O is `1.8 V` with **zero `3.3 V` tolerance** (`VIH(max) = VDD18 = 1.8 V`; `VOH = 1.44–1.80 V` vs. RP2354B `VIH ≈ 2.15 V`). Always go through the `TXS0108E` level converter (`CR-09`).
-3. **Power `TXS0108E` `VB` (`3.3 V`) from PCB `J5.2` (`+3.3VA`), NEVER from the camera's `3V3` pin.** The RP2354B can be powered while the Pi/cameras are off; tying `VB` to the camera's `3V3` back-powers an unpowered camera through the translator. Leave Mira220 `P1.2` (`3V3`) unconnected on both cameras.
-4. **Feed `TXS0108E` `VA + OE` from Camera 0 `P1.5` (`1V8`) ONLY (leave Camera 1 `P1.5` unconnected), and give each camera its own channel pair (`Ch 1–2` for Cam 0, `Ch 3–4` for Cam 1).** Never tie two cameras' `1V8` LDO outputs together, and never split one `TXS0108E` `A`-side pin across two cameras' `REQ EXP` (`P1.7`) `12 kΩ` pull-downs (see [§7.2–§7.3](#72-single-txs0108e-stereo-camera-wiring-channels-14)).
+3. **Power each `TXS0108E`'s `VB` (`3.3 V`) from PCB `J5.2` (`+3.3VA`), NEVER from a camera's `3V3` pin.** The RP2354B can be powered while the Pi/cameras are off; tying `VB` to the camera's `3V3` back-powers an unpowered camera through the translator. Leave Mira220 `P1.2` (`3V3`) unconnected on both cameras.
+4. **One `TXS0108E` per camera, each with `VA + OE` from its own camera's `P1.5` (`1V8`)** (owner, 2026-11-20). A camera's `1V8` is up only while it streams, so a module fed by the other camera would drive an unpowered camera's pins. Never tie two cameras' `1V8` LDO outputs together, and never put two cameras' `REQ EXP` (`P1.7`) `12 kΩ` pull-downs on one `A` pin (see [§7.2–§7.3](#72-one-txs0108e-per-camera)).
 5. **NEVER plug a USB-C power supply into the Raspberry Pi 5 while it is seated on `J8`.** The Pi 5 receives all power from `J8` pins 2 & 4; plugging USB-C into the Pi back-feeds the board's switched `+5V` rail regardless of the latch state.
 6. **Tape over `SW2` (`RUN` reset button) whenever a Pi 5 is seated on `J8`.** Resetting the RP2354B opens the `+5V` soft-latch (`Q3`), instantly hard-cutting power to the Pi 5.
 7. **`J3.2` (`VIR_RTN`) and `TP5` (`Strobe_GND`) are NOT ground.** `J3.2` sits at the `36 V` LED bank cathode above linear sink `Q9`/`Q10`. Never tie `J3.2` to `GND` or clip an earth-grounded oscilloscope lead to it.
@@ -72,12 +72,14 @@ flowchart LR
     PI5 <==>|"22-pin to 15-pin<br/>MIPI CSI-2 FPC"| CAM0_CSI["Mira220 Cam 0<br/>J1 (15-pin CSI)"]
     PI5 <==>|"22-pin to 15-pin<br/>MIPI CSI-2 FPC"| CAM1_CSI["Mira220 Cam 1<br/>J1 (15-pin CSI)"]
 
-    J5 -.->|"+3.3VA (Pin 2)<br/>to VB"| LVL["HiLetgo TXS0108E (1x)<br/>8-Ch Shifter (Ch 1-4)<br/>VB=3.3V, VA=1.8V"]
+    J5 -.->|"+3.3VA (Pin 2)<br/>to VB"| LVL0["TXS0108E #0<br/>(Cam 0)<br/>VB=3.3V, VA=Cam 0 1V8"]
+    J5 -.->|"+3.3VA (Pin 2)<br/>to VB"| LVL1["TXS0108E #1<br/>(Cam 1)<br/>VB=3.3V, VA=Cam 1 1V8"]
 
-    J4 <-->|"Pins 3,7 (Cam 0) &<br/>Pins 4,8 (Cam 1) + GND"| LVL
+    J4 <-->|"Pins 3,7 (Cam 0) + GND"| LVL0
+    J4 <-->|"Pins 4,8 (Cam 1) + GND"| LVL1
 
-    LVL <-->|"A1,A2 + VA/OE (1V8)<br/>+ GND"| CAM0_P1["Mira220 Cam 0<br/>P1 (1x9 Header)"]
-    LVL <-->|"A3,A4 + GND<br/>(P1.5 1V8 = NC!)"| CAM1_P1["Mira220 Cam 1<br/>P1 (1x9 Header)"]
+    LVL0 <-->|"A1+A5, A2 + VA/OE (1V8)<br/>+ GND"| CAM0_P1["Mira220 Cam 0<br/>P1 (1x9 Header)"]
+    LVL1 <-->|"A1+A5, A2 + VA/OE (1V8)<br/>+ GND"| CAM1_P1["Mira220 Cam 1<br/>P1 (1x9 Header)"]
 
     J5 <-->|"Optional: +3.3VA, GND,<br/>SCK, DATA (+ WS for I2S)"| DMIC["Optional Digital Mic<br/>(I2S or PDM Breakout)"]
 ```
@@ -93,8 +95,8 @@ Every pin assignment below is extracted directly from the [KiCad netlist](Hardwa
 | **`J1`** | 2-pos screw terminal (`5.0 mm`) | `+5.20 V` main DC input (`+VDC`, `GND`) | Connected to Meanwell `LRS-75-5` |
 | **`J2`** | `1×2` `2.54 mm` pin header | Soft-latch bypass jumper (forces `+5V` on) | **OPEN (no jumper)** — dead-board smoke test only |
 | **`J3`** | 2-pos screw terminal (`5.0 mm`) | `36 V` strobe LED array (`VIR`, `VIR_RTN`) | Connected to `IRLED2` via twisted pair |
-| **`J4`** | `2×4` `2.54 mm` pin header | Camera trigger out + 2× strobe feedback in (`3.3 V`) | Connected to **single `TXS0108E` B-side (`B1–B4`)** |
-| **`J5`** | `2×3` `2.54 mm` pin header | `+3.3VA` supply (for `TXS0108E` `VB`) + optional digital mic | `J5.2` feeds `TXS0108E` `VB`; optional I²S/PDM mic |
+| **`J4`** | `2×4` `2.54 mm` pin header | Camera trigger out + 2× strobe feedback in (`3.3 V`) | Connected to the **B-side of two `TXS0108E` modules**, one per camera |
+| **`J5`** | `2×3` `2.54 mm` pin header | `+3.3VA` supply (for `TXS0108E` `VB`) + optional digital mic | `J5.2` feeds both modules' `VB`; optional I²S/PDM mic |
 | **`J6`** | USB Type-C receptacle | RP2354B native USB (`BOOTSEL` + CDC bench CLI) | Unplugged in standalone play (initial setup / bench only) |
 | **`J7`** | `1×6` `2.54 mm` pin header | Panel momentary power button + ring & ready LEDs | Connected to enclosure panel button/LEDs |
 | **`J8`** | `2×20` `2.54 mm` female socket | Raspberry Pi 5 power (`+5V`) + UART + GPIO handshake | Pi 5 plugged directly onto all 40 pins |
@@ -140,6 +142,9 @@ Adjust the Meanwell `LRS-75-5` output trim potentiometer to **`5.20 V`** using a
 ## 5. IRLED / IRLED2 Strobe Board Wiring (`J3`)
 
 `J3` drives the external high-current IR strobe array (`IRLED2` PCB: `10 × Vishay VSMA1085400` in a `2`-string × `5`-series configuration, pulsed at `4.5 A` per string = **`9 A` total** from `36 V`; the controller supports up to `4` parallel strings).
+
+The [emitter PCB](Hardware/IR_LED_Strobe/README.md) has 20 LED positions. On the current
+assembly only the middle two rows (D6–D10 and D11–D15) are populated; the two outer rows are empty.
 
 ```
    PiTrac V2 J3                                IRLED2 Strobe PCB
@@ -200,10 +205,12 @@ Each ams-OSRAM Mira220 board has a **15-pin `1.0 mm` pitch right-angle FPC conne
 
 | Pi 5 Port | Cable Type | Camera Destination | What Travels Over the CSI Ribbon |
 |---|---|---|---|
-| **`CAM/DISP0`** (`22-pin`, `0.5 mm`) | Pi 5 Camera Adapter FPC (`22-pin 0.5 mm` ↔ `15-pin 1.0 mm`) | **Camera 0 `J1`** (`15-pin`, `1.0 mm`) | `3.3 V` camera power (`VDD33`), `GND`, `CCI I²C` (`SDA`/`SCK`), `CAM_ENABLE`, and 2-lane `MIPI CSI-2` raw image data |
-| **`CAM/DISP1`** (`22-pin`, `0.5 mm`) | Pi 5 Camera Adapter FPC (`22-pin 0.5 mm` ↔ `15-pin 1.0 mm`) | **Camera 1 `J1`** (`15-pin`, `1.0 mm`) | Same as above for Camera 1 |
+| **`CAM/DISP0`** (`22-pin`, `0.5 mm`) | Pi 5 Camera Adapter FPC (`22-pin 0.5 mm` ↔ `15-pin 1.0 mm`) | **One camera's `J1`** (`15-pin`, `1.0 mm`) | `3.3 V` camera power (`VDD33`), `GND`, `CCI I²C` (`SDA`/`SCK`), `CAM_ENABLE`, and 2-lane `MIPI CSI-2` raw image data |
+| **`CAM/DISP1`** (`22-pin`, `0.5 mm`) | Pi 5 Camera Adapter FPC (`22-pin 0.5 mm` ↔ `15-pin 1.0 mm`) | **The other camera's `J1`** (`15-pin`, `1.0 mm`) | Same as above for the other camera |
 
 > **Orientation check:** Verify silver contact-finger orientation against the locking-tab side of both the Pi 5 `CAM/DISP` sockets and Mira220 `J1` before inserting, with all power off ([`Software/camera-comparison/README.md`](Software/camera-comparison/README.md)). Because the CSI ribbon already supplies `VDD33`, `GND`, `SDA`, and `SCK` to each camera, **do not connect `3V3`, `SDA`, or `SCK` on the Mira220 GPIO header**.
+>
+> **Which port is which camera:** the board does not care. Cameras 0 and 1 are defined by the `J4` column (§7), and the Pi port only sets the camera's I²C bus. Two Mira220s need both overlays in `config.txt`: `dtoverlay=mira220-nir,cam0` and `dtoverlay=mira220-nir`. On board 1, camera 0 has been on `CAM/DISP1` since 7c.0, and camera 1 goes on `CAM/DISP0` (7c.2, which records which bus is which camera).
 
 ---
 
@@ -226,7 +233,7 @@ Each ams-OSRAM Mira220 board has a **15-pin `1.0 mm` pitch right-angle FPC conne
        +-----+-----+
 ```
 
-Because `J4` has no `3.3 V` pin on Rev V1 (`CR-09`), the `3.3 V` high-side reference (`VB`) for the single `TXS0108E` level converter comes directly from **`J5.2` (`+3.3VA`)** — see `J5` diagram in [§8](#8-optional-external-digital-microphone-j5-i2s-and-pdm).
+Because `J4` has no `3.3 V` pin on Rev V1 (`CR-09`), the `3.3 V` high-side reference (`VB`) for both `TXS0108E` level converters comes directly from **`J5.2` (`+3.3VA`)** — see `J5` diagram in [§8](#8-optional-external-digital-microphone-j5-i2s-and-pdm).
 
 #### B. ams-OSRAM Mira220 Reference Board (`V2.2`) GPIO Header `P1` (`1×9`, `2.54 mm`)
 
@@ -237,9 +244,9 @@ Verified against `MIRA220CSP-Sheet1.SchDoc` (`P1`, Würth `61300911121`) and the
    +---+
  9 | o | READ TRIG   (READ_TRIGGER out, ball J10)        -> NC
  8 | o | REQ FRAME   (REQ_FRAME in, ball G9, 12k to GND) -> NC (unless frame-trig mode used; see note)
- 7 | o | REQ EXP     (REQ_EXP in, ball G8, 12k to GND)   -> 1.8 V Trigger IN  (from A1 on Cam 0 / A3 on Cam 1)
- 6 | o | ILLUM TRIG  (ILLUM_TRIGGER out, ball H5)        -> 1.8 V Strobe OUT  (to A2 on Cam 0 / A4 on Cam 1)
- 5 | o | 1V8         (VDD18 out from U2 TCR2EF18LM LDO)  -> Cam 0 feeds VA+OE; LEAVE NC on Cam 1!
+ 7 | o | REQ EXP     (REQ_EXP in, ball G8, 12k to GND)   -> 1.8 V Trigger IN  (from A1+A5 of its own module)
+ 6 | o | ILLUM TRIG  (ILLUM_TRIGGER out, ball H5)        -> 1.8 V Strobe OUT  (to A2 of its own module)
+ 5 | o | 1V8         (VDD18 out from U2 TCR2EF18LM LDO)  -> VA+OE of THIS camera's own module only
  4 | o | SCK         (CCI I2C clock)                     -> NC (on CSI ribbon)
  3 | o | SDA         (CCI I2C data)                      -> NC (on CSI ribbon)
  2 | o | 3V3         (VDD33)                             -> NC -- DO NOT CONNECT! (Step 13.4 / CR-09)
@@ -250,11 +257,11 @@ Verified against `MIRA220CSP-Sheet1.SchDoc` (`P1`, Würth `61300911121`) and the
 > **Why wire to `P1` (left `1×9` header) instead of `J2` (top `1×8` header)?**
 > The top `1×8` Molex PicoBlade footprint (`J2`) breaks out `REQ_EXP` (`J2.8`), `ILLUM_TRIGGER` (`J2.7`), `VDD33` (`J2.3/4`), and `GND` (`J2.1/2`), **but omits `VDD18` (`1V8`)**, which `TXS0108E` requires on `VA`. Use `P1`.
 >
-> **Note on `REQ EXP` (`P1.7`) vs. `REQ FRAME` (`P1.8`):** On the Mira220 reference schematic (matching `J2.8`), external trigger uses **`REQ EXP` (`P1.7`)**, where the trigger pulse controls exposure start/duration (`cam_handshake.pio` holds `D_Cam_Trigger` high across the strobe burst). If your Pi camera register script instead configures internal sensor-timed exposure started by a rising frame pulse, move `A1`/`A3` one pin up to `REQ FRAME` (`P1.8`).
+> **Note on `REQ EXP` (`P1.7`) vs. `REQ FRAME` (`P1.8`):** On the Mira220 reference schematic (matching `J2.8`), external trigger uses **`REQ EXP` (`P1.7`)**, where the trigger pulse controls exposure start/duration (`cam_handshake.pio` holds `D_Cam_Trigger` high across the strobe burst). If your Pi camera register script instead configures internal sensor-timed exposure started by a rising frame pulse, move each module's `A1` one pin up to `REQ FRAME` (`P1.8`).
 
 #### C. HiLetgo `TXS0108E` Breakout Module Pinout
 
-The single 20-pin HiLetgo `TXS0108E` module has a **low-voltage `A` row (`1.2–3.6 V`)** and a **high-voltage `B` row (`1.65–5.5 V`)**, where **`VA <= VB` (`1.8 V <= 3.3 V`) is mandatory**:
+Each 20-pin HiLetgo `TXS0108E` module has a **low-voltage `A` row (`1.2–3.6 V`)** and a **high-voltage `B` row (`1.65–5.5 V`)**, where **`VA <= VB` (`1.8 V <= 3.3 V`) is mandatory**:
 
 ```
         HiLetgo TXS0108E Breakout
@@ -275,57 +282,61 @@ The single 20-pin HiLetgo `TXS0108E` module has a **low-voltage `A` row (`1.2–
 
 ---
 
-### 7.2 Single `TXS0108E` Stereo Camera Wiring (Channels 1–4)
+### 7.2 One `TXS0108E` per Camera
 
-A single 8-channel `TXS0108E` handles all 4 stereo camera signals cleanly (`Ch 1–2` for Camera 0, `Ch 3–4` for Camera 1, with `Ch 5–8` left `NC`):
+**Decided by the owner, 2026-11-20** ([`BENCH_P5_P7_MIC_CAMERA.md`](Hardware/firmware/BENCH_P5_P7_MIC_CAMERA.md) 7c.2). Each camera has its own module, powered on its `1.8 V` side by that camera. The two modules are wired alike; only the `J4` column differs.
+
+**Why not one module for both:** a Mira220's `1V8` is up only while it streams (board 1, 7c.0: `VA` read `0 V` with the stream stopped). A single module fed from camera 0 would drive camera 1's `REQ EXP` and `ILLUM TRIG` pins whenever camera 0 streams and camera 1 does not, with camera 1 unpowered: the `CR-09` back-feed case. With a module per camera, an unpowered camera's module has `VA = OE = 0 V`, and its pins are `Hi-Z`.
 
 ```
-  Next Gen PiTrac PCB                 Single TXS0108E (Ch 1-4)         Mira220 Camera 0 (P1)
+  Next Gen PiTrac PCB                 TXS0108E #0 (camera 0)           Mira220 Camera 0 (P1)
  +------------------+                 +-------------------+            +----------------------+
  | J5.2 (+3.3VA) -------------------->| VB             VA |<--+--------| P1.5 (1V8 VDD18 Out) |
  |                  |                 |                OE |<--+        | P1.2 (3V3) = NC!     |
- | J4.3 (Trig_0) -------------------->| B1             A1 |----------->| P1.7 (REQ EXP)       |
+ | J4.3 (Trig_0) -----------+-------->| B1             A1 |---+------->| P1.7 (REQ EXP)       |
+ |                  |       +-------->| B5             A5 |---+        |                      |
  | J4.7 (Strobe_0) <------------------| B2             A2 |<-----------| P1.6 (ILLUM TRIG)    |
- |                  |                 |                   |            | P1.1 (GND, sq. pad)  |
- |                  |                 |  (B5..B8/A5..A8   |            +----------^-----------+
- |                  |                 |    left NC)       |                       |
- |                  |                 |                   |            Mira220 Camera 1 (P1)  |
- |                  |                 |                   |            +----------------------+
- |                  |                 |                   |            | P1.5 (1V8) = NC!     |
- |                  |                 |                   |            | P1.2 (3V3) = NC!     |
- | J4.4 (Trig_1) -------------------->| B3             A3 |----------->| P1.7 (REQ EXP)       |
- | J4.8 (Strobe_1) <------------------| B4             A4 |<-----------| P1.6 (ILLUM TRIG)    |
- | J4.1,2,5 (GND) ------------------->| GND               |----+------>| P1.1 (GND, sq. pad)  |
- +------------------+                 +-------------------+    +------>  (common GND to Cam 0)
+ | J4.1, J4.5 (GND) ----------------->| GND               |----------->| P1.1 (GND, sq. pad)  |
+ |                  |                 +-------------------+            +----------------------+
+ |                  |                 TXS0108E #1 (camera 1)           Mira220 Camera 1 (P1)
+ |                  |                 +-------------------+            +----------------------+
+ | J5.2 (spliced) ------------------->| VB             VA |<--+--------| P1.5 (1V8 VDD18 Out) |
+ |                  |                 |                OE |<--+        | P1.2 (3V3) = NC!     |
+ | J4.4 (Trig_1) -----------+-------->| B1             A1 |---+------->| P1.7 (REQ EXP)       |
+ |                  |       +-------->| B5             A5 |---+        |                      |
+ | J4.8 (Strobe_1) <------------------| B2             A2 |<-----------| P1.6 (ILLUM TRIG)    |
+ | J4.2, J4.6 (GND) ----------------->| GND               |----------->| P1.1 (GND, sq. pad)  |
+ +------------------+                 +-------------------+            +----------------------+
+   On both modules: B3, B4, B6..B8 and A3, A4, A6..A8 are left NC.
 ```
 
-*(For a **single-camera** setup, simply omit the `B3/A3`, `B4/A4`, and Camera 1 wires.)*
+*(For a **single-camera** setup, fit module #0 only.)*
 
-| Signal Function | Next Gen PCB Pin | Single `TXS0108E` Pin | Mira220 `P1` Pin (Silkscreen) | Voltage Shift |
+| Signal Function | Next Gen PCB Pin | `TXS0108E` Pin (that camera's module) | Mira220 `P1` Pin (Silkscreen) | Voltage Shift |
 |---|---|---|---|---|
-| **3.3 V High-Side Ref** | **`J5.2`** (`+3.3VA`) | **`VB`** | *(None — leave both `P1.2` `3V3` **NC**)* | `3.3 V` ref |
-| **1.8 V Low-Side Ref + Enable** | *(None)* | **`VA`** + **`OE`** (jumpered) | **Cam 0 `P1.5` (`1V8`) ONLY** *(leave Cam 1 `P1.5` **NC**!)* | `1.8 V` ref |
-| **Cam 0 — Exposure Trigger** | **`J4.3`** (`D_Cam_Trigger`) | **`B1`** → **`A1`** | Cam 0 **`P1.7`** (`REQ EXP`) | `3.3 V` → `1.8 V` |
-| **Cam 0 — Exposure Strobe Monitor** | **`J4.7`** (`Cam_Strobe_0`) | **`B2`** ← **`A2`** | Cam 0 **`P1.6`** (`ILLUM TRIG`) | `1.8 V` → `3.3 V` |
-| **Cam 1 — Exposure Trigger** | **`J4.4`** (`D_Cam_Trigger`) | **`B3`** → **`A3`** | Cam 1 **`P1.7`** (`REQ EXP`) | `3.3 V` → `1.8 V` |
-| **Cam 1 — Exposure Strobe Monitor** | **`J4.8`** (`Cam_Strobe_1`) | **`B4`** ← **`A4`** | Cam 1 **`P1.6`** (`ILLUM TRIG`) | `1.8 V` → `3.3 V` |
-| **Ground Return** | **`J4.1, J4.2, J4.5`** (`GND`) | **`GND`** | Cam 0 **`P1.1`** + Cam 1 **`P1.1`** (`GND`, sq. pad) | `0 V` |
-| **Unused `TXS0108E` Channels** | Leave unconnected | `B5..B8` & `A5..A8` **NC** | — | Internal pull-ups hold quiet |
+| **3.3 V High-Side Ref** | **`J5.2`** (`+3.3VA`), spliced to both modules | **`VB`** | *(None — leave both `P1.2` `3V3` **NC**)* | `3.3 V` ref |
+| **1.8 V Low-Side Ref + Enable** | *(None)* | **`VA`** + **`OE`** (jumpered) | **That camera's own `P1.5`** (`1V8`) | `1.8 V` ref |
+| **Cam 0 — Exposure Trigger** | **`J4.3`** (`D_Cam_Trigger`) | module #0 **`B1`** → **`A1`**, with **`B5`/`A5` bridged** onto it | Cam 0 **`P1.7`** (`REQ EXP`) | `3.3 V` → `1.8 V` |
+| **Cam 0 — Exposure Strobe Monitor** | **`J4.7`** (`Cam_Strobe_0`) | module #0 **`B2`** ← **`A2`** | Cam 0 **`P1.6`** (`ILLUM TRIG`) | `1.8 V` → `3.3 V` |
+| **Cam 1 — Exposure Trigger** | **`J4.4`** (`D_Cam_Trigger`) | module #1 **`B1`** → **`A1`**, with **`B5`/`A5` bridged** onto it | Cam 1 **`P1.7`** (`REQ EXP`) | `3.3 V` → `1.8 V` |
+| **Cam 1 — Exposure Strobe Monitor** | **`J4.8`** (`Cam_Strobe_1`) | module #1 **`B2`** ← **`A2`** | Cam 1 **`P1.6`** (`ILLUM TRIG`) | `1.8 V` → `3.3 V` |
+| **Ground Return** | **`J4.1`, `J4.5`** (module #0); **`J4.2`, `J4.6`** (module #1) | **`GND`** | that camera's **`P1.1`** (`GND`, sq. pad) | `0 V` |
+| **Unused Channels** | Leave unconnected | `B3`, `B4`, `B6..B8` & `A3`, `A4`, `A6..A8` **NC** | — | Internal pull-ups hold quiet |
 
 ---
 
-### 7.3 Four Electrical Rules Specific to the Single `TXS0108E` + Mira220
+### 7.3 Four Electrical Rules for the `TXS0108E` Modules and the Mira220s
 
-1. **Feed `VA + OE` from Camera 0 `P1.5` (`1V8`) ONLY — leave Camera 1 `P1.5` unconnected (`NC`):**
-   - Each Mira220 board generates `1V8` with its own `U2` (`TCR2EF18LM`) linear regulator sequenced by `U4` (`LM3880MF-1AA`) from its CSI port's `CAM_ENABLE` line (`MIRA220CSP-Sheet1.SchDoc`, `mira220.c`). Never tie two LDO outputs together onto `VA`.
-   - Because Linux V4L2 asserts `CAM_ENABLE` when a `/dev/videoX` device opens, **always open both cameras together during stereo capture** so `VA` (`1.8 V`) is present and neither camera sits unpowered while `VA` is high.
-2. **Dedicated channel per camera (`A1` for Cam 0, `A3` for Cam 1 — never parallel two cameras onto one `A` pin):**
-   - On the Mira220 schematic, `REQ_EXP` (`P1.7`) has an onboard **`R2 = 12 kΩ` pull-down resistor to `GND`**. Inside `TXS0108E`, after the ~10 ns rising-edge accelerator finishes, steady-state HIGH is held through an internal **`RPUA ≈ 4 kΩ` pull-up to `VA` (`1.80 V`)**. Driving **one** camera per channel (`A1` and `A3`) gives $1.80\text{ V} \times \frac{12\text{ k}\Omega}{4\text{ k}\Omega + 12\text{ k}\Omega} \approx \mathbf{1.35\text{ V}}$ (above Mira220's $V_{\text{IH(min)}} = 0.7 \times 1.80\text{ V} = \mathbf{1.26\text{ V}}$). If two cameras' `12 kΩ` pull-downs (`6 kΩ` parallel) were wired to a single `A1` pin, the steady plateau would sag to $1.80\text{ V} \times \frac{6}{4 + 6} = \mathbf{1.08\text{ V} < 1.26\text{ V}}$ and fail!
-   - *Optional extra noise margin:* Spare channels `B5/A5` (paired with `B1/A1`) and `B6/A6` (paired with `B3/A3`) can optionally be bridged per camera to halve effective `RPUA` to `2 kΩ` (`~1.54 V` HIGH plateau).
-3. **Tie `OE` to `VA` (`1.8 V`):**
-   - Tying `OE` to `VA` keeps all `TXS0108E` channels in `Hi-Z` isolation whenever Camera 0 is unpowered (`VA = 0 V`) and enables translation automatically once `1V8` comes up.
+1. **Feed each module's `VA + OE` from its own camera's `P1.5` (`1V8`), and from nothing else:**
+   - Each Mira220 board generates `1V8` with its own `U2` (`TCR2EF18LM`) linear regulator sequenced by `U4` (`LM3880MF-1AA`) from its CSI port's `CAM_ENABLE` line (`MIRA220CSP-Sheet1.SchDoc`, `mira220.c`). Never tie two LDO outputs together.
+   - The driver powers a camera only while it streams, and for 1 s after (runtime PM; board 1, 7c.0). Its module is `Hi-Z` the rest of the time, so the cameras need no start or stop order.
+2. **One camera per `A` pin (`A1` on each module):**
+   - On the Mira220 schematic, `REQ_EXP` (`P1.7`) has an onboard **`R2 = 12 kΩ` pull-down resistor to `GND`**. Inside `TXS0108E`, after the ~10 ns rising-edge accelerator finishes, steady-state HIGH is held through an internal **`RPUA ≈ 4 kΩ` pull-up to `VA` (`1.80 V`)**. Driving **one** camera per channel gives $1.80\text{ V} \times \frac{12\text{ k}\Omega}{4\text{ k}\Omega + 12\text{ k}\Omega} \approx \mathbf{1.35\text{ V}}$ (above Mira220's $V_{\text{IH(min)}} = 0.7 \times 1.80\text{ V} = \mathbf{1.26\text{ V}}$). If two cameras' `12 kΩ` pull-downs (`6 kΩ` parallel) were wired to a single `A1` pin, the steady plateau would sag to $1.80\text{ V} \times \frac{6}{4 + 6} = \mathbf{1.08\text{ V} < 1.26\text{ V}}$ and fail!
+   - **Bridge spare channel `B5/A5` onto `B1/A1` on each module.** That halves the effective `RPUA` (`~1.5 V` HIGH plateau). **Measured on board 1 (2026-11-18), without the bridge:** `1.277 V`, an effective `RPUA` near `4.9 kΩ`, only 17 mV above `VIH`. The `ILLUM TRIG` falling edges also coupled dips to `1.04 V` for ≤ 1 µs. With the bridge: `1.490 V`, and no dips. Keep the trigger and strobe leads apart ([`BENCH_P5_P7_MIC_CAMERA.md`](Hardware/firmware/BENCH_P5_P7_MIC_CAMERA.md) 7c.1).
+3. **Tie `OE` to `VA` (`1.8 V`) on each module:**
+   - That keeps the module's channels in `Hi-Z` isolation whenever its camera is unpowered (`VA = 0 V`), and enables translation once that camera's `1V8` comes up.
 4. **Keep signal leads short (`< 10–15 cm`, bundled with `GND`):**
-   - `TXS0108E` uses internal one-shot edge-rate accelerators that can ring or re-trigger on long, high-capacitance flying leads. Mount the `TXS0108E` breakout midway on short leads bundled with `GND`.
+   - `TXS0108E` uses internal one-shot edge-rate accelerators that can ring or re-trigger on long, high-capacitance flying leads. Mount each breakout midway on short leads bundled with `GND`.
 
 ---
 
@@ -350,7 +361,7 @@ Verified from `.kicad_pcb` (`PinHeader_2x03_P2.54mm_Vertical`, **square Pad 1**)
 ```
 
 > **Sharing `J5.2` (`+3.3VA`) with the Camera Level Converter:**
-> Because `J5.2` also supplies `VB` (`3.3 V`) to the single `TXS0108E` camera level converter ([§7.2](#72-single-txs0108e-stereo-camera-wiring-channels-14)), use a small **Y-splice** (or DuPont splitter) on `J5.2` only when adding an external digital microphone. Combined current draw is `< 5 mA`, well within `+3.3VA`'s budget.
+> Because `J5.2` also supplies `VB` (`3.3 V`) to both camera level converters ([§7.2](#72-one-txs0108e-per-camera)), it is already split two ways; an external digital microphone makes a third lead. Combined current draw is `< 5 mA`, well within `+3.3VA`'s budget.
 
 ---
 
@@ -420,10 +431,10 @@ Before energizing a newly wired assembly, verify every item in order ([`BRINGUP_
    - `J2` bypass jumper is **OFF (open)**.
    - No short between `+VDC` (`J1.1`) and `GND` (`J1.2`), between `VIR` (`J3.1`) and `VIR_RTN` (`J3.2`), or between `VIR_RTN` (`J3.2`) and `GND`.
    - Mira220 **`P1.2` (`3V3`) is NOT connected** to `TXS0108E` `VB` or `J5.2` on either camera.
-   - `TXS0108E` **`VA + OE` connects ONLY to Camera 0 `P1.5` (`1V8`)**, with Camera 1 `P1.5` (`1V8`) left **unconnected (`NC`)** so the two camera LDOs are never shorted together.
-   - Camera 0 uses **`B1/A1` & `B2/A2`** and Camera 1 uses **`B3/A3` & `B4/A4`** (never two cameras on one `A` pin).
+   - Each module's **`VA + OE` connects only to its own camera's `P1.5` (`1V8`)**; the two cameras' `1V8` pins are never joined.
+   - Module #0's `B1` (with `B5`) is on `J4.3` and its `B2` on `J4.7`; module #1's `B1` (with `B5`) is on `J4.4` and its `B2` on `J4.8`. Nothing joins `J4.7` and `J4.8`.
    - Raspberry Pi 5's own USB-C power port is **empty**, `J8` is aligned Pin 1 to Pin 1 across all 40 pins, and **`SW2` is taped over**.
 2. **Power-supply set point (disconnected from `J1`):**
    - Power on the Meanwell `LRS-75-5` alone and verify **`5.20 V ± 0.03 V`** on a DMM; power it down and wait for it to bleed to `0 V` before landing `J1`.
 3. **Level-converter dry check before plugging onto Mira220 `P1` (recommended first time):**
-   - With the single `TXS0108E` wired to `J4`/`J5.2` on the B-side and `1.8 V` applied to `VA + OE` (via bench reference or Cam 0 `P1.5` + `GND`), trigger `cam trig` from the CLI (`J8` empty if bench-testing) and confirm both `A1` and `A3` swing cleanly to **`1.8 V`** (`never 3.3 V`) before landing `A1–A4` onto the cameras' `P1.7`/`P1.6`.
+   - With each module wired to `J4`/`J5.2` on the B-side and `1.8 V` applied to its `VA + OE` (a bench reference, or its camera's `P1.5` + `GND`), trigger `cam trig` from the CLI (`J8` empty if bench-testing) and confirm each module's `A1` swings cleanly to **`1.8 V`** (`never 3.3 V`) before landing `A1`/`A2` onto its camera's `P1.7`/`P1.6`.

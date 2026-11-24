@@ -28,11 +28,17 @@ Hardware/
 │   ├── exports/                              netlist, schematic PDF, BOM and SVG plots
 │   ├── legacy/                               inactive sheets and superseded export
 │   └── jlcpcb/production_files/              gerbers + BOM + CPL as sent to fab
+├── IR_LED_Strobe/                           ← separate emitter PCB for controller J3
+├── Calibration/                             ← camera-distortion procedure and targets
+├── Stand/                                   ← the stand: where each part sits relative to
+│                                              the ball, why, and the check against the CAD
 └── firmware/                                ← RP2354B firmware, C / Pico SDK 2.x
 ```
 
-[Open the KiCad project](The_One_Board_To_Rule_Them_All/The_One_Board_To_Rule_Them_All.kicad_pro)
+[Open the controller KiCad project](The_One_Board_To_Rule_Them_All/The_One_Board_To_Rule_Them_All.kicad_pro)
 or [browse the board folder inventory](The_One_Board_To_Rule_Them_All/README.md).
+The [IR LED strobe project](IR_LED_Strobe/README.md) has 20 LED positions; the current
+assembly uses the middle two rows (10 LEDs).
 
 `../HARDWARE_REFERENCE.md` (repo root) is **generated** from the netlist by
 `firmware/tools/netlist_report.py`. Regenerate it rather than editing it.
@@ -44,6 +50,13 @@ procedure, A4/Letter ChArUco print templates, capture checklist, and session/res
 records. Use a separate calibration for each identified physical camera/lens
 stack at its final filter, illumination, and locked-focus state. Digital target
 checks do not establish physical print quality or calibrated camera coefficients.
+
+### The stand
+
+[Stand/README.md](Stand/README.md) gives the position of each camera, the strobe, the trigger,
+the board and its microphone relative to the ball, read from the built stand's CAD. It also
+records why the optimizer chose that layout, and how to generate a new one from changed
+assumptions.
 
 ### Firmware documents, in reading order
 
@@ -61,6 +74,7 @@ checks do not establish physical print quality or calibrated camera coefficients
 | `firmware/BENCH_P5_P7_MIC_CAMERA.md` | Phases 5 & 7 — microphone and cameras. |
 | `firmware/BENCH_P6_STROBE.md` | Phase 6 — ⚠ 9 A pulses, linear-mode FET. Read fully before powering. |
 | `firmware/BENCH_P8_PI.md` | Phase 8 — real Pi 5 integration and clean-shutdown acceptance; the serial link and firmware updates from the Pi (§8.7–8.9). |
+| `firmware/SHOT_PATH_PLAN.md` | The detected-shot path: what the stand's optimizer assumes, what the firmware must add, and in what order. A plan; nothing built yet. |
 | `firmware/pi/README.md` | The Pi's side: the RPI5_ON unit, the shutdown hook, and `pitrac-link` (the serial link and the firmware updater). |
 | `firmware/NEXT_BOARD_REV.md` | Hardware change requests (CR-xx) for the next board spin. |
 | `firmware/SETUP.md` | Toolchain detail and the manual (non-VS-Code) install path. |
@@ -85,14 +99,15 @@ block of §10** — this table is a summary as of 2026-11-16.
 | 4 · trigger-source experiment | 🟡 firmware written, bench not started |
 | 5 · microphone | 🟡 front end validated; no onset-detection or veto firmware yet |
 | 6 · strobe | ✅ **Complete on board 1 (2026-11-10).** 6a/6b dry tests PASS (2026-10-06); TP3 loop stability PASS (2026-10-08); the CR-23 gate-drive rework; **6d PASS (2026-10-15)**; the ADC0 readback fix (2026-10-16); 6c to 9 A: `strobe cal 9`, bursts (the boost hiccups after 50 µs pulses, CR-25), the session cap. Another board needs its own 6a–6d |
-| 7 · cameras | 🟡 the handshake in PIO1 since image 1.5 (2026-11-10); on board 1, **7a and 7b PASS (2026-11-13)**; 7c allowed by the owner (2026-11-13), the camera only through a TXS0108E module (CR-09); 7c.0 next; 7c.1 on needs the Mira220 in external-trigger mode |
+| 7 · cameras | 🟡 the handshake in PIO1 since image 1.5 (2026-11-10); on board 1, **7a and 7b PASS (2026-11-13)**; 7c allowed by the owner (2026-11-13), the camera only through a TXS0108E module (CR-09); **7c.0 and 7c.1 PASS (2026-11-18)**: the Mira220 in slave mode, triggered by the board, `t_cam` about 0.2 µs; 7c.2 (a second camera, a TXS0108E each) written 2026-11-20; **7c.3 (the geometry check, desk) PASS (2026-11-20)** |
 | 8 · Pi integration | 🟡 on board 1 with a real Pi, **first seating and 8.0b–8.10 PASS (2026-11-02 to 2026-11-12)**: the shutdown handshake, halt telemetry, the serial link, firmware updates from the Pi with A/B rollback, and the strobe with a Pi present; the shot messages not written |
 
 ---
 
 ## Safety rules that outrank convenience
 
-1. **No Pi 5 on J8 until Phase 7c.** The +5 V latch *is* the Pi's power switch, and any
+1. **A Pi 5 on J8 only for Phase 8 and 7c** (owner, 2026-11-09 and 2026-11-13), with SW2
+   taped over and the Pi's own USB-C unplugged. The +5 V latch *is* the Pi's power switch, and any
    RP2354 reset — SW2, `reset`, `bootsel`, the watchdog, a brownout — opens it: a hard power
    cut, not a reboot.
 2. **`PULSE_LIMIT_DISABLE` (GPIO27) stays 0.** It defeats the strobe hardware
@@ -100,9 +115,9 @@ block of §10** — this table is a summary as of 2026-11-16.
    deliberately no CLI path to it.
 3. **Never run the +5 V rail from USB power.** Two independent guards enforce this;
    both exist because the failure mode is a Pi 5 fed through a 1 A diode.
-4. **Do not connect J4 (cameras).** The Mira220 I/O is 1.8 V with no 3.3 V tolerance
-   (answered 2026-08-14). J4 needs a level translator first — `firmware/NEXT_BOARD_REV.md`
-   CR-09.
+4. **A camera on J4 only for 7c, and only through a TXS0108E module.** The Mira220 I/O is
+   1.8 V with no 3.3 V tolerance (answered 2026-08-14), and J4 is 3.3 V: the board needs a
+   level translator (`firmware/NEXT_BOARD_REV.md` CR-09).
 5. **Nothing conductive near the photodiode D12.** Its cathode sits at 36 V; foil across it
    destroyed an op-amp on board 1.
 

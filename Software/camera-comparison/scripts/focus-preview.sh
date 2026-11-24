@@ -4,16 +4,19 @@
 set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/common.sh"
-config= port=8765 preview_fps=10 buffers=32 transport=jpeg jpeg_quality=90
+config= port=8765 preview_fps=10 buffers=32 transport=jpeg jpeg_quality=90 hold_flash=()
 while (($#)); do
     case $1 in
         --help)
             echo "Usage: bash focus-preview.sh --config CONFIG_DIR [--port 8765] [--preview-fps 10] [--buffers 32]"
-            echo "       [--transport jpeg|raw] [--jpeg-quality 90] (60..95; JPEG requires python3-pil)"
+            echo "       [--transport jpeg|raw] [--jpeg-quality 90] (60..95; JPEG requires python3-pil) [--hold-flash]"
             echo "Loopback-only browser preview; native raw acquisition, latest frames in RAM, no image files on Pi."
             echo "Optional Capture downloads full-bit-depth PNGs and raw buffers to the browser (requires Pillow)."
+            echo "--hold-flash shows the latest flash-lit frame for up to 3 s: focusing by the board's paced"
+            echo "strobe (Hardware/firmware/tools/strobe_focus.ps1), with a long exposure such as 11000 us."
             echo "Use an SSH tunnel to view from another computer. Stop preview before recording."
             exit 0 ;;
+        --hold-flash) hold_flash=(--hold-flash); shift ;;
         --config|--port|--preview-fps|--buffers|--transport|--jpeg-quality)
             (($# >= 2)) || die "Missing value for $1"
             case $1 in
@@ -56,4 +59,5 @@ available=$(awk '/^MemAvailable:/ {printf "%.0f", $2*1024}' /proc/meminfo)
 ((available >= memory_required)) || die "Insufficient available RAM for preview buffers."
 cd -- "$HERE/.."
 exec python3 -u -m preview.server --config "$config" --port "$port" \
-    --preview-fps "$preview_fps" --buffers "$buffers" --transport "$transport" --jpeg-quality "$jpeg_quality"
+    --preview-fps "$preview_fps" --buffers "$buffers" --transport "$transport" --jpeg-quality "$jpeg_quality" \
+    "${hold_flash[@]}"

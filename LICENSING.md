@@ -13,7 +13,8 @@ under the same terms. There is deliberately no path here to a closed fork.
 
 ## Hardware — CERN-OHL-S v2
 
-**Covers** everything under `Hardware/The_One_Board_To_Rule_Them_All/` — schematics,
+**Covers** the controller in `Hardware/The_One_Board_To_Rule_Them_All/` and the emitter
+board in `Hardware/IR_LED_Strobe/` — schematics,
 PCB layout, symbol and footprint libraries, netlists, the BOM, and the gerbers in
 `jlcpcb/production_files/` — plus the design document
 `Hardware/The_One_Board_To_Rule_Them_All.md`.
@@ -81,7 +82,7 @@ The firmware builds against the **Raspberry Pi Pico SDK** (BSD-3-Clause), which 
 *not* redistributed here — CMake fetches it at build time. BSD-3-Clause is compatible
 with GPL-3.0 and imposes no additional obligations on this project's sources.
 
-Manufacturer symbols and footprints under `Library.pretty/` and
+Manufacturer symbols and footprints under `VSMA1085250.pretty/`, `Library.pretty/` and
 `RP2350_80QFN_minimal.pretty/` may carry terms from their originating libraries.
 Check those before assuming CERN-OHL-S covers them.
 

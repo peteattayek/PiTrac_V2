@@ -101,11 +101,13 @@ pins
 strobe
 ```
 
-Record label and UID. For powered testing use the existing reviewed **r5**, version 1.1,
-Release **`Oct 20 2026 14:59:52`**, 224720 text / 0 data / 422112 bss; UF2 SHA256:
+Record label and UID. For powered testing use the image settled for that board in
+[PROGRESS.md](PROGRESS.md) section 10: Board 5 (COM10) runs 1.12 in A, with r5 in B
+(2026-11-23). When this was written the only reviewed image was **r5**, version 1.1, Release
+**`Oct 20 2026 14:59:52`**, 224720 text / 0 data / 422112 bss; UF2 SHA256:
 `AC5F4493F5A4C7E8B9B1A387BE128F42055410AFADC9A5B58C092ADBC272ACF7`.
-If different, **reflash first** by [HANDOFF.md](HANDOFF.md) section 4, after saving old `id`
-and `cfg`; then repeat these checks. Do not rebuild or use `build_hang`. A partition-table
+If the board runs something else, **reflash first** by [HANDOFF.md](HANDOFF.md) section 4,
+after saving the old `id` and `cfg`; then repeat these checks. Do not rebuild or use `build_hang`. A partition-table
 installation is not part of this rework check; never load pre-1.1 firmware onto a partitioned board.
 
 **Pass:** STANDBY/latch 0, strobe DRY/gate level 0, GPIO27 SIO output driven 0/pad 0 and
@@ -302,7 +304,8 @@ adc 0 4096
 adc ringtest 100
 ```
 
-**Pass:** GPIO27 low/limiter armed, no fault; ADC0 **< 10 codes / < 8 mV** at rest;
+**Pass:** GPIO27 low/limiter armed, no fault; ADC0 **about 10 codes, 12 at most** at rest (the
+ADC's offset), with TP4 itself **under 2 mV** on a DMM;
 `adc ringtest 100` prints **PASS: every pair covered**. Then complete 6c Step 1's arming and
 refusal checks if not already done on this board. With gate returned to zero:
 

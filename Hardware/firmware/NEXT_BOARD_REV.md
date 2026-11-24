@@ -516,12 +516,16 @@ ams-OSRAM Mira220, **DS000642 v9-00 (2025-Sep-26)**, Tables 2 and 3:
 
 ### Both directions fail, and 220 Ω fixes neither
 
-**Read direction — a guaranteed functional failure, not a risk.** `Cam_Strobe_0/1` (GPIO8/9)
+**Read direction — never guaranteed to work.** `Cam_Strobe_0/1` (GPIO8/9)
 are RP2350 *inputs*. The sensor's guaranteed VOH minimum is **1.44 V** and its absolute
 ceiling is 1.80 V, against an RP2350 VIH of **~2.15 V** (0.65 × IOVDD). **1.80 < 2.15**, so
-the strobe inputs never read high and the entire Phase 7 camera handshake cannot work. This
-half was already flagged in the previous revision of this CR; the datasheet now makes it
-certain rather than suspected.
+no strobe high is guaranteed to read high, and the Phase 7 handshake cannot rely on it. A
+typical CMOS input switches nearer 1.6 V, so a direct strobe might read on one board at room
+temperature; the handshake would then rest on unspecified behaviour: a missed strobe (a
+timeout, nothing fires) or a late one (a wrong `t_cam`).
+- **Correction, 2026-11-21:** this paragraph said the inputs "never read high" and called it
+  "a guaranteed functional failure". "Never guaranteed to read high" is the true statement. The
+  conclusion stands: translate.
 
 **Write direction — the damage path, quantified.** `D_Cam_Trigger` (GPIO10) drives 3.3 V
 through R18 220 Ω into the sensor input, which clamps to VDD18 through its ESD diode:
@@ -555,8 +559,9 @@ Three signals need translating: one output (`D_Cam_Trigger`) and two inputs
 Use a proper translator for all three rather than mixing approaches: a **TXB0104**-class
 auto-direction part, or discrete **BSS138** MOSFET translators. Either needs a 1.8 V
 reference available at J4 — **which the current J4 pinout does not provide** (pins 1, 2, 5, 6
-are all GND). So J4 must gain a VDDIO sense pin, or the translator's low side must be fed
-from a local 1.8 V regulator.
+are all GND). So J4 must gain a VDDIO pin **per camera**. A local 1.8 V regulator is not a safe
+substitute: it would keep the translator's low side live while a camera is off (see "For the
+next layout").
 
 ⚠ **Running the RP2350's bank 0 at 1.8 V is not an option** — it is a single IOVDD domain and
 the rest of the board is 3.3 V.
@@ -584,7 +589,16 @@ needed, and **the owner wants it fixed on the next board revision.**
   first 140.6 ms after power-on, its pad reset with only the internal pull-down (measured
   2026-11-13, `PROGRESS.md` §6). A translator powered in that window, with pull-ups of its
   own, would lift it. An external pull-down sized for that translator settles it;
-- its 1.8 V side from a VDDIO pin added to J4, or a local 1.8 V regulator;
+- **a translator per camera, each with its 1.8 V side from its own camera** (a VDDIO pin per
+  camera added to J4). This is the bench wiring the owner kept (2026-11-20 and 2026-11-21;
+  `WIRING_DIAGRAM.md` §7.2).
+  - A Mira220's 1.8 V is up only while it streams (7c.0). One translator for both cameras, fed
+    from a local 1.8 V regulator or from one camera, would drive a camera that is off: the
+    back-feed this CR exists to prevent.
+  - One translator for both is safe only if its OE is held low unless both cameras' 1.8 V
+    are up. OE low puts the TXS0108E's I/Os in Hi-Z and turns its pull-ups off (TI SCES642).
+    Even then, a camera powering down leaves a few-ms window with OE still high. The owner
+    considered this for the bench on 2026-11-21 and kept two modules;
 - the TXS0108E the owner already uses would do: push-pull, low speed, auto-direction.
 
 **The rule stands: never connect J4 to a camera directly**, and never drive `D_Cam_Trigger`
@@ -2289,8 +2303,8 @@ of 4.94 V, and that started a fault analysis (2026-11-11).
 
 **Not proposed, and why:**
 - **Ringing checks.** Ringing is set by layout and part values, so every board of a revision
-  rings the same unless a part is wrong. Check it once per revision with a scope (Board 5's
-  role), not per board.
+  rings the same unless a part is wrong. Check it once per revision with a scope, on a lab
+  board with leads soldered, not per board.
 - **A high-speed ADC.** A 1–3 MSPS part is only 2–6× ADC0, and still blind to MHz ringing.
   Capturing ringing needs tens of MSPS on 8 or more pins.
 - **More RAM.** Each reading is a few bytes. Image 1.7 leaves about 100 KB of the 520 KB
@@ -2440,7 +2454,7 @@ once the rest is proven.
 
 ### Verify
 
-On the first board of the revision (Board 5's role):
+On the first board of the revision, a lab board with leads soldered:
 1. **Everything side by side.** Run the full `BRINGUP_NEW_BOARD.md` with a scope, LA, DMM and
    FLIR, then the script, on the same board.
    - Every reading agrees within the instruments' accuracy.

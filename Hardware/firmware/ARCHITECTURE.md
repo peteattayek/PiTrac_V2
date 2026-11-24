@@ -275,8 +275,10 @@ be the last thing it does before the burst, not the first.**
 > **2026-10-12 — the BURST ring can start late.** On board 1, ~440 µs after the switch to BURST
 > the ring held only 122 ADC0 samples (≈ 244 µs). `adc_ring_freeze_copy()` sized its copy from
 > elapsed time, so the oldest 86 samples it returned were the IDLE ring's leftovers, and they
-> latched a false `STROBE_CLAMP`. Cause of the late start: not yet known (`adc ringtest`
-> measures it). Now the copy is bounded by the DMA's own write index as well as the clock
+> latched a false `STROBE_CLAMP`. **The cause, found the same day: the ADC ran at half rate**
+> (DIV 95; `adc_ring_math.h`), so the ring was not late. At the true 500 ksps it starts within
+> about 5 µs, and the 100-sample baseline is ready 198–200 µs after the switch (`PROGRESS.md` §6,
+> 2026-10-12). Now the copy is bounded by the DMA's own write index as well as the clock
 > (`adc_ring_math.h`). The live path waits until the ring has **written** the baseline before
 > firing, and refuses (`NOT FIRED`) if it has not within 5 ms. The baseline split is the smaller
 > of the clock count and the DMA count. The record is judged only if acquisition is proven
@@ -366,7 +368,8 @@ be the last thing it does before the burst, not the first.**
 if (!wait_both(PIN_CAM_STROBE_0, PIN_CAM_STROBE_1, HIGH, 5ms)) { ... }
 ```
 
-That is a spin loop burning a core for 100–300 µs on every shot, in the most
+That is a spin loop burning a core for 100–300 µs (the assumed t_cam; 7c.1 measured about
+0.2 µs, 2026-11-18) on every shot, in the most
 timing-sensitive window in the whole system.
 
 **Better:** a PIO SM that asserts D_Cam_Trigger, waits for both Cam_Strobe inputs
@@ -540,7 +543,7 @@ which arms the watchdog itself, cannot reach it: its CLI allowlist refuses `capt
 | Panel LEDs | PWR 5B + 50 Hz timer; **RDY off PWM entirely** | 🟢 A4; ✅ **A7** (RDY is SIO) |
 | Strobe burst | **PIO0 SM0** (base 0) + DMA | ✅ written 2026-10-02 (dry-test only); bench check 6a |
 | **Comparator transit timing** | **PIO2 SM0 (base 16)** | ✅ **A2 done** — *not* PIO0; see below |
-| **Camera trigger/strobe handshake** | **PIO1 SM0** (base 0); FIRE → PIO0 flag 4 | 🟡 A3 built 2026-11-10; 7a and 7b PASS on board 1 (2026-11-13); 7c.0 next |
+| **Camera trigger/strobe handshake** | **PIO1 SM0** (base 0); FIRE → PIO0 flag 4 | 🟡 A3 built 2026-11-10; 7a and 7b PASS on board 1 (2026-11-13); 7c.0 and 7c.1 PASS (2026-11-18), `t_cam` about 0.2 µs |
 | I²S mic | **PIO0 SM1** (base 0) + DMA | planned |
 | Detect + mic acquisition | ADC round-robin → **continuous DMA ring** | ✅ **A1 done** |
 | Strobe current capture | ADC ch0 → DMA, burst window | planned |
@@ -564,8 +567,15 @@ nothing during them.**
 Offloading is not free, and these are correctly software:
 
 - **Power FSM** — millisecond timescales, complex branching, no timing pressure.
-- **Burst schedule computation** — a few hundred µs of float math in a window the
-  camera handshake donates anyway.
+- **Burst schedule computation** — a few hundred µs of float math, done before FIRE.
+  This line used to say the camera handshake donates that window.
+  - 7c.1 measured `t_cam` at about 0.2 µs: one Mira220 in slave mode, its return on both
+    strobe inputs (2026-11-18). So it donates almost none.
+  - The window is the **first delay**: FIRE comes at the first delay whenever that is
+    longer than `t_cam`.
+  - With a first delay of 0, FIRE follows the strobes at `t_cam` + 0.087 µs, and there is
+    no window. Shot 8 detected at 0.227 µs and fired at 0.313 µs.
+  - Budget the math inside the first delay, or before the trigger (review note V112-N2).
 - **Calibration routines** — sweeps, statistics, argmax. Inherently sequential.
 - **CLI, UART protocol, config** — slow path by definition.
 - **Fault policy** — needs judgement, not determinism.

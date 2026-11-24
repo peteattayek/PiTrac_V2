@@ -2029,8 +2029,9 @@ a core spent polling.
 
 1. Comparator rising edge → transit timing starts. ~1 µs, deterministic, zero CPU.
 2. Comparator falling edge → provisional transit and v; go to FIRING immediately.
-3. Raise D_Cam_Trigger, wait for both Cam_Strobe edges. **That wait is 100–300 µs of
-   measured latency you are spending anyway.**
+3. Raise D_Cam_Trigger, wait for both Cam_Strobe edges. **That wait was assumed to be
+   100–300 µs of latency you are spending anyway.** 7c.1 measured about 0.2 µs (2026-11-18), so
+   the first delay, not the camera, sets this window.
 4. *During that wait*, post-process the ADC5 ring: find the bump peak, compute the
    50 %-of-own-peak crossings on both edges, recompute v. Amplitude-independent. Commit
    the burst schedule from the refined value.

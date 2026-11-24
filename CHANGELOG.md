@@ -11,6 +11,168 @@ Earlier history is in `git log`. This file starts with the commit after `b467166
 
 ---
 
+## 2026-11-24: firmware 1.12, Board 5, 7c.0–7c.3 with two Mira220s, and focusing by the strobe
+
+- **A route to Phase 7c.1** (PROGRESS §6, 2026-11-16).
+  - Upstream PiTrac's `feature/pico` branch switches a streaming Mira220 to slave mode with a
+    few I²C register writes after each stream start.
+  - The finding and the register sequence are recorded in PROGRESS and in
+    `BENCH_P5_P7_MIC_CAMERA.md` 7c.1.
+  - No code from upstream is copied: it is GPL-2.0-only.
+- **Phase 7c.1 written** (`BENCH_P5_P7_MIC_CAMERA.md`): the Mira220 in slave mode, triggered
+  by the board. 7c.2 (the second camera) and 7c.3 (the geometry check) are outlined.
+- **Two new Pi tools,** in `Software/camera-comparison/scripts/`; see `TRIGGER.md`:
+  - `mira220-trigger.sh` switches a streaming Mira220 between master and slave mode.
+  - `trigger-capture.sh` keeps the frames the board's triggers produce.
+  - The report is `conversion/triggered_frames.py`.
+  - Tests: `tests/test-trigger.sh`, `tests/test-trigger-capture.sh` and
+    `conversion/test_triggered_frames.py`. They ran on a PC first, and on the Pi from 2026-11-23
+    (7c.2 Step 0).
+- **7c.0 and 7c.1 analyser plans fitted to four channels** (the owner's analyser). 7c.1 moves two
+  probes, so there is a power-down between them. The capture commands wait 1800 s.
+- **7c.0 says how to set up a Pi that lacks the Mira220 driver** (board 1's did).
+- **Board 1's Pi is set up for 7c** (PROGRESS §6, 2026-11-18). The records: the sensor powers
+  down 1 s after a stream stops (trigger tool, `TRIGGER.md`, 7c.1), and a PowerShell-to-ssh
+  trap (`HANDOFF.md` §7).
+- **7c.0 PASS on board 1** (2026-11-18).
+  - 7c.1 now requires channel 5 bridged onto the trigger channel, with a new Step 0 that checks
+    the level.
+  - `WIRING_DIAGRAM.md` §7.3 now recommends the bridge.
+- **7c.1 PASS on board 1** (2026-11-18): the Mira220 in slave mode, one frame per trigger, and
+  `t_cam` about 0.2 µs, not the assumed 100–300 µs. The docs carry the measured value.
+- **`trigger-capture.sh` fix:** it lost the last frame's tail, up to 4 KB held in v4l2-ctl's
+  stdio buffer.
+  - The frames now go out on stdout, unbuffered (`stdbuf -o0 … --stream-to=-`).
+  - The test fake holds back each frame's tail the same way, and the test checks that every
+    frame is whole.
+- **Firmware image 1.12 passed independent software review** with three nonblocking wording findings. Installation on board 1 is pending: `BENCH_P8_PI.md` §8.9c.
+  - It retires the `J4: NO CAMERA (CR-09)` printouts and comments.
+  - It quotes 7c.1's measured `t_cam` (~0.2 µs) where comments assumed 100–300 µs.
+  - It makes the 1.11 review's V111-N1 (watchdog bound) and V111-N2 (late-refusal message)
+    wording changes.
+  - It adds a new host-test case, `fsm.reset_rise_in_message`: 300/300 pass.
+  - An independent build reproduced the BIN and UF2 byte-for-byte. The two version loads are
+    the only changed instructions. The review findings are recorded in `PROGRESS.md` §6.
+- **A correction:** the Mira220 driver writes `0x1001 = 0x41`, not 0. The PROGRESS 2026-11-13
+  entry and 7c.0 Step 2 said otherwise; both are corrected.
+- **The stand's geometry, and the reasons for it** (`Hardware/Stand/`; PROGRESS §6, 2026-11-19).
+  - `README.md`: each part's position relative to the ball, the optimizer's decision chain, the
+    check against the built CAD, the two timing models, and how to make a new layout.
+  - `tools/stand_geometry.py` reads the assembly STEP and the board. Its output is
+    `built/STAND_GEOMETRY_RH.csv`.
+  - `reference_003/` holds byte-exact copies of the optimizer's scene and datums.
+  - The CAD files are not in the repo yet: the assembly STEP alone is 171.7 MB.
+- **`DEVELOPER_GUIDE.md` §4.6** lists the design doc's beam and freeze geometry as not
+  reconciled with the stand.
+  - The owner confirms the sheet is about 3 cm, not the doc's 3 mm.
+  - The doc's 150 mm first-freeze distance was a loose starting value. How early the first
+    freeze can really come is limited by the live readback (~0.2 ms): `Hardware/Stand/README.md`
+    §4.1.
+- **`Hardware/README.md`** lists the stand. Its rules 1 and 4 now match the owner's 7c and
+  Phase 8 permissions.
+- **A correction:** the impact sound does not always arrive before FIRE. See PROGRESS §6,
+  2026-11-19.
+- **`Hardware/Stand/README.md` points to `Github-Personal\Faceplate\Faceplate_Design`**, outside
+  this repo: the cleaned-up optimizer, weighted020's record, and the stand's CAD.
+  - The copy reproduces the recorded scores exactly (PROGRESS §6, 2026-11-19).
+  - The README's description of the optimizer's hash checks is corrected.
+- **`PITRAC_V2_STAND_GEOMETRY.html`** (new, repo root): the stand's geometry and why it was chosen, as
+  one illustrated page. It has to-scale drawings, the decision timeline, and an interactive model of
+  the flash positions and the impact sound.
+- **`PITRAC_V2_TECHNICAL_GUIDE.html`:**
+  - Its speed text and simulator now describe the 50 %-of-peak length for the ~30 mm sheet:
+    a modelled ~38 mm, to be calibrated. 72.67 mm, set on 2026-11-19, was the full-contact
+    length and wrong for this use (PROGRESS §6, 2026-11-20).
+  - Its stand-off label now gives the built stand's 368.8 mm.
+- **`Hardware/firmware/SHOT_PATH_PLAN.md`** (new): the workbench's firmware compatibility handoff,
+  checked against the firmware and the controller file.
+  - It lists the owner's decisions D1–D8 and work packages WP0–WP6 for the detected-shot
+    path.
+  - It records the owner's direction: the first flash as soon as reasonable, at any speed
+    (§2a, D2, D8).
+  - A plan; no firmware changed.
+- **7c.3 PASS** (`BENCH_P5_P7_MIC_CAMERA.md`; desk work, 2026-11-20). With 7c.1's `t_cam`, the
+  first freeze clears the sheet at every speed. Four whole-ball freezes fit CAM0's view at
+  100 m/s if the first flash comes within 289 µs of the trailing edge (47.33 mm spacing).
+- **A correction:** the live readback's baseline is ready about 0.2 ms after the switch to
+  BURST (198–200 µs on board 1), not 0.4 ms. The 440 µs figure was a whole record, taken while
+  the ADC ran at half rate.
+  - Corrected: the plan, the Stand README, the stand page, `ARCHITECTURE.md` and
+    `DEVELOPER_GUIDE.md`.
+  - Three firmware comments wait for the next image (PROGRESS §6, 2026-11-20).
+- **The owner decided D1–D8** for the detected-shot path (`SHOT_PATH_PLAN.md` §3a; PROGRESS §8).
+  - The ADC switches to current monitoring at the trailing edge (D2).
+  - The live fallback is upstream PiTrac's driver pattern (D4).
+  - Pulse 0 is fixed at the width that keeps a 100 m/s shot sharp, about 9 µs (D8).
+  - **D3 changes a reviewed live-strobe limit:** the span rises from 30 ms to 150 ms, with only
+    the first 30 ms watched. It is made in WP5, under independent review.
+  - No firmware changed.
+- **A TXS0108E per camera** (the owner, 2026-11-20). One module fed from camera 0 would have driven
+  an unpowered camera 1, because a Mira220's 1.8 V is up only while it streams.
+  - Changed in `WIRING_DIAGRAM.md` (with a new drawing), `BRINGUP_NEW_BOARD.md` Step 13.4 and the
+    technical guide's text.
+  - The guide's Figures 2.1 and 2.2 were redrawn on 2026-11-24 with a module per camera, with
+    B5/A5 jumpered onto B1/A1 on both modules. Figure 2.2 shows each breakout pin by pin.
+- **Phase 7c.2 written** (`BENCH_P5_P7_MIC_CAMERA.md`): two Mira220s triggered by the board. No
+  firmware change.
+- **The Pi tools take two Mira220s** (`Software/camera-comparison`, `TRIGGER.md`):
+  - `configure-cameras.sh --bus N`;
+  - `trigger-capture.sh` with two `--config`;
+  - a new pair report, `conversion/triggered_pairs.py`.
+  - Tested under Git Bash on a PC: 109 + 30 + 47 checks and 17 unit tests. On the Pi
+    (2026-11-23): the 30 + 47 checks and the 17 unit tests pass.
+- **Board 5 brought up through §12** (2026-11-23). It is the COM10 board of the rework batch. The
+  partition table is in, r5 is in B and 1.12 in A.
+  - A 5 s wait after `picotool reboot -u` is now in `BRINGUP_NEW_BOARD.md` Step 1.3,
+    `BENCH_P8_PI.md` §8.7 and `HANDOFF.md` §7. A command sent sooner fails.
+  - Step 1.3 covers a board that arrives flashed flat.
+  - `BENCH_REWORK_CHECK.md` §3 now takes each board's image from `PROGRESS.md` §10, not r5 by
+    rule.
+  - The test points can be probed from the back of a powered board: no other-net pad within
+    6 mm there, and every via tented (`BRINGUP_NEW_BOARD.md` §2.1, Steps 7.1 and 12.2;
+    `HANDOFF.md` §3 rule 8).
+  - Steps 6.2 and 6.3 have a method without a scope or analyser: readback and §9 for 6.2, and
+    TP5 on a DMM for U9's clamp.
+  - **§8–§11 PASS:** phase 1320 ticks (400 ns), vref 3.270 V, Vos +6.2 mV. `BRINGUP_NEW_BOARD.md`
+    9.4 and 10.5 add Boards 4 and 5, and 10.3 accepts an ADC5 reading up to ~3700.
+  - Board 5 has no soldered leads, so `BRINGUP_NEW_BOARD.md` 12.2 and `NEXT_BOARD_REV.md` no
+    longer name it as the lab board.
+  - ADC0 at rest: "under 10 codes" was tighter than the ADC's own offset (board 1 read 9–12).
+    It is now "about 10, 12 at most", plus a DMM on TP4 (under 2 mV) for a small standing
+    current (`BRINGUP_NEW_BOARD.md` 12.3, `BENCH_P6_STROBE.md`, `BENCH_REWORK_CHECK.md`).
+  - **§12 PASS:** U5's clamp 134 µs; 9 A at level 436 (42.58 %).
+  - `BENCH_P8_PI.md` "First seating" gives R39's true edge gaps (0.38–0.57 mm, clips only). It
+    adds a no-clip equivalent: J8.37 and J8.10 read in `STANDBY` through jumper wires in the
+    empty J8 socket.
+  - **Board 1's Pi on Board 5:** one clean `on`/`off`, and 1000 link pings with 0 failed.
+  - **7c.2 Step 0 PASS:** the second camera's overlay is in, and both Mira220s are listed,
+    configured and streaming. A Pi reboot keeps the rail up.
+  - **7c.2 Steps 3–5 PASS on the firmware and Pi side** (2026-11-24): 12 handshakes, `t_cam`
+    0.207–0.240 µs, and every frame paired. A 50-shot soak followed: 50 of 50, all paired.
+    Camera 0 is on bus 10 (CAM/DISP 0). The analyser parts are still to run.
+  - **The first live session found no LED current** (2026-11-24): an open load at J3. Once the
+    owner fixed J3, 9 A solved at level 437 (42.68 %), and the flashes light both cameras.
+- **Focusing by the board's strobe** (2026-11-24, `Software/camera-comparison/FOCUS.md`):
+  - **`Hardware/firmware/tools/strobe_focus.ps1`** (new): paced live flashes, after BRINGUP
+    12.3's checks and staircase and `strobe cal`. Every pulse is judged, and it always ends with
+    `strobe live off`.
+  - **`focus-preview.sh --hold-flash`:** the preview shows the latest flash-lit frame for up to 3
+    s. Four new tests; all 66 preview tests pass on the PC and on the Pi.
+  - **`Hardware/firmware/tools/focus_meter.py`** (new): a live sharpness score of each full
+    flash-lit frame, for the peak-and-lock focus of `The_One_Board_To_Rule_Them_All.md` §18.2.
+  - Both cameras focused (2026-11-24). **`strobe_focus.ps1 -WidthUs "100,20,10"`** compares
+    pulse widths in one session. On this bench at 9 A the ball reads 90 / 17.5 / 9 codes (SNR
+    64 / 23 / 19), linear in width.
+  - **The Mira220 has no analogue gain** (the driver fixes it at 1×). **12-bit output** raised
+    the ball's SNR ×1.07–1.29, most at 10 µs, at the same 89 fps. The ball 7 cm closer: ×1.2–1.3
+    brighter, still in focus.
+- **CR-09's next-layout plan corrected** (`NEXT_BOARD_REV.md`, 2026-11-21):
+  - a translator per camera, each fed from its own camera's 1.8 V (a VDDIO pin per camera on
+    J4). One translator on a local 1.8 V regulator would drive a camera that is off;
+  - "the strobe inputs never read high" becomes "never guaranteed to read high".
+
+---
+
 ## 2026-11-16: firmware 1.11, the Pi link and updates from the Pi, Phases 6–8 on board 1
 
 Everything since `b467166` ("Working live pulses after rework", 2026-10-15).

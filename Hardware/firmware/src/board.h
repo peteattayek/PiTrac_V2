@@ -724,12 +724,15 @@
 // trigger, drop it. No answer within the timeout: the trigger drops, FAULT_CAM_
 // TIMEOUT latches, and nothing fires. All of it runs in PIO1 (cam_handshake.pio).
 //
-// 🔴 J4 STAYS OFF A CAMERA until CR-09 (the Mira220's 1.8 V I/O) is settled.
-// These numbers are for the 7a loopback and the 7b generator, both at 3.3 V.
+// 🔴 J4 is 3.3 V: a Mira220 (1.8 V I/O) goes on it only through a TXS0108E module
+// (CR-09; BENCH_P5_P7_MIC_CAMERA.md 7c).
 //
-// The timeout is the .md's wait_both(..., 5 ms). t_cam is expected at 100-300 us
-// (7c measures the real one). The first delay comes from the beam-to-FOV geometry
-// and the ball speed, which nothing computes yet: `cam shot` takes it typed.
+// The timeout is the .md's wait_both(..., 5 ms). t_cam was assumed to be 100-300 us;
+// 7c.1 MEASURED it on board 1 (2026-11-18): the Mira220 in slave mode raises its
+// strobe ~0.17 us after REQ EXP (0.21-0.24 us as this firmware counts it), so the
+// 5 ms timeout is ample. The first delay comes from the beam-to-FOV geometry and the
+// ball speed, which nothing computes yet: `cam shot` takes it typed. With t_cam
+// this short, FIRE is at the first delay in practice.
 #define CAM_TIMEOUT_US            5000u
 #define CAM_TIMEOUT_MIN_US          10u
 #define CAM_TIMEOUT_MAX_US       50000u

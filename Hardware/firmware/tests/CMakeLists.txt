@@ -117,6 +117,7 @@ if(PITRAC_PIOASM)
             reset_powering_on
             reset_settled
             reset_rise_in_wait
+            reset_rise_in_message
         )
             add_test(NAME fsm.${test} COMMAND strobe_fsm_test ${test})
         endforeach()

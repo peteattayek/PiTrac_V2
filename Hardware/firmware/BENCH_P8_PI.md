@@ -179,9 +179,22 @@ were. `cfg`: every calibration field as before the reflash; only `seq` has moved
    switched +5 V rail through J8.2/4, whatever the latch says.
 3. With everything still off, clip the DMM across **R39**: one lead on each of its two pads, DC
    volts, no GND lead. R39 is the 1 kΩ in series from GPIO43 to J8.37, not a resistor to GND.
-   It is an 0402 (pads 1.0 mm apart) about 25 mm from J8 toward the RP2354, with R86 (threshold
-   PWM) 1.0 mm and C74 1.4 mm away, all 3.3 V-level nets. PSU on. `stat` reads `STANDBY` and
-   latch 0.
+   It is an 0402 about 25 mm from J8 toward the RP2354. Edge to edge (PCB, 2026-11-23), its
+   pads are 0.48 mm apart, R86 (threshold PWM) is 0.38 mm away and C74 0.57 mm, all 3.3 V-level
+   nets. Clips only, attached unpowered: never a hand-held tip (`HANDOFF.md` §3 rule 8). PSU on.
+   `stat` reads `STANDBY` and latch 0.
+   - **No clip that fits an 0402?** Check the same thing **before step 1, with J8 empty**
+     (Board 5, 2026-11-23).
+     - PSU and USB off. Push jumper wires into J8's socket at **pins 37, 10 and 39** (GND).
+       Pin 1 is the square pad among J8's top-side joints; odd pins share its row.
+     - Power up to `STANDBY`. `pins` shows `RPI5_SHUTDOWN(43)` `released`, and `link` shows
+       `released`.
+     - DMM, **J8.37 → J8.39** and **J8.10 → J8.39: ≈ 0 V.** A released node reads near 0 V on
+       a 10 MΩ meter, while anything driving it reads ~3.3 V. Whatever would push current into a
+       seated, unpowered Pi drives these pins here.
+     - PSU and USB off, pull the wires, then go on with step 1. Skip steps 3–4's R39 reading.
+     - Don't hand-probe J8.37's top-side joint instead: it is 0.84 mm from J8.35, J8.38 and
+       J8.39.
 4. **Expect ≈ 0 V across R39:** J8.37 released (firmware from 2026-10-19), no current into the
    unpowered Pi. Any reading above a few mV is current into the Pi's GPIO26 (V / 1 kΩ): stop
    and report. Record **J8.1** (the Pi's 3V3) in STANDBY too.
@@ -604,11 +617,14 @@ Pass: all four.
 1. `bootsel` at the CLI. The `RP2350` drive appears.
 2. PowerShell, in `Hardware\firmware`: `picotool load build\pitrac_pt.uf2`, then
    `picotool reboot -u` (back to BOOTSEL, so the boot ROM reads the new table). The table
-   occupies flash sector 0; the config sectors are untouched.
+   occupies flash sector 0; the config sectors are untouched. **Then wait 5 s**
+   (`Start-Sleep -Seconds 5`) while the board re-enumerates. A picotool command sent sooner fails
+   with `...returned an error: rebooting` or `Communication with RP2350 device failed` (Board 5,
+   2026-11-23).
 3. `picotool partition info` → two partitions: 0 from 0x2000 to 0x100000, 1 from 0x100000 to
    0x1fe000, the second linked to the first as its B. Save the output.
-   The first `partition info` straight after the reboot can answer `ERROR: The RP2350 device
-   returned an error: rebooting`; run it again.
+   If it still answers `ERROR: The RP2350 device returned an error: rebooting`, wait a few
+   seconds and run it again.
 4. Drag `build/pitrac.uf2` onto the drive. It goes into **B** (above).
 5. `id` → `version  : 1.1  (partition B at 0x100000)`. `upd` →
    ```
@@ -869,6 +885,70 @@ the partner partition may hold an image that a reset would launch without a tria
   BOOTSEL launches no image: `bootsel` at the CLI or SW1+SW2, then drag `build/pitrac.uf2`,
   as in §8.7 Step 4.
 - Then `upd` should show `partner  : erased: no image`, or an older version that is `bought`.
+
+### 8.9c — Image 1.12 from the Pi (added 2026-11-18)
+
+1.12 is 1.11 with text only (`PROGRESS.md` §6, "Image 1.12"). Its independent review passed on
+2026-11-18, with three nonblocking wording notes, V112-N1–N3, queued for the next image.
+
+`build_v1.12/pitrac.bin`: Release `Nov 18 2026 15:57:13`, 243436 B, SHA256
+`DC1B64BE993A73A90986A337039912970FFB28A231909C54833C88C5A56C04EB`.
+- Its update handoff sits where 1.11's does (`s_mirror` 0x20000110, `s_notes` 0x200001b0, the
+  same sizes; confirmed by the review). So 1.11 hands over, and 1.12 reports the update and
+  powers the Pi back.
+
+| | |
+|---|---|
+| Board | Board 1 as it stands after 7c: the Pi seated, SW2 taped over, the Pi's own USB-C unplugged, PSU 5.20 V at J1 with the limit ≥ 5 A, beam off, **J3 disconnected**. 1.11 in partition A, 1.7 in B |
+| J4 | 8.9b had J4 empty. The 7c camera wiring may stay **only if the owner allows it for this step**: the Pi, and with it the camera's 1.8 V, is off through the board's reboot, and the TXS0108E isolates while VA is 0. Otherwise power down and unplug the module's J4 and J5.2 leads first |
+| USB | the PC on the board's CLI, logging to `captures/` |
+
+1. **Before, with the rail down** (`stat` → `STANDBY`), run `id`, `upd` and `hist`, and keep
+   the output.
+   - `id` → `version : 1.11 (partition A at 0x002000)`, `built : Nov 12 2026 15:42:51`, UID
+     `a764f5332ca5ac53`.
+   - `upd` → `partner  : version 1.7, bought: the fallback`.
+2. `on`. Wait for `RUNNING` and the Pi's login. On the Pi, `pitrac-link ping` → `version 1.11`.
+3. **The update.**
+   - PC, in `Hardware\firmware`: `scp build_v1.12\pitrac.bin pitrac2.local:pitrac_v1.12.bin`.
+   - Pi: `pitrac-link update pitrac_v1.12.bin`. Expect:
+     - `image    : pitrac_v1.12.bin, 243436 B, version 1.12, try-before-you-buy, SHA-256
+       dc1b64be993a73a9`;
+     - `board    : version 1.11 (built Nov 12 2026 15:42:51) at 0x002000; installs into
+       0x100000`;
+     - no `NOTE` line, since 1.12 is newer.
+   - Answer `y` only if the SHA-256 matches.
+   - **Then, as 8.9 Steps 1–2:**
+     - the Pi shuts down, after 1.11's 10 s holdoff;
+     - `update: the Pi is off: installing into the other partition`, and ~3 s later
+       `update: installed and verified; rebooting into it on trial`;
+     - the USB port drops at the reboot: reconnect the serial monitor;
+     - `update: the new image runs and has bought itself`, then `update: powering the Pi back
+       on`.
+
+     About 35 s from `y` to the Pi's login.
+4. **When the Pi is back:**
+   - Pi: `pitrac-link upd-status` → `installed, 1.11 -> 1.12` and `it ran on trial and bought
+     itself`. `pitrac-link info` → `version  : 1.12`, built `Nov 18 2026 15:57:13`.
+   - Board:
+     - `id` → `version : 1.12 (partition B at 0x100000)`, `built : Nov 18 2026 15:57:13`, the
+       same UID;
+     - `upd` → `this image in partition B`, `ON TRIAL: bought itself` and `partner  : version
+       1.11, bought: the fallback`. 1.7 is gone from B;
+     - `hist` → `this boot : flash update boot (a UF2 load, or an update from the Pi)`. The Pi
+       shutdown requests and `...read down in time` are each +1 from Step 1, and the power cuts
+       to a powered Pi are unchanged.
+5. **The 1.12 text:**
+   - `help`: the Phase 7 lines read `J4 is 3.3 V: a Mira220 only through a` / `TXS0108E module
+     (CR-09)`.
+   - `cam`: `J4       : 3.3 V. A Mira220 only through a TXS0108E module (CR-09);` then `t_cam
+     ~0.2 us measured with one (7c.1, 2026-11-18).`
+   - Neither prints `NO CAMERA`.
+
+Pass: 3–5 as written.
+
+**If `upd-status` reads `ROLLED BACK, 1.11 -> 1.12`,** or the result is `INSTALL FAILED`: stop,
+and follow the last two paragraphs of 8.9b with 1.11 for 1.2. The board runs 1.11 from A again.
 
 ---
 

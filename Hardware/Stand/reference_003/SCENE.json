@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "name": "weighted020 strobe repair Z=200 pitch=-16; PCB pupil14 provisional",
+  "base_preset_id": "vertical-fixed",
+  "components": {
+    "CAM0": {
+      "pose": {
+        "position_mm": [
+          0.0,
+          39.3,
+          64.1
+        ],
+        "quaternion_xyzw": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "focus_mm": 390.0,
+      "pupil_mm": 13.70619
+    },
+    "CAM1": {
+      "pose": {
+        "position_mm": [
+          0.0,
+          39.583927605969,
+          300.0
+        ],
+        "quaternion_xyzw": [
+          -0.1908089953765448,
+          0.0,
+          0.0,
+          0.981627183447664
+        ]
+      },
+      "focus_mm": 388.2452687743295,
+      "pupil_mm": 13.70619
+    },
+    "STROBE": {
+      "pose": {
+        "position_mm": [
+          0.0,
+          30.0,
+          200.0
+        ],
+        "quaternion_xyzw": [
+          -0.13917310096006544,
+          0.0,
+          0.0,
+          0.9902680687415704
+        ]
+      },
+      "focus_mm": null,
+      "pupil_mm": null
+    },
+    "TRIGGER": {
+      "pose": {
+        "position_mm": [
+          0.0,
+          3.4,
+          110.0
+        ],
+        "quaternion_xyzw": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "focus_mm": null,
+      "pupil_mm": null
+    }
+  },
+  "docks": {
+    "RH": {
+      "position_mm": [
+        65.0,
+        -408.1,
+        -2.5
+      ],
+      "quaternion_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    "LH": {
+      "position_mm": [
+        65.0,
+        408.1,
+        -2.5
+      ],
+      "quaternion_xyzw": [
+        0.0,
+        0.0,
+        1.0,
+        6.123031769111886e-17
+      ]
+    }
+  },
+  "trigger_mode": "fixed",
+  "trigger_poses": {
+    "RH": {
+      "position_mm": [
+        0.0,
+        3.4,
+        110.0
+      ],
+      "quaternion_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    "LH": {
+      "position_mm": [
+        0.0,
+        3.4,
+        110.0
+      ],
+      "quaternion_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  },
+  "ball": {
+    "driver": {
+      "x_mm": 0.0,
+      "y_mm": 0.0,
+      "z_mm": 40.0
+    },
+    "mid-iron": {
+      "x_mm": 0.0,
+      "y_mm": 0.0,
+      "z_mm": 21.335
+    },
+    "wedge": {
+      "x_mm": 0.0,
+      "y_mm": 0.0,
+      "z_mm": 21.335
+    },
+    "pitch/chip": {
+      "x_mm": 0.0,
+      "y_mm": 0.0,
+      "z_mm": 21.335
+    },
+    "lob/flop": {
+      "x_mm": 0.0,
+      "y_mm": 0.0,
+      "z_mm": 21.335
+    }
+  },
+  "controller": {
+    "id": "local:f0c2fc12a29a7a399b6e0e568c06a919e07c6375488fa0e6aa4612b8c3214771",
+    "spacing_mm": 47.33104039666575,
+    "readiness_us": 25.0,
+    "delay_us": 0.0,
+    "fallback_family": "flat15",
+    "fallback_pulses": 10
+  }
+}

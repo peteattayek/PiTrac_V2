@@ -12,8 +12,11 @@ and keeps the docs true.
 2. **`Hardware/firmware/PROGRESS.md` §0** (status table) and **the top block of §10** (the live
    resume point). §10 wins over any other doc about board state.
 3. The `Hardware/firmware/BENCH_*.md` procedure for the phase in hand (today:
-   `BENCH_P5_P7_MIC_CAMERA.md` 7c.0 on board 1: a Pi seated and one camera through a
-   TXS0108E module; 7a and 7b passed 2026-11-13. `BENCH_P8_PI.md` §8.10 passed 2026-11-12).
+   `BENCH_P5_P7_MIC_CAMERA.md` 7c on board 1: 7c.0 and 7c.1 passed 2026-11-18, with the Mira220
+   triggered by the board through a TXS0108E module; 7c.2, the second camera (a module each), is
+   next, now on Board 5 with board 1's Pi (Step 0 passed 2026-11-23);
+   7c.3, the geometry check, passed 2026-11-20 (desk work).
+   `BENCH_P8_PI.md` §8.10 passed 2026-11-12).
 
 `DEVELOPER_GUIDE.md` (repo root) is the whole-repo map. `HARDWARE_REFERENCE.md` is generated from
 the netlist. When a doc and the netlist disagree, the netlist is right.
@@ -28,7 +31,7 @@ the netlist. When a doc and the netlist disagree, the netlist is right.
 - After any change, audit the docs **and** the firmware's printed output and comments for
   anything stale; run `python Hardware/firmware/tools/check_doc_links.py`.
 - Safety: nothing conductive near **D12 (36 V)**; **GPIO27 `PULSE_LIMIT_DISABLE` stays 0**; a camera
-  on J4 **only for 7c, and only through a TXS0108E module**; a Pi on J8 **only for Phase 8 and
+  on J4 **only for 7c, and only through a TXS0108E module, one per camera**; a Pi on J8 **only for Phase 8 and
   7c** (owner, 2026-11-09 and 2026-11-13), with SW2 taped over and the Pi's own USB-C unplugged; beam duty ≤ 25 %; never run +5 V from USB; attach probes only with
   the board unpowered (PSU and USB off); **never raise a live-strobe limit to make a test pass**.
 

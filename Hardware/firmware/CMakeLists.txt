@@ -142,12 +142,15 @@ target_link_libraries(pitrac
 # pass (V110-F1: `reset`/`bootsel` checked, then waited 50 ms and rebooted without
 # checking again); it never left this PC. 1.11 (2026-11-12): 1.10 with the guard
 # checked again after that wait, immediately before the reboot, the watchdog
-# disarmed only then, and no plain reset while the board is POWERING_ON.
+# disarmed only then, and no plain reset while the board is POWERING_ON. 1.12
+# (2026-11-18): text only -- the `J4: NO CAMERA (CR-09)` printouts and comments
+# retired after 7c, t_cam's measured ~0.2 us in comments, and the 1.11 review's
+# two wording notes (V111-N1 watchdog bound, V111-N2 late-refusal message).
 # Images before
 # 1.1 carry no version and do not run from a partition: never load one onto a
 # converted board.
 set(PITRAC_FW_VERSION_MAJOR 1)
-set(PITRAC_FW_VERSION_MINOR 11)
+set(PITRAC_FW_VERSION_MINOR 12)
 pico_set_binary_version(pitrac MAJOR ${PITRAC_FW_VERSION_MAJOR} MINOR ${PITRAC_FW_VERSION_MINOR})
 
 # Try before you buy (fw_update.h): the boot ROM runs this image only on a

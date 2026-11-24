@@ -5,22 +5,24 @@ set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/common.sh"
 
-output= exposure=1000 gain=1 selection=both mira_depth=8 apply=0 calculate=0
+output= exposure=1000 gain=1 selection=both mira_depth=8 apply=0 calculate=0 bus=
 while (($#)); do
     case $1 in
         --help)
             echo "Usage: bash configure-cameras.sh --output NEW_DIR --apply [--camera both|mira220|imx296]"
             echo "       [--exposure-us 1000] [--gain 1]"
             echo "       [--mira-bit-depth 8|12] (12: pupil preview/stills only, not video comparison)"
+            echo "       [--bus N] (with two Mira220s: the one named 'mira220 N-0054'; --camera mira220)"
             echo "       bash configure-cameras.sh --calculate [--exposure-us 1000]"
             echo "--calculate is offline; --apply resets mutable links only on each selected CFE graph."
+            echo "Two Mira220s (PiTrac V2 stereo): configure each into its own directory with --bus."
             exit 0 ;;
-        --output|--exposure-us|--gain|--camera|--mira-bit-depth)
+        --output|--exposure-us|--gain|--camera|--mira-bit-depth|--bus)
             (($# >= 2)) || die "Missing value for $1"
             case $1 in
                 --output) output=$2 ;; --exposure-us) exposure=$2 ;;
                 --gain) gain=$2 ;; --camera) selection=$2 ;;
-                --mira-bit-depth) mira_depth=$2 ;;
+                --mira-bit-depth) mira_depth=$2 ;; --bus) bus=$2 ;;
             esac
             shift 2 ;;
         --apply) apply=1; shift ;;
@@ -32,6 +34,8 @@ done
 [[ $selection == both || $selection == mira220 || $selection == imx296 ]] || die "Invalid camera selection."
 [[ $mira_depth == 8 || $mira_depth == 12 ]] || die "Mira220 bit depth must be 8 or 12."
 [[ $mira_depth == 8 || $selection != imx296 ]] || die "12-bit selection requires Mira220."
+[[ -z $bus || ( $bus =~ ^[0-9]{1,3}$ && $selection == mira220 ) ]] ||
+    die "--bus N chooses one Mira220 by its I2C bus: a number, with --camera mira220."
 validate_shared_exposure "$exposure"
 sensors=(mira220 imx296)
 [[ $selection == both ]] || sensors=("$selection")
@@ -55,16 +59,11 @@ shopt -s nullglob
 devices=(/dev/media*)
 declare -A graphs=() entities=()
 for sensor in "${sensors[@]}"; do
-    count=0
-    for device in "${devices[@]}"; do
-        graph=$(media-ctl -d "$device" -p) || die "Cannot inspect $device"
-        if entity=$(sensor_entity "$sensor" <<< "$graph"); then
-            ((count+=1))
-            graphs[$sensor]=$device
-            entities[$sensor]=$entity
-        fi
-    done
-    ((count == 1)) || die "Expected exactly one $sensor; found $count. Run inspection first."
+    sensor_bus=
+    if [[ $sensor == mira220 ]]; then sensor_bus=$bus; fi
+    hit=$(find_sensor "$sensor" "$sensor_bus" "${devices[@]}") || exit 1
+    graphs[$sensor]=${hit%%$'\t'*}
+    entities[$sensor]=${hit#*$'\t'}
 done
 if ((${#sensors[@]} == 2)); then
     [[ ${graphs[mira220]} != "${graphs[imx296]}" ]] || die "Cameras must use separate CFE receivers."

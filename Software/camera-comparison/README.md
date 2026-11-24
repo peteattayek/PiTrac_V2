@@ -20,6 +20,9 @@ A [public Mira220 Pi 5/CFE streaming failure][mira-issue] remains open as of
 2026-09-17. A compiled module, compiled overlay, successful probe, or
 `CONFIGURED` message is not proof of capture.
 
+**Triggered capture** (PiTrac V2 bench 7c.1): the board triggers the Mira220 in slave mode.
+See [TRIGGER.md](TRIGGER.md) for `trigger-capture.sh` and `mira220-trigger.sh`.
+
 ## Contents
 
 1. [What this setup records](#what-this-setup-records)
@@ -431,6 +434,9 @@ alternative; use only the pair matching the physical sockets.
 Omit trigger-mode and `always-on` options. Confirm that no
 included file or later conditional section re-enables conflicting overlays or
 auto-detection. Do not append a second copy blindly or change unrelated settings.
+
+For **two Mira220s** (PiTrac V2 stereo, bench 7c.2), use `dtoverlay=mira220-nir,cam0` and
+`dtoverlay=mira220-nir`, and no IMX296 overlay. [`TRIGGER.md`](TRIGGER.md) has the tools.
 
 For an **IMX296-only early test**, enable only the stock IMX296 camera overlay
 with auto-detection disabled. Leave the Mira220 overlay disabled until its

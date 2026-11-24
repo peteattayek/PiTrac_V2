@@ -881,8 +881,10 @@ adc ringtest 100
 ```
 
 **Pass:**
-- `ch0 = ` **< 10 codes** (< 8 mV at the pin, < 60 mA). ❌ Anything higher: stop. GPIO40 is not
-  seeing TP4 (R32 4k7 is the only path).
+- `ch0 = ` **about 10 codes, 12 at most** (≤ 10 mV at the pin): the ADC's own offset. Board 1
+  read 9 (2026-10-12), Board 5 10 (2026-11-23). ❌ Higher: stop. Hundreds of codes means GPIO40
+  is not seeing TP4 (R32 4k7 is the only path). A small standing current hides inside the
+  offset, so read TP4 itself on a DMM: under 2 mV (15 mA).
 - `adc ringtest 5`: `written at` shows **2 µs per sample** (`+400:200`, `+800:400`); 4 µs
   per sample means the ADC is at half rate (the `13:55:58` image and earlier). Every run's
   `100 written` time is about 200 µs, well inside the 5000 µs the live path allows, and its `first … samples` are all ~10 codes (ADC0 at 0 A). Both its pairs, `warm

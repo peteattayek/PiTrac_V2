@@ -140,6 +140,27 @@ sensor_entity() {
         END { if (n != 1) exit 2 }
     '
 }
+# find_sensor SENSOR BUS DEVICE... -> "DEVICE<TAB>ENTITY" for the one SENSOR among the media
+# graphs, or for the one on I2C bus BUS when BUS is given ('mira220 <bus>-0054'). Two Mira220s
+# (PiTrac V2 stereo, bench 7c.2) need BUS to choose; it dies naming the ones it found.
+find_sensor() {
+    local sensor=$1 bus=$2 device graph entity
+    shift 2
+    local -a hits=() all=()
+    for device in "$@"; do
+        graph=$(media-ctl -d "$device" -p) || die "Cannot inspect $device"
+        entity=$(sensor_entity "$sensor" <<< "$graph") || continue
+        all+=("$entity")
+        [[ -z $bus || $entity == "$sensor $bus-"* ]] || continue
+        hits+=("$device"$'\t'"$entity")
+    done
+    if ((${#hits[@]} > 1)) && [[ -z $bus ]]; then
+        die "Found ${#hits[@]} ${sensor}s ($(IFS=,; printf '%s' "${all[*]}")): choose one with --bus N."
+    fi
+    ((${#hits[@]} == 1)) ||
+        die "Expected exactly one $sensor${bus:+ on I2C bus $bus}; found ${#hits[@]}${all[*]:+ (${all[*]} present)}. Run inspection first."
+    printf '%s\n' "${hits[0]}"
+}
 has_cfe_raw_source_pad() {
     awk '
         /- entity [0-9]+:/ { csi = ($0 ~ /- entity [0-9]+: csi2 \(/) }

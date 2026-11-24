@@ -230,7 +230,9 @@ bool adc_ring_probe(adc_ring_probe_t *p);
 // adc_ring_history() copies, and copying is too slow for the firing path: 8192
 // samples of strided modular indexing costs several hundred microseconds, and
 // the whole point of doing the ADC refinement during the camera handshake is
-// that it has to fit inside a 100-300 us window.
+// that it has to fit inside the time before FIRE. That window was assumed to be
+// the camera's 100-300 us; 7c.1 measured t_cam at ~0.2 us (2026-11-18), so the
+// first delay sets it now.
 //
 // This is the same data with no copy at all -- an O(1) snapshot of where the
 // ring currently is, plus an inline accessor. Analysis reads samples in place.

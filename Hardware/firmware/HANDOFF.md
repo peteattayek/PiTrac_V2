@@ -105,7 +105,12 @@ explicit decision from the owner.
    **Check the PCB, not memory:** pad positions and the nearest other-net copper come from
    `The_One_Board_To_Rule_Them_All.kicad_pcb` (parse it; §7), and `PROGRESS.md` already
    records several (R61, R64, R65, TP2, TP3, TP4). The 2026-10-07 R65 ground advice ignored a
-   gap that was already written down (§6 2026-10-08). The current lead plan, with a
+   gap that was already written down (§6 2026-10-08). **The test points are fine from the
+   back** (2026-11-23):
+   - TP1–TP10 are through-hole, and on the back no other-net pad lies within 6 mm;
+   - every via is tented. The nearest are mask-covered GND vias: TP8 0.45 mm, TP3 0.62 mm,
+     TP10 1.24 mm;
+   - so read them from the back with a hand-held tip (`BRINGUP_NEW_BOARD.md` §2.1). The current lead plan, with a
    do-not-solder list, is in `BENCH_P6_STROBE.md` 6c, "Leads to solder for 6c/6d".
 9. 🔴 **Live strobe current (6c onward) is the most dangerous thing on this board** — up to ~9 A
    from 36 V through Q9 in linear mode. It happens only in firmware LIVE mode
@@ -144,7 +149,7 @@ $env:PATH = "$env:USERPROFILE\.pico-sdk\ninja\v1.13.2;$env:USERPROFILE\.pico-sdk
 arm-none-eabi-size build\pitrac.elf
 ```
 
-**Host tests** (native, MSVC, separate `tests/build`; 299 cases as of 2026-11-12, image 1.11). Run
+**Host tests** (native, MSVC, separate `tests/build`; 300 cases as of 2026-11-18, image 1.12). Run
 them after any change to `power_fsm.c`, `strobe_plan.c`, `strobe_live.c`, `service.c`,
 `telemetry.c`, `config_store.c`, `cal_math.c`, `adc_ring_math.h`, `fw_update.c`, `link_frame.c`,
 `link_proto.c`, `sha256.c`, `cam_plan.c`, `strobe.c`, `camera.c`, `shot.c`, `cli.c`'s `gpio`,
@@ -182,8 +187,15 @@ box. Don't rebuild a handed-over image just to check it: a doc-only change needs
 the boot ROM compares it between the two A/B partitions. **Bump the minor for every image that
 leaves this PC.** An image no newer than the running one still installs, but buying it erases
 the other partition's image whenever the old one would otherwise win the next normal boot: always for an older version, and for an equal one when the old image is in A (equal versions boot A). Then there is no fallback.
-`CMakeLists.txt` says **1.11** (2026-11-12). The minor is a number: 1.10 and 1.11 are above
-1.9.
+`CMakeLists.txt` says **1.12** (2026-11-18). The minor is a number: 1.10, 1.11 and 1.12 are
+above 1.9.
+- 1.12 is 1.11 with text only:
+  - the `J4: NO CAMERA (CR-09)` printouts and comments retired after 7c;
+  - 7c.1's measured `t_cam` in comments;
+  - V111-N1/N2's wording.
+  300/300 host tests and 2/2 mutations. Its machine code is identical to 1.11 apart from the
+  version constant. **Independent software review PASS with wording notes**
+  (`PROGRESS.md` §6, "Image 1.12"). On Board 5 since 2026-11-23 (partition A; r5 in B).
 - 1.11 is 1.10 with V110-F1 fixed. `reset` and `bootsel` check again after their 50 ms
   output wait, immediately before the reboot, and disarm the watchdog only then. They
   refuse while the board is POWERING_ON. 299/299 host tests, 30/30 mutations.
@@ -222,7 +234,7 @@ the other partition's image whenever the old one would otherwise win the next no
   rebuild them.
 - Later images are built apart, in `build_v<version>/`: `build_v1.2/`, `build_hang_v1.2/`,
   `build_v1.3/`, `build_v1.5/`, `build_v1.6/` (rejected), `build_v1.7/`, `build_v1.8/` (rejected),
-  `build_v1.9/` (rejected), `build_v1.10/` (rejected) and `build_v1.11/`.
+  `build_v1.9/` (rejected), `build_v1.10/` (rejected), `build_v1.11/` and `build_v1.12/` (review passed).
   They are
   gitignored (`PROGRESS.md` §6).
 A build folder reused for unreviewed work no longer holds what was reviewed: give the next image
@@ -368,11 +380,13 @@ design respin would change it, it is done once.
 | **Python 3.14 / numpy 2.x**: `ndarray.ptp()` is gone. | Use `np.ptp(arr)`. |
 | **Primary shell is PowerShell 5.1**; bash (Git Bash) is also available. | Don't mix their syntax in one command. No `&&`/`||` in PowerShell 5.1: use `;` and `if ($?) { ... }`. |
 | **Piping a Python script into `python -` from PowerShell mangles non-ASCII** (emoji, `—`, `µ`, `§`): the match string no longer matches, or the file gets `?` written into it. | Keep piped scripts' search strings ASCII-only, or write the script to a file first; for edits around emoji, use a plain editor/edit tool. Assert one match before replacing. |
+| **PowerShell 5.1 to `ssh` (the Pi, host `pitrac2` in `~/.ssh/config`)**: double quotes inside the remote command are stripped, so `$(...)`, `|` and quoted words break; and text piped into `ssh` arrives with a UTF-8 BOM in front and a CR at the end (a sudo password piped that way is rejected, 2026-11-18). | Write each remote step as a bash script with the file-writing tool, `scp` it, and run `ssh -o BatchMode=yes pitrac2 bash <script>`. Strip `\xEF\xBB\xBF` and `\r` from anything a remote script reads from stdin. |
 | **.NET file calls in PowerShell (`[IO.File]::ReadAllText("rel\path")`) resolve relative paths against the process directory, not the PowerShell location.** | Always pass absolute paths to `[IO.File]` methods. |
 | **Host tests build with MSVC `/W4 /WX`**: a runtime check on a compile-time constant (`CHECK(CONST_A <= CONST_B)`) is warning C4127 → error. | Use file-scope `_Static_assert` for relations between `board.h` constants; keep `CHECK` for computed values. |
 | **KiCad 10 `.kicad_pcb` syntax**: a pad's net is `(net "GND")` with no net number (older parsers expect `(net 12 "GND")`); pad `(at x y rot)` is relative to the footprint and must be rotated by the footprint's angle (positive = counter-clockwise on screen, y down). The JLC CPL CSV has **no test points** (TP1–TP6). | Parse footprints between `\n\t(footprint "` markers; read positions from the `.kicad_pcb`, not the CPL. Verify a pad position against one known part before trusting the rest. |
 | **The netlist says what should connect, not what the copper does.** J8.17 is on +3V3_Pi5 in the netlist but has no copper; a bench step built on the netlist failed (2026-10-30, `NEXT_BOARD_REV.md` CR-27). | Before telling the owner two pads connect, run `& "C:/Program Files/KiCad/10.0/bin/kicad-cli.exe" pcb drc --format json --severity-all -o <scratchpad>/drc.json <the .kicad_pcb>` (read-only) and check `unconnected_items`; on these boards J8.17 is the only one. The fab gerbers name each copper object's net (`%TO.N,<net>*%`). |
 | **The view tool / an editor can show stale content right after a write.** | Verify an edit with a search, not by re-reading the view. |
+| **`picotool reboot -u` returns before the board has re-enumerated.** The next command fails: `...returned an error: rebooting`, or `Communication with RP2350 device failed` (Board 5, 2026-11-23). | `Start-Sleep -Seconds 5` after every `reboot -u`, before the next picotool command. A failed command wrote nothing; repeat it. |
 
 ---
 
@@ -486,7 +500,7 @@ Every one of these produced a confident wrong answer at least once.
 | Mic / ADC captures from `scope.py`, and **Serial Monitor logs** (`COM<n>_<date>.txt`) | `Hardware/firmware/captures/` — gitignored |
 | Screenshots and scope photos | owner's `Downloads` folder, usually `Photos-1-001 (<n>)\`, supplied per question; they stay there (§6 entries record the folder) |
 | Instruments | listed in `PROGRESS.md` §0 "Bench equipment" (MSO54B 500 MHz, TDS 1002, Saleae Logic Pro 8, DMM, PSU, FLIR) |
-| Host analysis tools | `tools/scope.py` (captures), `tools/la_phase.py` (LA phase CSVs), `tools/pilot_analysis.py` (one triggered ADC5 pass: peak, FWHM, clipping — §3.7), `tools/netlist_report.py`, `tools/check_doc_links.py`, `tools/p8_cycles.ps1` (BENCH_P8_PI.md 8.5: the 20 Pi boot/shutdown cycles over the CLI) |
+| Host analysis tools | `tools/scope.py` (captures), `tools/la_phase.py` (LA phase CSVs), `tools/pilot_analysis.py` (one triggered ADC5 pass: peak, FWHM, clipping — §3.7), `tools/netlist_report.py`, `tools/check_doc_links.py`, `tools/p8_cycles.ps1` (BENCH_P8_PI.md 8.5: the 20 Pi boot/shutdown cycles over the CLI), `tools/strobe_focus.ps1` (live: paced LED flashes for focusing the lenses, with `focus-preview.sh --hold-flash`), `tools/focus_meter.py` (the sharpness score for it) |
 
 ---
 

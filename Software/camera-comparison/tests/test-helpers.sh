@@ -61,6 +61,40 @@ printf '%s\n' '- entity 42: mira220 6-0054 (1 pad, 1 link)' > "$work/topology.tx
 equal "$(sensor_entity mira220 < "$work/topology.txt")" 'mira220 6-0054'
 printf '%s\n' '- entity 52: mira220 4-0054 (1 pad, 1 link)' >> "$work/topology.txt"
 fails sensor_entity mira220 < "$work/topology.txt"
+# find_sensor: one sensor per receiver graph; two Mira220s (bench 7c.2) need a bus to choose.
+mkdir -p "$work/fakebin" "$work/graphs"
+cat > "$work/fakebin/media-ctl" <<'FAKE'
+#!/usr/bin/env bash
+[[ $1 == -d && $3 == -p ]] || exit 9
+cat "$FAKE_GRAPHS/${2#/dev/}"
+FAKE
+chmod +x "$work/fakebin/media-ctl"
+printf '%s\n' '- entity 1: csi2 (8 pads, 8 links, 0 routes)' \
+    '- entity 16: mira220 11-0054 (1 pad, 1 link, 0 routes)' > "$work/graphs/media0"
+printf '%s\n' '- entity 1: csi2 (8 pads, 8 links, 0 routes)' \
+    '- entity 16: mira220 10-0054 (1 pad, 1 link, 0 routes)' > "$work/graphs/media1"
+printf '%s\n' '- entity 1: pispbe (1 pad, 1 link, 0 routes)' > "$work/graphs/media2"
+saved_path=$PATH
+export PATH="$work/fakebin:$PATH" FAKE_GRAPHS="$work/graphs"
+equal "$(find_sensor mira220 11 /dev/media0 /dev/media1 /dev/media2)" "/dev/media0"$'\t'"mira220 11-0054"
+equal "$(find_sensor mira220 10 /dev/media0 /dev/media1 /dev/media2)" "/dev/media1"$'\t'"mira220 10-0054"
+equal "$(find_sensor mira220 "" /dev/media1 /dev/media2)" "/dev/media1"$'\t'"mira220 10-0054"
+fails find_sensor mira220 "" /dev/media0 /dev/media1 /dev/media2
+grep -Fq 'Found 2 mira220s (mira220 11-0054,mira220 10-0054): choose one with --bus N.' "$work/negative.stderr" ||
+    die "No advice to choose a bus: $(cat "$work/negative.stderr")"
+((checks+=1))
+fails find_sensor mira220 1 /dev/media0 /dev/media1
+grep -Fq 'Expected exactly one mira220 on I2C bus 1; found 0' "$work/negative.stderr" ||
+    die "Bus 1 does not match bus 11 or 10: $(cat "$work/negative.stderr")"
+((checks+=1))
+fails find_sensor imx296 "" /dev/media0 /dev/media1
+fails find_sensor mira220 "" /dev/media2
+PATH=$saved_path
+fails bash "$SCRIPTS/configure-cameras.sh" --calculate --camera imx296 --bus 4
+fails bash "$SCRIPTS/configure-cameras.sh" --calculate --camera both --bus 4
+fails bash "$SCRIPTS/configure-cameras.sh" --calculate --camera mira220 --bus x
+bash "$SCRIPTS/configure-cameras.sh" --calculate --camera mira220 --bus 11 > "$work/bus-calculate.txt"
+((checks+=1))
 cat > "$work/cfe-topology.txt" <<'EOF'
 - entity 1: csi2 (8 pads, 8 links, 0 routes)
         pad0: SINK

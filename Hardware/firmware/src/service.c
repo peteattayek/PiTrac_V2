@@ -32,10 +32,12 @@ static volatile bool s_abort;
 static uint32_t s_fault_gen_at_entry;
 
 // Watchdog period. Must comfortably exceed the longest gap between two
-// pitrac_service() calls. The worst case is a single yield slice (5 ms) plus
-// whatever one FSM step and one printf cost, so 1 s is three orders of
-// magnitude of headroom -- deliberately, because the failure mode of being too
-// tight is a spurious power cut to a Pi.
+// pitrac_service() calls. The board's own worst case is a single yield slice
+// (5 ms) plus one FSM step, so 1 s is three orders of magnitude of headroom --
+// deliberately, because the failure mode of being too tight is a spurious power
+// cut to a Pi. Output is NOT inside that bound: printf waits on USB, and a host
+// that stalls or trickles can hold one longer than a second (image 1.12, review
+// note V111-N1). Do not arm the watchdog with a powered Pi on this margin.
 #define WATCHDOG_MS 1000u
 
 static bool s_wdog_on;

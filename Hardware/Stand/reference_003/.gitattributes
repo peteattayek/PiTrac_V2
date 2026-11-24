@@ -1,0 +1,4 @@
+# Byte-exact copies of the optimizer's reference_003 outputs. Their SHA-256 values are
+# recorded in Hardware/Stand/README.md and in the source OUTPUT_MANIFEST.json; line-ending
+# normalisation would change them. Keep every file here as-is.
+* -text

@@ -207,6 +207,7 @@ PiTrac_V2/
 ├── LIGHT_SHEET_TRIGGER_THEORY.md  the IR light-sheet trigger's theory and ball-speed estimation
 ├── PITRAC_V2_VS_V1.md             this board compared with the current PiTrac
 ├── PITRAC_V2_TECHNICAL_GUIDE.html single-page reference combining the three above
+├── PITRAC_V2_STAND_GEOMETRY.html  the stand's geometry and why it was chosen (illustrates Hardware/Stand)
 ├── LICENSE                        GPL-3.0 text (firmware, host tools, Software/)
 ├── LICENSES/CERN-OHL-S-2.0.txt    CERN-OHL-S v2 text (board design)
 ├── LICENSING.md                   which licence covers what, and why
@@ -224,13 +225,17 @@ PiTrac_V2/
 │   │   ├── Library.pretty/, RP2350_80QFN_minimal.pretty/, fp-lib-table        footprints
 │   │   └── jlcpcb/                                          gerber/, production_files/ (BOM, CPL and
 │   │                                                        gerber zip as sent to fab), project.db
+│   ├── IR_LED_Strobe/               separate J3 emitter PCB: 20 LED positions, middle 10 fitted
+│   ├── Calibration/                 camera-distortion procedure, ChArUco targets, session records
+│   ├── Stand/                       the stand: each part's position relative to the ball, why the
+│   │                                optimizer chose it, the check against the built CAD
 │   └── firmware/                    RP2354B firmware: C11, Pico SDK 2.3.0, ARM
 │       ├── CMakeLists.txt           forces PICO_BOARD=pitrac_ltb_v1, PICO_PLATFORM=rp2350
 │       ├── pico_sdk_import.cmake
 │       ├── boards/pitrac_ltb_v1.h   SDK board header: RP2350B (48 GPIO), 2 MB flash, 12 MHz XOSC, UART1
 │       ├── src/                     26 C modules + 4 PIO programs (§7.4)
 │       ├── tests/                   native host tests (CMake + CTest, mocks/), and pio_sim.c, which runs the PIO programs (§6.6)
-│       ├── tools/                   netlist_report.py, scope.py, la_phase.py, pilot_analysis.py, check_doc_links.py, openocd_pi5.cfg, flash_swd.sh, p8_cycles.ps1, pulsegen/
+│       ├── tools/                   netlist_report.py, scope.py, la_phase.py, pilot_analysis.py, check_doc_links.py, openocd_pi5.cfg, flash_swd.sh, p8_cycles.ps1, strobe_focus.ps1, focus_meter.py, pulsegen/
 │       ├── pi/                      the Pi's side: RPI5_ON unit, shutdown hook, pitrac_link.py (serial link + updater)
 │       └── *.md                     bring-up record and procedures (§3.3)
 │
@@ -293,10 +298,13 @@ developer:
 | [`BENCH_P3_DETECT.md`](Hardware/firmware/BENCH_P3_DETECT.md) | Phases 3–4, the largest document. Run order is 3.5 → 3.6b → 3.6 → 3.7 | Detection-chain work |
 | [`BENCH_P5_P7_MIC_CAMERA.md`](Hardware/firmware/BENCH_P5_P7_MIC_CAMERA.md) | Phases 5 and 7 | Mic or cameras |
 | [`BENCH_P6_STROBE.md`](Hardware/firmware/BENCH_P6_STROBE.md) | Phase 6: 9 A, linear-mode FET. **Read fully before powering** | Writing strobe firmware |
+| [`SHOT_PATH_PLAN.md`](Hardware/firmware/SHOT_PATH_PLAN.md) | The detected-shot path: the workbench's firmware handoff checked, the owner's decisions, work packages WP0–WP6 | Before writing shot-path firmware |
 | [`BENCH_P8_PI.md`](Hardware/firmware/BENCH_P8_PI.md) | Phase 8: the gate checklist, Q4/Q7/Q10/Q11, 20-cycle shutdown acceptance, halt-telemetry design | Pi integration |
 | [`NEXT_BOARD_REV.md`](Hardware/firmware/NEXT_BOARD_REV.md) | Hardware change requests CR-01…CR-29 and layout rules | Anything that looks like a board bug |
 | [`SETUP.md`](Hardware/firmware/SETUP.md) | Toolchain install, VS Code route and manual route | Setting up a machine |
 | [`The_One_Board_To_Rule_Them_All.md`](Hardware/The_One_Board_To_Rule_Them_All.md) | Original design document | For the concept; then see [§4.6](#46-where-the-design-document-is-out-of-date) |
+| [`Hardware/Stand/README.md`](Hardware/Stand/README.md) | The stand: where the cameras, strobe, trigger, board and mic sit relative to the ball; why the optimizer chose that layout; the check against the built CAD; how to make a new layout | Anything that depends on distances from the ball |
+| [`PITRAC_V2_STAND_GEOMETRY.html`](PITRAC_V2_STAND_GEOMETRY.html) | The same story as a single illustrated page: to-scale drawings, the decision timeline, an interactive timing model | Explaining the stand to someone |
 | [`HARDWARE_REFERENCE.md`](HARDWARE_REFERENCE.md) | Generated netlist digest: GPIO/ADC maps, test points, DNP parts, corner frequencies, PWM collisions | Any hardware value |
 | [`Software/camera-comparison/`](Software/camera-comparison/README.md) | Pi camera setup, focus preview, conversion | [§11](#11-pi-side-software-in-this-repo) |
 
@@ -487,6 +495,8 @@ superseded:
 | `PULSE_LIMIT_DIS` | A CLI "unlock-watchdog" command with a token | **No CLI path at all** | `safe_state.c` |
 | Boost frequency | 1.055 MHz | The only switcher tone on +5 V is **801 kHz**, dithered. Whether it comes from L1 or L2 is unresolved | PROGRESS_ARCHIVE §6 |
 | R98 | "Fit 2 kΩ for gain 28" | R98's *value* is a continuous gain knob, chosen after measuring the ball signal (`cal gain`) | HARDWARE_REFERENCE §6 |
+| Beam and freeze geometry (§13.1) | `beam_width_mm` 3, `beam_to_fov_mm` 150, `freeze_spacing_mm` 42.67 | **Not reconciled with the stand.** The stand was scored with a 30 mm sheet 65 mm downrange, the first flash 25 µs after the trailing edge (ball centre about 101 mm downrange) and 47.33 mm spacing. At 150 mm about 2 whole-ball freezes fit in CAM0's view; with the stand's model, about 4. **The owner confirms the sheet is about 3 cm, not 3 mm** (2026-11-19). 150 mm was a loose starting value. With the measured `t_cam` the design formula's floor is about 40 mm past the sheet centre, but the live readback's baseline wait, about 0.2 ms on board 1, comes first ([`SHOT_PATH_PLAN.md`](Hardware/firmware/SHOT_PATH_PLAN.md)) | [`Hardware/Stand/README.md`](Hardware/Stand/README.md) §4.1; 7c.3 (PASS 2026-11-20) |
+| "The optimizer" (§18) | `--pose-mc`, a focus report | The July `pitrac_placement_optimizer.py`. Its successor, the Faceplate workbench outside this repo, chose the built stand's layout | [`Hardware/Stand/README.md`](Hardware/Stand/README.md) §2, §5 |
 | Sheets | "8 sheets" | Root + 7 sub-sheets, plus 2 legacy files ([§3.2](#32-kicad-sheets)) | root schematic |
 
 ---
@@ -900,6 +910,8 @@ ctest --test-dir build-tests -C Release        # CMake >= 3.20; otherwise cd bui
 | [`tools/openocd_pi5.cfg`](Hardware/firmware/tools/openocd_pi5.cfg), [`flash_swd.sh`](Hardware/firmware/tools/flash_swd.sh) | SWD flashing from a Pi 5 |
 | [`tools/pulsegen/`](Hardware/firmware/tools/pulsegen/pulsegen.c) | Bench test equipment for BENCH_P5_P7 7b, on a spare Pico or Pico 2 (not PiTrac firmware): on each rise of the trigger (J4.3), both strobe inputs go high together after a set delay (measured 10–18 ns late on a Pico 2; the analyser is 7b's reference), for 10 ms. Delay set over its USB serial port (`d <us>`). Built in `build_pico/` and `build_pico2/`, loaded with `picotool load -x` |
 | [`tools/p8_cycles.ps1`](Hardware/firmware/tools/p8_cycles.ps1) | Windows PowerShell 5.1: BENCH_P8 §8.5's 20 boot/shutdown cycles of a seated Pi over the USB CLI. Sends only `id`, `stat`, `hist`, `on`, `off`; stops on anything unexpected; optional SSH checks on the Pi |
+| [`tools/strobe_focus.ps1`](Hardware/firmware/tools/strobe_focus.ps1) | Windows PowerShell 5.1: a light for focusing the lenses. **Live LED current.** BRINGUP 12.3's firmware checks, a 3 % staircase that stops if nothing flows by 30 %, `strobe cal`, then one pulse (default 100 µs at 9 A) every 500 ms, judged one by one; `strobe live off` at the end. Used with `focus-preview.sh --hold-flash` (`Software/camera-comparison/FOCUS.md`). First run on Board 5 on 2026-11-24: 9 A at level 437, and 9.05 A × 100 µs flashes lighting both cameras |
+| [`tools/focus_meter.py`](Hardware/firmware/tools/focus_meter.py) | Python 3 + numpy, on the PC: a live sharpness score of each full flash-lit frame from the hold-flash preview, through the SSH tunnel. It skips dim and partly lit frames, and marks scores within 95 % of the peak (`The_One_Board_To_Rule_Them_All.md` §18.2's peak-and-lock) |
 
 **Repo hygiene traps** ([HANDOFF §7](Hardware/firmware/HANDOFF.md)):
 - Files mix CRLF and LF, so exact-match edits must respect each file's line endings.
@@ -1248,7 +1260,7 @@ carries `cal_duty`, and why `cfg` warns when the live duty differs from it.
 |---|---|---|---|---|
 | **+5V** | board → Pi | pins 2, 4 | The Pi's only power. **The latch output** | ✅ |
 | `PI_3V3_SENSE` | Pi → board | pins 1, 17 (Pi 3V3) | Pi presence: the detection window, the late promotion from BENCH_RUNNING, and shutdown completion | ✅ board side. **Q4:** does the header 3V3 actually drop at halt? Unmeasured |
-| `RPI5_ON` | Pi → board | GPIO22, pin 15 | High = PiTrac userspace is up (PI_BOOTING → RUNNING). Low = down, during shutdown. Pull-down on the board side | ✅ board side. 🟡 Pi side written 2026-10-19 ([`Hardware/firmware/pi/`](Hardware/firmware/pi/README.md)), not yet run on a Pi |
+| `RPI5_ON` | Pi → board | GPIO22, pin 15 | High = PiTrac userspace is up (PI_BOOTING → RUNNING). Low = down, during shutdown. Pull-down on the board side | ✅ board side. ✅ Pi side ([`Hardware/firmware/pi/`](Hardware/firmware/pi/README.md)), written 2026-10-19, running on a seated Pi since Phase 8 (2026-11-09) |
 | `RPI5_SHUTDOWN` | board → Pi | GPIO26, pin 37 | **Active low, 200 ms pulse** = "please shut down". Idle high: driven high by the board only while the latch is closed and the Pi's 3V3 is up, released otherwise (2026-10-19 image on), and held high by the overlay's pull-up | ✅ board side (Q7 verified on hardware). Pi side: `dtoverlay=gpio-shutdown,gpio_pin=26`, untested ([BENCH_P8 §8.1](Hardware/firmware/BENCH_P8_PI.md)) |
 | `SYSTEM_READY` | board → Pi | GPIO27, pin 13 | Intended to mirror "armed" | ⚠ Firmware only ever drives it low (in shutdown and force-off); the arming path does not set it yet. You can drive it by hand with `gpio 2 1` |
 | `IRQ_OUT` | board → Pi | GPIO17, pin 11 | Intended as a short "capture complete, pull the images" pulse | ❌ No firmware drives it (`gpio 3 1` by hand only) |
@@ -1486,18 +1498,24 @@ block still reads "V3 Connector + IRLED", and the J8 UART nets are named `Pi5_TX
 [`Hardware/firmware/pi/`](Hardware/firmware/pi/README.md) holds the Pi's half of the board's
 power contract (the RPI5_ON unit, the storage-checking shutdown hook, persistent journald) and
 `pitrac-link`, the serial link and firmware updater ([§9.3](#93-the-uart-protocol),
-[§9.4](#94-firmware-updates-from-the-pi)). Written 2026-10-19/20 and not yet run on a Pi.
+[§9.4](#94-firmware-updates-from-the-pi)). Written 2026-10-19/20, and running on a seated Pi since
+Phase 8 (2026-11-09).
 
 [`Software/camera-comparison/`](Software/camera-comparison/README.md) is a standalone camera
-evaluation on a Pi 5. **It does not talk to the RP2354 yet.** The cameras free-run; they are
-neither triggered nor strobed.
+evaluation on a Pi 5. **It does not talk to the RP2354.**
+
+- **The cameras free-run,** except in one case added on 2026-11-16 for bench 7c.1
+  ([`TRIGGER.md`](Software/camera-comparison/TRIGGER.md)): it can switch the Mira220 to slave
+  mode, so the board's trigger exposes it.
+- **That case passed on board 1** (bench 7c.1, 2026-11-18).
 
 - **Purpose.** Record and compare two NIR global-shutter cameras side by side:
   - **Mira220** EVM-SE mono on CAM/DISP1: 1600 × 1400 RAW8, ~89.08 fps.
   - **Innomaker IMX296** mono on CAM/DISP0: 1456 × 1088 packed RAW10, ~60.38 fps.
 
   Capture goes straight through V4L2 and the RP1 CFE raw path, not libcamera or the PiSP ISP.
-  The result feeds the camera choice. Note that upstream `feature/pico` triggers an IMX296.
+  The result feeds the camera choice. Upstream `feature/pico` triggers an IMX296, and since
+  2026-10-10 a Mira220 too (`afe689e`; PROGRESS §6, 2026-11-16).
 - **Validated state.**
   - A **60 s simultaneous recording to NVMe passed** on kernel `6.18.50+rpt-rpi-2712`.
   - Settings: 32 capture buffers and a 128 MiB asynchronous writer per camera.
@@ -1510,15 +1528,20 @@ neither triggered nor strobed.
 - **Layout.**
   - `scripts/`: bash install, configure, record, verify and benchmark tools. The installer
     preserves the existing OS and makes reversible boot edits.
+    - `mira220-trigger.sh` switches a streaming Mira220 between master and slave mode.
+    - `trigger-capture.sh` keeps the frames the board's triggers produce.
   - `preview/` + `web/`: a RAM-only live focus preview served to a browser.
-  - `conversion/`: timestamp-faithful MP4 viewing copies and beam/analyser composites.
+  - `conversion/`: timestamp-faithful MP4 viewing copies and beam/analyser composites, and
+    `triggered_frames.py`, the report for a triggered capture.
   - Docs: `QUICKSTART.md` (the tested configuration), `README.md` (full guide and rollback),
-    `FOCUS.md`, `CONVERT.md`, `BEAM_COMPOSITE.md`.
+    `FOCUS.md`, `CONVERT.md`, `BEAM_COMPOSITE.md`, `TRIGGER.md`.
 - **Tests.** Run from `Software/camera-comparison/`:
   ```bash
   bash tests/test-helpers.sh && bash tests/test-installer.sh && bash tests/test-writer.sh
+  bash tests/test-trigger.sh && bash tests/test-trigger-capture.sh
   python3 -m unittest preview.test_server preview.test_exposure preview.test_capture
   python3 -m unittest conversion.test_convert conversion.test_beam_composite
+  python3 -m unittest conversion.test_triggered_frames
   node --test web/*.test.mjs
   ```
 - **Licence.** GPL-3.0-or-later. Third-party drivers keep their own licences.
@@ -1544,10 +1567,10 @@ there is one.
 | | &nbsp;&nbsp;• per-shot trim between shots (design §13.8), from the readback; | | | |
 | | &nbsp;&nbsp;• the first-pulse delay: the handshake applies max(first delay, t_cam) since 2026-11-10, but the first delay itself (from the beam-to-FOV geometry and the ball speed) is not computed; | | | |
 | | &nbsp;&nbsp;• wire it into `SHOT_FIRING` and launch core 1, with `flash_safe_execute_core_init()`. | | | |
-| 7 | **Phase 7 cameras.** 🟡 **Written 2026-11-10. Image 1.4 failed its independent review (H7-F1/F2/F3); image 1.5 fixes all three and passed its independent confirm review. On board 1 (1.11), 7a and 7b PASS (2026-11-13); 7c allowed (owner, 2026-11-13), 7c.0 next:** a PIO1 handshake (A3) that asserts the trigger, waits for both exposure monitors, measures `t_cam`, FIREs the strobe engine at max(first delay, t_cam) and raises `CAM_TIMEOUT` on a timeout; `cam shot` / `cam trig` test shots with a dry burst. Still needed: the shot from a detected pass, live current from the shot path, and optionally board-generated preview triggers (the strobe with a Pi present came in 1.11) | Closes the loop on trigger-to-exposure latency | BENCH_P5_P7 7a–7c; ARCHITECTURE A3 | 7a/7b: image 1.5 or later (board 1: 1.11). 7c: a TXS0108E module (**CR-09**: 1.8 V translation); from 7c.1, the Mira220 in external-trigger mode (the installed driver has none) |
+| 7 | **Phase 7 cameras.** 🟡 **Written 2026-11-10. Image 1.4 failed its independent review (H7-F1/F2/F3); image 1.5 fixes all three and passed its independent confirm review. On board 1 (1.11), 7a and 7b PASS (2026-11-13); 7c allowed (owner, 2026-11-13), 7c.0 and 7c.1 PASS (2026-11-18), t_cam about 0.2 µs:** a PIO1 handshake (A3) that asserts the trigger, waits for both exposure monitors, measures `t_cam`, FIREs the strobe engine at max(first delay, t_cam) and raises `CAM_TIMEOUT` on a timeout; `cam shot` / `cam trig` test shots with a dry burst. Still needed: the shot from a detected pass, live current from the shot path, and optionally board-generated preview triggers (the strobe with a Pi present came in 1.11) | Closes the loop on trigger-to-exposure latency | BENCH_P5_P7 7a–7c; ARCHITECTURE A3 | 7a/7b: image 1.5 or later (board 1: 1.11). 7c: a TXS0108E module (**CR-09**: 1.8 V translation); from 7c.1, the Mira220 in external-trigger mode (the installed driver has none) |
 | 8 | **Phase 8 Pi integration.** Covers: | Shipping integration | [`BENCH_P8_PI.md`](Hardware/firmware/BENCH_P8_PI.md); design doc §13.7, §14 | The owner's sign-off on the framing ([§9.3](#93-the-uart-protocol)); Q4 and Q11 |
 | | &nbsp;&nbsp;• the UART protocol — 🟡 framing, status requests and firmware updates written 2026-10-20 ([§9.3](#93-the-uart-protocol), [§9.4](#94-firmware-updates-from-the-pi)); the shot messages (ARM, CONFIG, events) remain; | | | |
-| | &nbsp;&nbsp;• the Pi side: the `gpio-shutdown` overlay and a `RPI5_ON` systemd unit — 🟡 written 2026-10-19 in `Hardware/firmware/pi/`, not yet run on a Pi; | | | |
+| | &nbsp;&nbsp;• the Pi side: the `gpio-shutdown` overlay and a `RPI5_ON` systemd unit — ✅ written 2026-10-19 in `Hardware/firmware/pi/`, running on a seated Pi since Phase 8 (2026-11-09); | | | |
 | | &nbsp;&nbsp;• detect a Pi that halts on its own in RUNNING — 🟡 written 2026-10-19 (counted and announced, the rail stays up); | | | |
 | | &nbsp;&nbsp;• halt-telemetry counters in the config record — 🟡 written 2026-10-19 (`hist`; under review); | | | |
 | | &nbsp;&nbsp;• re-evaluate the watchdog policy next to the FSM transitions; | | | |

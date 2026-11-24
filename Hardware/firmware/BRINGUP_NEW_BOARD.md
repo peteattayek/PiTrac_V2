@@ -190,14 +190,22 @@ later (`BENCH_P8_PI.md` §8.7).
 - USB-C to **J6** only. No bench supply, no Pi, **J2 off**.
 - A blank RP2354 shows up as the `RP2350` drive by itself. The SW1/SW2 dance (hold SW1, tap
   SW2) is needed only once there is an image to interrupt.
+- **A board may arrive already flashed flat.** Board 5 did (2026-11-23): `picotool info -a`
+  showed r5 at `binary start 0x10000000`, with no partition table. Run the steps below
+  unchanged. Afterwards, `upd` reads the partner (partition A) as `UNKNOWN` until an image goes
+  into A, because A holds the rest of the old flat image (`BENCH_P8_PI.md` §8.7 Step 2).
 
 **Do:** in PowerShell, in `Hardware\firmware`. picotool is
 `%USERPROFILE%\.pico-sdk\picotool\2.3.0\picotool\picotool.exe`.
 1. `picotool load build\pitrac_pt.uf2`
 2. `picotool reboot -u`. This returns to BOOTSEL, so the boot ROM reads the table.
-3. `picotool partition info`. If the first try answers `ERROR: The RP2350 device returned an
-   error: rebooting`, run it again. Optional while the board is in BOOTSEL: `picotool info -a`,
-   for the die revision.
+   **Then wait 5 s** (`Start-Sleep -Seconds 5`) while the board re-enumerates.
+   - A picotool command sent sooner fails. On Board 5 (2026-11-23), `partition info` answered
+     `ERROR: The RP2350 device returned an error: rebooting`, and the load after it `ERROR:
+     Communication with RP2350 device failed`.
+   - Both worked when repeated, and the failed load wrote nothing.
+3. `picotool partition info`. If it still answers `...rebooting`, wait a few seconds and run it
+   again. Optional while the board is in BOOTSEL: `picotool info -a`, for the die revision.
 4. Copy the image onto the `RP2350` drive **by path**: `Copy-Item <image> E:\`, with that
    drive's letter.
    - The image: r5 (`build\pitrac.uf2`, `Oct 20 2026 14:59:52`, version 1.1).
@@ -238,7 +246,8 @@ upd
   - `board : pitrac_ltb_v1 (RP2354B, 48 GPIO, 2MB internal flash)`;
   - `version : 1.x  (partition B at 0x100000)`;
   - `built :` the stamp of the image you loaded.
-- `upd` → `layout : this image in partition B`.
+- `upd` → `layout : this image in partition B`. Its `partner` line reads `UNKNOWN` when A holds
+  no image yet; that is expected.
 
 **Record:** 📝 the UID, and the image version and partition.
 
@@ -268,15 +277,25 @@ short before the firmware ever closes the latch, and that is the cheap time to f
 | **TP6, TP7, TP9, TP10** | ≈ 2.59 V each, +5VA / 2 on a 5.2 V rail |
 | PSU current, with the rail up | ~129 mA (board 1) |
 
-⚠ **Where a hand-held tip may go** (`HANDOFF.md` §5 rule 8; pad gaps from the PCB, 2026-11-11):
-- **Not on a powered board:**
+⚠ **Where a hand-held tip may go** (`HANDOFF.md` §3 rule 8; pad gaps from the PCB, 2026-11-11):
+- ✅ **Every test point from the back of the board** (PCB, 2026-11-23):
+  - TP1–TP10 are all through-hole. On the back, no other-net pad lies within 6 mm of any of
+    them. The board has no parts on the back near them.
+  - The only copper near them on the back is vias, and the board's setup tents every via on
+    both sides (`tenting (front yes) (back yes)`, with no per-via override). The nearest are
+    GND vias, under mask: TP8 0.45 mm, TP3 0.62 mm, TP10 1.24 mm.
+  - So read any TP from the back with a hand-held tip. Press on the pad; don't scrape toward a
+    via.
+  - The front-side limits below still apply on the front.
+- **Not on a powered board, from the front:**
   - J8.2: 0.84 mm from J8.1 (+3V3_Pi5);
   - TP6: 1.14 mm from C73 pad 1 (U11B's inverting input);
   - TP9: 0.78 mm from C79 pad 1;
   - TP10: 0.79 mm from R91 pad 1.
   
-  Fit a lead there with the PSU and USB off, or use the substitutes below.
-- **Fine for a tip:**
+  Read the TPs from the back instead. For J8.2, fit a lead with the PSU and USB off, or use the
+  substitutes below.
+- **Fine for a tip, from the front:**
   - the J3 pin 1 screw: 3.2 mm from pin 2;
   - TP7: 2.12 mm from R95 pad 2;
   - TP2: 1.92 mm from R15 pad 1. That pad is VIR, and a slip puts 36 V on the +12 V rail;
@@ -412,7 +431,7 @@ the board is already running, skip `on`.
 | 4 | GND | the button's other side |
 | 2, 6 | the panel LEDs' cathodes | unused |
 
-- Its pads are 0.84 mm apart (`HANDOFF.md` §5 rule 8), so fit female jumper leads with the
+- Its pads are 0.84 mm apart (`HANDOFF.md` §3 rule 8), so fit female jumper leads with the
   PSU and USB off.
 - **A press:** touch the free ends of the pin 3 and pin 4 leads together for under a second.
   The firmware debounces for 25 ms and acts on the release. A 5 s hold is the force-off escape
@@ -551,6 +570,12 @@ With the beam off, the same command reports `off ok` and SIO (5). That is not a 
 
 **Pass:** a period of **9.6 µs** on TP5.
 
+**Without a scope or analyser:**
+- Step 6.1's readback shows the PWM configured at 104166 Hz.
+- §9's `cal demod` then proves the carrier reaches the LED: it cannot lock a phase on a beam
+  that is not modulated at the carrier.
+- Record "6.2 by readback and §9".
+
 ### Step 6.3 — The U9 clamp width
 
 U9 is a one-shot that caps the LED's on-time at t_w = K·R68·C57. The tolerance of R68 and C57
@@ -567,6 +592,25 @@ beam
 **Pass:**
 - `beam` reads `TOP=49999, clkdiv=3, 1000 Hz`.
 - On TP5, the LED's on-time is the clamp width, shorter than the commanded 500 µs.
+
+**Without a scope or analyser: the DMM on TP5, from the back** (§2.1's probe note).
+- TP5 is low while the LED is on, so its DC average falls in proportion to the on-time.
+- An unclamped 100 µs pulse at the same 1 kHz calibrates the reading. Within one period the
+  drain recovers the same way in both cases.
+- **Do** (rail up, beam off), reading TP5 at each step:
+  ```
+  beam off                (read A)
+  beam duty 2
+  beam freq 1000
+  beam duty 10
+  beam on                 (read B: 100 us on per 1 ms, under the clamp)
+  beam clamp              (read C: 500 us commanded, clamped by U9)
+  ```
+  Then the same four lines as below, at once: `beam duty 2`, `beam off`, `beam freq 104166`,
+  `beam`.
+- **Clamp width ≈ 100 µs × (A − C) / (A − B).**
+- **Pass:** 109–136 µs.
+- **Stop if:** it works out near 500 µs, which means U9 is not clamping.
 
 **Then, at once, before anything else:**
 ```
@@ -651,9 +695,10 @@ adc 2 256
 ```
 Then the DMM on TP6, TP7, TP9 and TP10.
 
-⚠ **TP6, TP9 and TP10 take no hand-held tip on a powered board** (§2.1's probe note: 1.14,
-0.78 and 0.79 mm from other copper). Either fit leads to them with the board unpowered, or read
-TP7 alone, which is 2.12 mm clear. TP7 alone leaves TP9 and TP10's DC levels unchecked; §9's
+⚠ **From the front, TP6, TP9 and TP10 take no hand-held tip on a powered board** (§2.1's probe
+note: 1.14, 0.78 and 0.79 mm from other copper). **Read all four from the back of the board**,
+where nothing but mask-covered vias is near them (§2.1). Otherwise read TP7 alone, which is
+2.12 mm clear on the front. TP7 alone leaves TP9 and TP10's DC levels unchecked; §9's
 `cal demod` then shows a clipping stage as `saturated` above 0 %.
 
 **Pass:**
@@ -939,6 +984,10 @@ carrier even on an identical board.
 | model vs `cal demod` | 3.9–4.9 ticks | **3.5 ticks** |
 | TIA lag at 104 kHz (calculated) | 8.74° | 4.30° |
 
+Boards 4 and 5 both carry the 120 kΩ / 1.5 pF rework (Board 5's R80 measured 120 kΩ). They
+committed 1333 and 1320 ticks: **487 and 400 ns**, residuals 0.23° and 0.26°. The same TIA,
+87 ns apart: the rest of the chain varies that much from board to board.
+
 🔴 **If you rework a board's TIA, run `cal demod` BEFORE and AFTER on that same board.**
 - It costs 26 s, and it is the only way to separate the change you made from board-to-board
   variation.
@@ -1032,6 +1081,10 @@ adc 5 100
 
 **Pass:** ADC5 reads **2000–2500**. If it reads 4095, lower `beam phase` further and repeat
 Step 10.3 from the start.
+- Up to about **3700 (3.0 V)** still works. The flip just comes higher in the sweep: Board 5
+  read 3686 at §9's phase − 200 and flipped at 89 %.
+- Above that, the node nears the DAC's ~3.27 V top and U15's input ceiling (~3.5 V, an LM393 on
+  +5 V; `HARDWARE_REFERENCE.md` §9).
 
 **Then:**
 ```
@@ -1061,10 +1114,10 @@ HIGH point (d₂, a₂):
 - **vref** near **3.25–3.27 V**. The compiled default is a nominal 3.300.
 - **Vos** anywhere inside the LM393's **±15 mV**: a per-part offset, and boards differ.
 
-| | board 2 | board 3 |
-|---|---|---|
-| DAC **vref** | 3.268 V | 3.256 V |
-| comparator **Vos** | +11.0 mV | +5.4 mV |
+| | board 2 | board 3 | Board 4 | Board 5 |
+|---|---|---|---|---|
+| DAC **vref** | 3.268 V | 3.256 V | 3.254 V | 3.270 V |
+| comparator **Vos** | +11.0 mV | +5.4 mV | −0.6 mV | +6.2 mV |
 
 `threshold vref <volts>` applies vref if you want it. It is RAM only, and worth ~1 % on a
 threshold that §3.7 tunes empirically anyway.
@@ -1192,8 +1245,8 @@ If it is missing, fit it first (`REWORK_ORIGINAL_BOARDS.md` §6).
 - **Parts 1–5 need only a DMM and the CLI.** They are the minimum before live current, and
   what a collaborator without a scope or logic analyser runs.
 - **Part 6** adds soldered leads, a logic analyser and a scope. It measures U5's clamp dry,
-  the gate loop's stability and, in 12.3, TP4 against the firmware. Use it where you can
-  solder (a lab board such as Board 5).
+  the gate loop's stability and, in 12.3, TP4 against the firmware. Use it on a board you can
+  solder leads to.
 - Without part 6, U5's clamp is still measured, with current, in 12.3 part 4.
 
 **State:** J3 disconnected; J2 off; J8 and J4 empty.
@@ -1249,8 +1302,13 @@ This proves the firmware's path. U5's clamp itself is measured in part 6 dry, or
 part 4 with current.
 
 **5. The gate DAC: TP3 at three setpoints.**
-- **TP3 sits 0.59 mm from C56's +12 V pad.** Read it through a lead attached with the board
-  unpowered (part 6's S1), not with a hand-held tip on a powered board.
+- **On the front, TP3 sits 0.59 mm from C56's +12 V pad.** **Read it from the back of the
+  board** with a hand-held tip.
+  - On the back, the nearest copper is a GND via under solder mask, 0.62 mm away, and the
+    nearest pad is over 6 mm away (§2.1).
+  - Press on the pad; don't scrape toward the via.
+  - Or use a lead attached with the board unpowered (part 6's S1). Never a hand-held tip on the
+    front of a powered board.
 - **Do:** `strobe gate 50`, `strobe gate 90`, then `strobe gate 0`, reading TP3 to GND after
   each.
 - **Pass:**
@@ -1334,8 +1392,11 @@ part 4 with current.
 
 **1. Before any current.**
 - Send `on` and wait 3 s.
-- DMM: VIR at J3 pin 1's screw to GND → **36 V**, the same as at C26. The screw is a
-  hand-held point: 3.2 mm clear.
+- DMM: VIR at J3 pin 1's screw to GND → **~36 V**, the same as at C26 (Board 4 35.94 V,
+  Board 5 35.77 V at §2). The screw is a hand-held point: 3.2 mm clear.
+- DMM: **TP4 to GND, from the back** → **under 2 mV**. TP4 is the sense resistors' top
+  (135 mV/A), so 2 mV is 15 mA. This is the check for a current standing with the gate at 0:
+  ADC0's own offset hides one this small, and the firmware's baseline check starts at ~0.24 A.
 - Then send:
   ```
   beam off
@@ -1346,10 +1407,14 @@ part 4 with current.
   ```
 - **Pass:**
   - `strobe` → the GPIO27 `armed` line, `live : OFF`, `may arm : yes`;
-  - `adc 0 4096` → **under 10 codes**;
+  - `adc 0 4096` → **about 10 codes, 12 at most**: the ADC's own offset (board 1 9, Board 5
+    10), with TP4 near 0 V;
   - `adc ringtest 100` → `PASS: every pair covered`.
 - **Stop if:**
-  - VIR at the screw is under 36 V: a cold J3 joint;
+  - VIR at the screw is lower than at C26: a cold J3 joint;
+  - TP4 reads 2 mV or more: current flows with the gate at 0;
+  - `adc 0 4096` is over 12 codes with TP4 near 0 V. Hundreds of codes means GPIO40 is not
+    seeing TP4 (R32 is the only path);
   - any `NOT COVERED` or `FAIL`. Every live readback would then be unusable.
 
 **2. Arm, and fire once at gate 0.**
@@ -1400,7 +1465,8 @@ strobe clamptest 1000
 - **Expect:** `6d CLAMP TEST WITH CURRENT: commanding 1000 us ...`, `completed, IRQ0 seen`, and
   a pulse line ending `on <the clamp> us (<n> samples)`.
 - **Pass:**
-  - the on-time is **118–137 µs**: U5's clamp, measured on this board. With part 6, it also
+  - the on-time is **118–137 µs**: U5's clamp, measured on this board (board 1 135 µs, Board 5
+    134 µs). With part 6, it also
     matches the dry clamp within ±2 µs;
   - the plateau is within ~5 % of the 20 µs pulse's;
   - no fault;
@@ -1429,7 +1495,8 @@ then fires 3 confirmation pulses. It takes about 10–20 s; any key aborts it, w
 **Pass:**
 - **`SOLVED ... PASS`.** *With a scope:* TP4 = 1.215 V ± 5 % on the confirmation pulses.
 - **The solved level as a sanity check on the current reading:**
-  - board 1 solved at 42.87 % (TP3 nominal 4.24 V), and the design expects 4.5–6 V;
+  - board 1 solved at 42.87 % (TP3 nominal 4.24 V) and Board 5 at 42.58 % (4.22 V); the design
+    expects 4.5–6 V;
   - a solved level well above ~60 % (TP3 nominal over ~6 V) is a finding. Stop and check
     R65/R66 (part 1) before using 9 A: the reading may be low.
 - **The cap's refusal:** `strobe gate <P>`, with P = M × 100 / 1024 + 1, rounded up. Expect
@@ -1665,9 +1732,9 @@ the threshold applies from 1.7.
 >   | VB (VCCB) | **the board's 3.3 V: J5.2** (+3.3VA, the only 3.3 V on one of the board's headers; it also feeds the mic). **Not** the camera board's 3.3 V pin: leave that unconnected |
 >   | GND | J4.1 (or .2, .5, .6), and the camera board's GND |
 >   | OE | VA, so the module is enabled. Many modules already pull it up: check |
->   | B1 → A1 | J4.3 (the board's trigger) → the camera's trigger input |
+>   | B1 → A1 | J4.3 (the board's trigger) → the camera's trigger input. Bridge B5 to B1 and A5 to A1: one channel alone held the high only 17 mV above the camera's threshold (`WIRING_DIAGRAM.md` §7.3) |
 >   | A2 → B2 | the camera's strobe output → J4.7 |
->   | A3 → B3 | a second camera's strobe output, if any → J4.8 |
+>   | **A second camera** | **its own module**, wired the same way: VA from that camera's 1.8 V, B1 (with B5) from J4.4, B2 to J4.8. One module for both would drive an unpowered camera from the other's 1.8 V (`WIRING_DIAGRAM.md` §7.2) |
 >
 > - **Why VB from the board, not the camera.** Each side of the module must be powered by the
 >   side it talks to.

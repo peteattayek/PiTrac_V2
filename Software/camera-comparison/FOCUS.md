@@ -75,6 +75,50 @@ Options:
 - `--buffers 32`: 8..32 native capture buffers per camera.
 - `--transport jpeg`: initial browser mode; `raw` selects lossless native frames.
 - `--jpeg-quality 90`: display JPEG quality, allowed range 60..95.
+- `--hold-flash`: show the latest **flash-lit** frame for up to 3 s, then the latest frame
+  again. For focusing by the PiTrac V2 board's strobe, below. A frame counts as lit when its
+  sampled mean is at least 3 codes, or 20 %, above a baseline that follows the unlit frames.
+  `/api/status` reports `hold_flash`, `flash_frames`, `showing` and `flash_baseline` for each
+  camera.
+
+### Focusing by the board's strobe (PiTrac V2, 850 nm filters)
+
+Behind 850 nm filters, the room is black to the Mira220s. The board's LED bank is the
+light, but it only flashes: U5 ends every pulse by ~137 µs. Live mode on the board takes
+only strobe commands, so a flash cannot be tied to a camera trigger. Instead:
+- the camera free-runs at an exposure close to its 11.2 ms frame period, so almost every
+  flash lands in a frame;
+- the board fires one short pulse every 500 ms (`Hardware/firmware/tools/strobe_focus.ps1`,
+  on the PC with the board's USB);
+- `--hold-flash` keeps the latest lit frame on screen.
+
+One camera at a time. On the Pi, configure the camera at 11000 µs with `--bus` (its I²C bus),
+then start the preview with `--hold-flash`:
+
+```bash
+CONFIG="$HOME/camera-focus-c0-$(date +%Y%m%d-%H%M%S)"
+bash scripts/configure-cameras.sh --output "$CONFIG" \
+  --camera mira220 --bus 10 --exposure-us 11000 --gain 1 --apply &&
+bash scripts/focus-preview.sh --config "$CONFIG" --hold-flash
+```
+
+On the PC, open the tunnel (below) and the page. If the PC's own port 8765 is taken, forward
+another local port, for example `-L 127.0.0.1:8766:127.0.0.1:8765`, and open
+`http://127.0.0.1:8766/`. Use `127.0.0.1`, not `localhost`, which can reach a different
+listener over IPv6. In a second window, from `Hardware/firmware`, start the flashes:
+
+```
+powershell -ExecutionPolicy Bypass -File tools\strobe_focus.ps1 -Port COM10
+```
+
+For a number to focus by, run `python tools\focus_meter.py --url http://127.0.0.1:8766` in a
+third window, also from `Hardware/firmware`. It scores each full flash-lit frame (normalised gradient energy in a 500 × 500
+box on the brightest area) and marks scores within 95 % of the best seen.
+
+`strobe_focus.ps1` arms live mode, climbs 3 % at a time to the first current (and stops if
+nothing flows by 30 %), runs `strobe cal 9`, then flashes 100 µs at 9 A every 500 ms. `q` or Ctrl-C stops it,
+with `strobe live off`. Its header lists every check and stop condition. Lower `-Amps` or
+`-WidthUs` if the frame saturates.
 
 The sensors continue at their configured native acquisition rates. The browser
 intentionally skips intermediate frames and retrieves only the latest frame;

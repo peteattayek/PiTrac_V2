@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 PiTrac contributors -->
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Next Gen PiTrac &mdash; Stand Geometry: How and Why It Was Chosen</title>
+  <style>
+    :root {
+      --bg: #0b101b; --bg-elev: #11192b; --bg-card: #151f35; --bg-code: #0d1424;
+      --fg: #e6edf7; --fg-muted: #9aa8c2; --border: #263554;
+      --accent: #38bdf8; --accent-2: #a78bfa; --green: #34d399; --amber: #fbbf24; --red: #f87171; --pink: #f472b6;
+      --shadow: 0 10px 28px rgba(0,0,0,0.38);
+    }
+    [data-theme="light"] {
+      --bg: #f6f8fc; --bg-elev: #ffffff; --bg-card: #ffffff; --bg-code: #eef2f9;
+      --fg: #0f172a; --fg-muted: #475569; --border: #cbd5e1;
+      --accent: #0284c7; --accent-2: #6d28d9; --green: #059669; --amber: #d97706; --red: #dc2626; --pink: #db2777;
+      --shadow: 0 6px 20px rgba(15,23,42,0.08);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    [id] { scroll-margin-top: 84px; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: var(--bg); color: var(--fg); line-height: 1.62; font-size: 15.5px; }
+    code, pre, .mono { font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace; }
+    code { background: var(--bg-code); border: 1px solid var(--border); padding: 0.12em 0.4em; border-radius: 5px; font-size: 0.89em; color: var(--accent); }
+    pre { background: var(--bg-code); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; overflow-x: auto; font-size: 0.86em; line-height: 1.5; }
+    pre code { background: none; border: none; padding: 0; color: var(--fg); }
+    a { color: var(--accent); }
+
+    .topbar { position: sticky; top: 0; z-index: 100; background: rgba(11,16,27,0.92); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 24px; gap: 16px; flex-wrap: wrap; }
+    [data-theme="light"] .topbar { background: rgba(255,255,255,0.94); }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.03rem; }
+    .brand-badge { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-size: 0.73rem;
+      font-weight: 800; padding: 3px 9px; border-radius: 999px; letter-spacing: 0.04em; white-space: nowrap; flex-shrink: 0; }
+    .part-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tab-btn { background: transparent; color: var(--fg-muted); border: 1px solid var(--border); padding: 6px 13px;
+      border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: all 0.15s ease; }
+    .tab-btn:hover, .tab-btn.active { color: var(--fg); border-color: var(--accent); background: rgba(56,189,248,0.13); }
+    .controls { display: flex; align-items: center; gap: 8px; }
+    .icon-btn { background: var(--bg-card); color: var(--fg); border: 1px solid var(--border); padding: 6px 12px;
+      border-radius: 8px; cursor: pointer; font-size: 0.83rem; font-weight: 600; }
+    .icon-btn:hover { border-color: var(--accent); }
+
+    .layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); max-width: 1560px; margin: 0 auto; }
+    .sidebar { position: sticky; top: 57px; height: calc(100vh - 57px); overflow-y: auto; padding: 20px 16px 40px 20px;
+      border-right: 1px solid var(--border); font-size: 0.85rem; }
+    .sidebar h4 { margin: 18px 0 6px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }
+    .sidebar h4:first-child { margin-top: 0; }
+    .sidebar a { display: block; color: var(--fg-muted); text-decoration: none; padding: 4px 8px; border-radius: 6px; line-height: 1.36; }
+    .sidebar a:hover { color: var(--fg); background: rgba(56,189,248,0.10); }
+
+    .content { padding: 32px 42px 80px; min-width: 0; }
+    .hero { background: linear-gradient(135deg, rgba(56,189,248,0.12), rgba(167,139,250,0.10)); border: 1px solid var(--border);
+      border-radius: 16px; padding: 26px 30px; margin-bottom: 34px; box-shadow: var(--shadow); }
+    .hero h1 { margin: 0 0 10px; font-size: 1.95rem; letter-spacing: -0.02em; }
+    .hero p { margin: 0 0 18px; color: var(--fg-muted); max-width: 980px; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 12px; }
+    .kpi { background: var(--bg-card); border: 1px solid var(--border); border-radius: 11px; padding: 12px 14px; }
+    .kpi .val { font-size: 1.24rem; font-weight: 800; color: var(--accent); font-family: "Cascadia Code", Consolas, monospace; }
+    .kpi .lbl { font-size: 0.79rem; color: var(--fg-muted); margin-top: 2px; }
+
+    .doc-part { margin-bottom: 64px; }
+    .doc-part.hidden { display: none; }
+    .part-banner { display: flex; align-items: center; gap: 14px; border-bottom: 2px solid var(--border); padding-bottom: 12px; margin: 12px 0 24px; }
+    .part-num { background: var(--accent); color: #06101e; font-weight: 800; font-size: 0.8rem; padding: 4px 11px; border-radius: 7px;
+      text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+    .part-banner h2 { margin: 0; font-size: 1.62rem; letter-spacing: -0.015em; }
+    h3 { margin: 32px 0 12px; font-size: 1.22rem; color: var(--fg); border-left: 4px solid var(--accent); padding-left: 12px; }
+    h4 { margin: 20px 0 8px; font-size: 1.02rem; color: var(--fg); }
+
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; margin: 16px 0; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 17px 19px; box-shadow: var(--shadow); }
+    .card h4 { margin-top: 0; }
+    .tag { display: inline-block; font-size: 0.73rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-right: 6px; }
+    .tag-ok { background: rgba(52,211,153,0.16); color: var(--green); border: 1px solid rgba(52,211,153,0.35); }
+    .tag-bad { background: rgba(248,113,113,0.16); color: var(--red); border: 1px solid rgba(248,113,113,0.35); }
+    .tag-warn { background: rgba(251,191,36,0.16); color: var(--amber); border: 1px solid rgba(251,191,36,0.4); }
+
+    .callout { border-radius: 11px; padding: 14px 18px; margin: 16px 0; border-left: 4px solid var(--accent); background: var(--bg-card);
+      border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .callout.danger { border-left-color: var(--red); background: rgba(248,113,113,0.08); }
+    .callout.warn { border-left-color: var(--amber); background: rgba(251,191,36,0.08); }
+    .callout.ok { border-left-color: var(--green); background: rgba(52,211,153,0.08); }
+    .callout-title { font-weight: 700; margin-bottom: 5px; }
+
+    .table-wrap { overflow-x: auto; margin: 16px 0 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.89rem; }
+    th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { background: var(--bg-elev); font-weight: 700; color: var(--accent); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(56,189,248,0.04); }
+    td.num, th.num { text-align: right; font-family: "Cascadia Code", Consolas, monospace; }
+    tr.chosen td { background: rgba(52,211,153,0.10); }
+
+    .formula { background: var(--bg-code); border: 1px solid var(--border); border-left: 3px solid var(--accent-2); border-radius: 10px;
+      padding: 13px 18px; margin: 14px 0; font-family: "Cambria Math", "STIX Two Math", Georgia, serif; font-size: 1.06rem; overflow-x: auto; }
+    .formula .eq-note { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 0.83rem; color: var(--fg-muted); margin-top: 6px; }
+
+    .figure-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; margin: 22px 0; box-shadow: var(--shadow); }
+    .figure-box svg { width: 100%; height: auto; display: block; border-radius: 8px; background: #0c1322; }
+    [data-theme="light"] .figure-box svg { background: #0f172a; }
+    .figcaption { margin-top: 10px; font-size: 0.84rem; color: var(--fg-muted); }
+
+    .timeline { list-style: none; margin: 18px 0; padding: 0 0 0 22px; border-left: 2px solid var(--border); }
+    .timeline li { position: relative; margin: 0 0 18px; padding-left: 14px; }
+    .timeline li::before { content: ""; position: absolute; left: -31px; top: 6px; width: 14px; height: 14px; border-radius: 50%;
+      background: var(--bg); border: 3px solid var(--accent); }
+    .timeline li.key::before { border-color: var(--green); background: var(--green); }
+    .timeline .when { font-family: "Cascadia Code", Consolas, monospace; font-size: 0.8rem; color: var(--accent); font-weight: 700; }
+    .timeline .what { font-weight: 700; }
+    .timeline .detail { color: var(--fg-muted); font-size: 0.9rem; }
+
+    .grid5 td { text-align: center; font-family: "Cascadia Code", Consolas, monospace; font-size: 0.8rem; }
+    .grid5 td.blocked { background: rgba(248,113,113,0.10); color: var(--fg-muted); }
+    .grid5 td.pass { background: rgba(52,211,153,0.08); }
+    .grid5 td.pick { background: rgba(52,211,153,0.28); outline: 2px solid var(--green); outline-offset: -2px; font-weight: 700; }
+
+    .sim-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 14px;
+      padding: 14px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; }
+    .sim-slider label { display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
+    .sim-slider input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .sim-readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 12px; }
+    .sim-stat { background: var(--bg-code); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+    .sim-stat .s-val { font-family: "Cascadia Code", Consolas, monospace; font-weight: 700; font-size: 0.98rem; }
+    .sim-stat .s-lbl { font-size: 0.75rem; color: var(--fg-muted); }
+    .good { color: var(--green); } .bad { color: var(--red); } .warn { color: var(--amber); }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .topbar { position: relative; padding: 10px 16px; }
+      [id] { scroll-margin-top: 16px; }
+      .content { padding: 22px 16px 60px; }
+    }
+    @media print {
+      .topbar, .sidebar, .controls { display: none !important; }
+      .layout { display: block; }
+      .doc-part.hidden { display: block !important; }
+      body { background: #fff; color: #000; font-size: 12px; }
+      .card, .figure-box, .table-wrap { box-shadow: none; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-badge">Next Gen PiTrac</span>
+      <span>Stand Geometry: How and Why</span>
+    </div>
+    <div class="part-tabs" role="tablist" aria-label="Document section filter">
+      <button class="tab-btn active" onclick="filterPart('all', this)">All 4 Parts</button>
+      <button class="tab-btn" onclick="filterPart('part-1', this)">I. The Geometry</button>
+      <button class="tab-btn" onclick="filterPart('part-2', this)">II. Why This Layout</button>
+      <button class="tab-btn" onclick="filterPart('part-3', this)">III. Consequences</button>
+      <button class="tab-btn" onclick="filterPart('part-4', this)">IV. Changing It</button>
+    </div>
+    <div class="controls">
+      <button class="icon-btn" onclick="toggleTheme()">Light / Dark</button>
+      <button class="icon-btn" onclick="window.print()">Print / PDF</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar" aria-label="Table of contents">
+      <h4>Part I &middot; The Geometry</h4>
+      <a href="#part-1" onclick="ensureVisible('part-1')">1.1 Frames &amp; Conventions</a>
+      <a href="#fig-elev" onclick="ensureVisible('part-1')">1.2 Side Elevation (to scale)</a>
+      <a href="#fig-plan" onclick="ensureVisible('part-1')">1.3 Plan View (to scale)</a>
+      <a href="#p1-table" onclick="ensureVisible('part-1')">1.4 Positions &amp; Distances</a>
+
+      <h4>Part II &middot; Why This Layout</h4>
+      <a href="#part-2" onclick="ensureVisible('part-2')">2.1 Requirements</a>
+      <a href="#p2-timeline" onclick="ensureVisible('part-2')">2.2 Decision Timeline</a>
+      <a href="#p2-lens" onclick="ensureVisible('part-2')">2.3 The Lens</a>
+      <a href="#p2-family" onclick="ensureVisible('part-2')">2.4 The Layout Family</a>
+      <a href="#p2-search" onclick="ensureVisible('part-2')">2.5 The Searches</a>
+      <a href="#p2-objective" onclick="ensureVisible('part-2')">2.6 The Selection Objective</a>
+      <a href="#p2-strobe" onclick="ensureVisible('part-2')">2.7 The Strobe Repair</a>
+      <a href="#p2-built" onclick="ensureVisible('part-2')">2.8 From Reference to Built Stand</a>
+
+      <h4>Part III &middot; Consequences</h4>
+      <a href="#part-3" onclick="ensureVisible('part-3')">3.1 Built vs. Design Check</a>
+      <a href="#p3-hidden" onclick="ensureVisible('part-3')">3.2 What the Score Hides</a>
+      <a href="#p3-timing" onclick="ensureVisible('part-3')">3.3 Two Timing Models</a>
+      <a href="#p3-sim" onclick="ensureVisible('part-3')">3.4 Interactive: Freezes &amp; Impact Sound</a>
+
+      <h4>Part IV &middot; Changing It</h4>
+      <a href="#part-4" onclick="ensureVisible('part-4')">4.1 Where Each Assumption Lives</a>
+      <a href="#p4-steps" onclick="ensureVisible('part-4')">4.2 Making a New Design</a>
+      <a href="#p4-files" onclick="ensureVisible('part-4')">4.3 Files &amp; Provenance</a>
+    </nav>
+
+    <main class="content">
+      <div class="hero">
+        <h1>Next Gen PiTrac &mdash; Stand Geometry: How and Why It Was Chosen</h1>
+        <p>
+          Where the two Mira220 cameras, the IR strobe, the light-sheet trigger, the V2 board and its microphone sit relative to the ball,
+          how a two-month optimization campaign arrived at that layout, how closely the built stand matches it, and what it implies for the
+          firmware. Every coordinate here comes from the optimizer's output or from the built stand's CAD; the scores are <strong>modelled
+          capture, not measured golf accuracy</strong>.
+        </p>
+        <div class="kpi-grid">
+          <div class="kpi"><div class="val">97.20 %</div><div class="lbl">Weighted capture, nominal (model)</div></div>
+          <div class="kpi"><div class="val">79.30 %</div><div class="lbl">Same, worst &plusmn;10 &micro;m focus corner</div></div>
+          <div class="kpi"><div class="val">368.8 mm</div><div class="lbl">Camera pupils to the target line</div></div>
+          <div class="kpi"><div class="val">65 mm</div><div class="lbl">Light sheet downrange of the ball</div></div>
+          <div class="kpi"><div class="val">0&deg; / &minus;22&deg;</div><div class="lbl">Lower / upper camera pitch</div></div>
+          <div class="kpi"><div class="val">&minus;16&deg;</div><div class="lbl">Strobe pitch, after the Oct 1 repair</div></div>
+          <div class="kpi"><div class="val">454.6 mm</div><div class="lbl">Mic U16 to the ball (1.33 ms of sound)</div></div>
+          <div class="kpi"><div class="val">0.000 mm</div><div class="lbl">Built stand's camera pupils vs. the design</div></div>
+        </div>
+      </div>
+
+      <!-- ==================== PART I ==================== -->
+      <section id="part-1" class="doc-part">
+        <div class="part-banner"><span class="part-num">Part I</span><h2>The Geometry</h2></div>
+
+        <h3>1.1 Frames &amp; Conventions</h3>
+        <p>
+          All coordinates use the <strong>RH ball frame</strong>, the frame the optimizer's last CAD output (<code>reference_003</code>) and the
+          printed stand parts were drawn in: origin on the floor directly under the ball, <strong>+X downrange</strong> along the target line,
+          <strong>+Y from the stand towards the ball</strong>, <strong>+Z up</strong>. The stand stands on the floor beside a hitting mat assumed
+          to be <strong>36 mm</strong> thick, so the mat top is Z = 36 and a resting ball's centre is Z = 57.3.
+        </p>
+        <div class="card-grid">
+          <div class="card"><h4>One stand, both hands</h4>For left-handed play the same stand is turned 180&deg; about Z and placed at
+            Y = +408.1 instead of &minus;408.1. Cameras, focus, strobe and trigger never move relative to each other.</div>
+          <div class="card"><h4>Other frames you will meet</h4><strong>Optimizer world</strong>: as RH, but Z = 0 at the mat top
+            (RH Z = world Z + 36). <strong>Chassis</strong>: the stand's own frame; RH = chassis + (65, &minus;408.1, 33.5).
+            <strong>SolidWorks assembly</strong>: RH = assembly &minus; (597.67, 1296.56, 1251.95).</div>
+          <div class="card"><h4>The 36 mm assumption</h4>If the stand stands <em>on</em> the mat instead of the floor beside it, every
+            height relative to the ball is 36 mm too high. Nothing has measured the real mat.</div>
+        </div>
+
+        <!-- FIGURE 1.2: Side elevation, to scale (1.4 px per mm). x = 844 + 1.4*Y, y = 600 - 1.4*Z -->
+        <h3 id="fig-elev">1.2 Side Elevation (to scale)</h3>
+        <div class="figure-box">
+          <svg viewBox="0 0 1120 650" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Side elevation of the stand and ball, looking along the target line, drawn to scale">
+            <defs>
+              <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 1 L10 5 L0 9 z" fill="#94a3b8"/></marker>
+            </defs>
+            <!-- Z scale -->
+            <g font-size="9.5" fill="#64748b" text-anchor="end">
+              <line x1="52" y1="600" x2="52" y2="40" stroke="#334155"/>
+              <text x="46" y="603">0</text><text x="46" y="533">50</text><text x="46" y="463">100</text><text x="46" y="393">150</text>
+              <text x="46" y="323">200</text><text x="46" y="253">250</text><text x="46" y="183">300</text><text x="46" y="113">350</text><text x="46" y="43">400</text>
+              <text x="18" y="320" transform="rotate(-90 18 320)" text-anchor="middle">Z above floor (mm)</text>
+            </g>
+            <g stroke="#1e293b" stroke-width="1">
+              <line x1="52" y1="530" x2="1000" y2="530"/><line x1="52" y1="460" x2="1000" y2="460"/><line x1="52" y1="390" x2="1000" y2="390"/>
+              <line x1="52" y1="320" x2="1000" y2="320"/><line x1="52" y1="250" x2="1000" y2="250"/><line x1="52" y1="180" x2="1000" y2="180"/>
+              <line x1="52" y1="110" x2="1000" y2="110"/><line x1="52" y1="40" x2="1000" y2="40"/>
+            </g>
+            <!-- Floor and mat -->
+            <line x1="52" y1="600" x2="1000" y2="600" stroke="#64748b" stroke-width="2"/>
+            <rect x="368" y="549.6" width="616" height="50.4" fill="#1f3b2b" stroke="#2f6b47"/>
+            <text x="980" y="590" text-anchor="end" fill="#86efac" font-size="10">36 mm hitting mat (assumed; edge position not modelled)</text>
+
+            <!-- Camera cones (vertical FOV, 1400 px x 2.79 um / 3.60 mm: +/-28.5 deg) -->
+            <polygon points="327.7,463.4 984,107.3 984,549.6 486.6,549.6" fill="rgba(56,189,248,0.10)" stroke="#38bdf8" stroke-opacity="0.55" stroke-dasharray="4 3"/>
+            <polygon points="328.1,133.1 984,58.6 984,549.6 671.7,549.6" fill="rgba(167,139,250,0.10)" stroke="#a78bfa" stroke-opacity="0.6" stroke-dasharray="4 3"/>
+            <line x1="327.7" y1="463.4" x2="984" y2="463.4" stroke="#38bdf8" stroke-width="1.2" stroke-dasharray="7 4"/>
+            <line x1="328.1" y1="133.1" x2="984" y2="398.1" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="7 4"/>
+            <!-- Light sheet seen face-on: fan +/-28 deg from the rod -->
+            <polygon points="277.4,399.1 984,23.3 984,549.6 560.5,549.6" fill="rgba(248,113,113,0.07)" stroke="#f87171" stroke-opacity="0.45" stroke-dasharray="2 4"/>
+            <!-- Strobe axis -->
+            <line x1="314.7" y1="273.1" x2="844" y2="424.9" stroke="#fbbf24" stroke-width="1.4" stroke-dasharray="3 3"/>
+
+            <!-- Focus references -->
+            <line x1="873.7" y1="107.3" x2="873.7" y2="549.6" stroke="#38bdf8" stroke-width="1" stroke-dasharray="2 3"/>
+            <text x="879" y="250" fill="#7dd3fc" font-size="9.5">CAM0 focus</text><text x="879" y="262" fill="#7dd3fc" font-size="9.5">390 mm</text>
+            <circle cx="832" cy="336.7" r="5" fill="none" stroke="#c4b5fd" stroke-width="2"/>
+            <text x="826" y="358" text-anchor="end" fill="#c4b5fd" font-size="9.5">CAM1 focus point, 388 mm (Z 188)</text>
+
+            <!-- Ball resting on the mat -->
+            <circle cx="844" cy="519.7" r="29.9" fill="#e2e8f0" stroke="#34d399" stroke-width="2"/>
+            <text x="884" y="530" fill="#e2e8f0" font-size="10" font-weight="700">ball, Z 57.3</text>
+            <text x="884" y="543" fill="#94a3b8" font-size="9">(driver on tee: Z 76)</text>
+
+            <!-- Printed parts: base plate, pedestal, spine pieces (bounding boxes) -->
+            <g fill="rgba(148,163,184,0.16)" stroke="#94a3b8" stroke-width="1">
+              <rect x="88.4" y="586" width="242.8" height="14"/>
+              <rect x="268.2" y="510.2" width="24.2" height="75.8"/>
+              <rect x="282.2" y="426.3" width="10.2" height="98" stroke-dasharray="3 2"/>
+              <rect x="277.4" y="279.3" width="23" height="156.8" stroke-dasharray="3 2"/>
+              <rect x="256.4" y="314.4" width="21" height="57.4" stroke-dasharray="3 2"/>
+              <rect x="275.3" y="86.1" width="35.4" height="224.1" stroke-dasharray="3 2"/>
+            </g>
+            <circle cx="292.4" cy="551" r="6" fill="#334155" stroke="#94a3b8"/>
+            <!-- Pi 5 (approximate) -->
+            <rect x="228.6" y="288.2" width="2.2" height="78.4" fill="#22c55e" opacity="0.7"/>
+            <!-- V2 board -->
+            <rect x="255.1" y="280.8" width="2.2" height="137.2" fill="#10b981"/>
+            <circle cx="257.3" cy="399.1" r="3.5" fill="#f87171"/>
+            <circle cx="257.3" cy="343.1" r="3.5" fill="#fb923c"/>
+            <circle cx="257.3" cy="317.3" r="3.5" fill="#f472b6"/>
+            <!-- Half-rod lenses -->
+            <ellipse cx="290" cy="399.1" rx="5" ry="12" fill="rgba(186,230,253,0.35)" stroke="#bae6fd"/>
+            <ellipse cx="290" cy="343.1" rx="5" ry="12" fill="rgba(186,230,253,0.35)" stroke="#bae6fd"/>
+            <!-- CAM0 -->
+            <rect x="306.1" y="437.8" width="2.3" height="53.2" fill="#38bdf8"/>
+            <rect x="308.1" y="453.6" width="26.9" height="19.6" rx="3" fill="#0e3a52" stroke="#38bdf8"/>
+            <circle cx="327.7" cy="463.4" r="2.5" fill="#fff"/>
+            <!-- CAM1 rotated 22 deg down about its pupil -->
+            <g transform="translate(328.1,133.1) rotate(22)">
+              <rect x="-21.8" y="-26.6" width="2.3" height="53.2" fill="#a78bfa"/>
+              <rect x="-19.6" y="-9.8" width="27" height="19.6" rx="3" fill="#2e1f52" stroke="#a78bfa"/>
+              <circle cx="0" cy="0" r="2.5" fill="#fff"/>
+            </g>
+            <!-- Strobe board rotated 16 deg about its anchor -->
+            <g transform="translate(314.7,273.1) rotate(16)">
+              <rect x="-2.3" y="-28" width="2.3" height="56" fill="#fbbf24"/>
+              <g fill="#fde68a"><rect x="0" y="-22" width="5" height="5"/><rect x="0" y="-11" width="5" height="5"/><rect x="0" y="0" width="5" height="5"/><rect x="0" y="11" width="5" height="5"/></g>
+            </g>
+
+            <!-- Left-side labels with leaders -->
+            <g font-size="10" fill="#cbd5e1">
+              <text x="70" y="128" fill="#c4b5fd" font-weight="700">CAM1 (upper), pitched &minus;22&deg;</text>
+              <text x="70" y="141" fill="#94a3b8">pupil Y &minus;368.5, Z 333.5</text>
+              <line x1="215" y1="132" x2="318" y2="133" stroke="#a78bfa" stroke-width="0.8"/>
+              <text x="70" y="250" fill="#fde68a" font-weight="700">Strobe (20 IR LEDs), &minus;16&deg;</text>
+              <text x="70" y="263" fill="#94a3b8">LED centroid Z 231.8</text>
+              <line x1="225" y1="258" x2="312" y2="271" stroke="#fbbf24" stroke-width="0.8"/>
+              <text x="70" y="298" fill="#86efac">Pi 5, behind the board (approx.)</text>
+              <line x1="215" y1="296" x2="228" y2="300" stroke="#22c55e" stroke-width="0.8"/>
+              <text x="70" y="321" fill="#f9a8d4">Mic U16, Z 201.9 (X 100.6)</text>
+              <line x1="210" y1="318" x2="253" y2="317" stroke="#f472b6" stroke-width="0.8"/>
+              <text x="70" y="347" fill="#fdba74">D12 photodiode, Z 183.5</text>
+              <line x1="200" y1="344" x2="253" y2="343" stroke="#fb923c" stroke-width="0.8"/>
+              <text x="70" y="403" fill="#fca5a5">D11 beam LED, Z 143.5</text>
+              <line x1="196" y1="400" x2="253" y2="399" stroke="#f87171" stroke-width="0.8"/>
+              <text x="70" y="425" fill="#6ee7b7">V2 board face, Y &minus;419.1</text>
+              <text x="70" y="468" fill="#7dd3fc" font-weight="700">CAM0 (lower), level</text>
+              <text x="70" y="481" fill="#94a3b8">pupil Y &minus;368.8, Z 97.6</text>
+              <line x1="190" y1="465" x2="305" y2="464" stroke="#38bdf8" stroke-width="0.8"/>
+              <text x="70" y="556" fill="#94a3b8">switch</text>
+              <line x1="104" y1="553" x2="285" y2="551" stroke="#64748b" stroke-width="0.8"/>
+              <text x="70" y="578" fill="#94a3b8">base: 10 mm plate, 120 &times; 173 mm</text>
+            </g>
+            <!-- In-field labels -->
+            <text x="620" y="212" fill="#fca5a5" font-size="10" font-weight="700">light sheet (plane X = 65)</text>
+            <text x="620" y="225" fill="#fca5a5" font-size="9.5">&plusmn;28&deg; fan from Z 143.5</text>
+            <text x="470" y="311" fill="#fde68a" font-size="9.5" transform="rotate(16 470 311)">strobe axis &minus;16&deg;</text>
+            <text x="520" y="455" fill="#7dd3fc" font-size="9.5">CAM0 axis 0&deg;</text>
+            <text x="450" y="175" fill="#c4b5fd" font-size="9.5" transform="rotate(22 450 175)">CAM1 axis &minus;22&deg;</text>
+            <text x="960" y="80" text-anchor="end" fill="#6ee7b7" font-size="10" font-weight="700">At the ball line both cameras see from the mat to Z &asymp; 298</text>
+
+            <!-- Y scale and dimension -->
+            <g font-size="9.5" fill="#64748b" text-anchor="middle">
+              <text x="144" y="616">&minus;500</text><text x="284" y="616">&minus;400</text><text x="424" y="616">&minus;300</text><text x="564" y="616">&minus;200</text>
+              <text x="704" y="616">&minus;100</text><text x="844" y="616">0</text><text x="984" y="616">100</text>
+            </g>
+            <line x1="331.2" y1="632" x2="844" y2="632" stroke="#94a3b8" marker-start="url(#ar)" marker-end="url(#ar)"/>
+            <text x="588" y="645" text-anchor="middle" fill="#94a3b8" font-size="10">366 mm: stand face to the ball's centre line (Y, mm, towards the ball &rarr;)</text>
+          </svg>
+          <div class="figcaption">
+            <strong>Figure 1.</strong> Looking along the target line (downrange into the page), 1.4 px per mm. Component positions come from the
+            built stand's assembly STEP and the V2 board's KiCad file (Part III.1). Printed parts are drawn as their bounding boxes; the Pi 5
+            outline is approximate. Camera cones assume the 1600-pixel side is horizontal (vertical half-angle 28.5&deg;). The light sheet lies in
+            the plane X = 65 mm, 65 mm downrange of the ball, so in this view it is the drawing plane itself. The mic sits 35.6 mm off that
+            plane, at X = 100.6.
+          </div>
+        </div>
+
+        <!-- FIGURE 1.3: Plan view, to scale (1.1 px per mm). x = 676 + 1.1*Y, y = 394 - 1.1*X -->
+        <h3 id="fig-plan">1.3 Plan View (to scale)</h3>
+        <div class="figure-box">
+          <svg viewBox="0 0 1120 690" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Plan view of the stand, light sheet, camera field of view and hitting zones, drawn to scale">
+            <defs>
+              <marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 1 L10 5 L0 9 z" fill="#34d399"/></marker>
+            </defs>
+            <!-- X scale (left) and Y scale (bottom) -->
+            <g font-size="9.5" fill="#64748b" text-anchor="end">
+              <text x="46" y="617">&minus;200</text><text x="46" y="507">&minus;100</text><text x="46" y="397">0</text>
+              <text x="46" y="287">100</text><text x="46" y="177">200</text><text x="46" y="67">300</text>
+              <text x="16" y="340" transform="rotate(-90 16 340)" text-anchor="middle">X downrange (mm)</text>
+            </g>
+            <g font-size="9.5" fill="#64748b" text-anchor="middle">
+              <text x="126" y="676">&minus;500</text><text x="236" y="676">&minus;400</text><text x="346" y="676">&minus;300</text>
+              <text x="456" y="676">&minus;200</text><text x="566" y="676">&minus;100</text><text x="676" y="676">0</text><text x="786" y="676">100</text>
+            </g>
+            <g stroke="#1e293b"><line x1="52" y1="614" x2="808" y2="614"/><line x1="52" y1="504" x2="808" y2="504"/><line x1="52" y1="284" x2="808" y2="284"/>
+              <line x1="52" y1="174" x2="808" y2="174"/><line x1="52" y1="64" x2="808" y2="64"/></g>
+
+            <!-- CAM0 horizontal field of view (1600 px: +/-31.8 deg) -->
+            <polygon points="270.3,322.5 758.3,20 808,20 808,655.8" fill="rgba(56,189,248,0.09)" stroke="#38bdf8" stroke-opacity="0.55" stroke-dasharray="4 3"/>
+            <!-- Light sheet: X 50..80 -->
+            <rect x="230.8" y="306" width="577.2" height="33" fill="rgba(248,113,113,0.20)" stroke="#f87171" stroke-opacity="0.6"/>
+            <line x1="230.8" y1="322.5" x2="808" y2="322.5" stroke="#f87171" stroke-width="1" stroke-dasharray="5 3"/>
+            <!-- Target line -->
+            <line x1="676" y1="650" x2="676" y2="26" stroke="#34d399" stroke-width="1.4" marker-end="url(#ar2)"/>
+            <text x="684" y="42" fill="#6ee7b7" font-size="10" font-weight="700">target line, +X downrange</text>
+
+            <!-- Hitting zones: X -75..25 for every club -->
+            <rect x="593.5" y="366.5" width="55" height="110" fill="none" stroke="#fbbf24" stroke-width="1.6"/>
+            <rect x="648.5" y="366.5" width="55" height="110" fill="none" stroke="#38bdf8" stroke-width="1.6" stroke-dasharray="6 3"/>
+            <rect x="621" y="366.5" width="55" height="110" fill="none" stroke="#a78bfa" stroke-width="1.4" stroke-dasharray="2 3"/>
+            <rect x="676" y="366.5" width="55" height="110" fill="none" stroke="#f472b6" stroke-width="1.4" stroke-dasharray="1 3"/>
+            <!-- Ball -->
+            <circle cx="676" cy="394" r="23.5" fill="#e2e8f0" stroke="#34d399" stroke-width="2"/>
+
+            <!-- CAM0 view limits at the ball line -->
+            <line x1="666" y1="574.1" x2="686" y2="574.1" stroke="#38bdf8" stroke-width="2"/>
+            <line x1="666" y1="70.9" x2="686" y2="70.9" stroke="#38bdf8" stroke-width="2"/>
+            <text x="660" y="582" text-anchor="end" fill="#7dd3fc" font-size="9.5">CAM0 view edge at the ball line, X &minus;164</text>
+            <text x="660" y="74" text-anchor="end" fill="#7dd3fc" font-size="9.5">X +294 (whole ball to centre X 272)</text>
+
+            <!-- Stand: base, spine, board, mic, pupils, dock -->
+            <rect x="82.3" y="256" width="190.8" height="132" fill="rgba(148,163,184,0.14)" stroke="#94a3b8"/>
+            <rect x="223.6" y="294.5" width="33.4" height="55" fill="rgba(148,163,184,0.30)" stroke="#cbd5e1"/>
+            <rect x="213.3" y="259.3" width="1.8" height="94.6" fill="#10b981"/>
+            <circle cx="215" cy="283.3" r="4" fill="#f472b6"/>
+            <circle cx="270.3" cy="322.5" r="4.5" fill="#fff" stroke="#38bdf8" stroke-width="2"/>
+            <g stroke="#e2e8f0" stroke-width="1.2"><line x1="221" y1="322.5" x2="233" y2="322.5"/><line x1="227.1" y1="316.5" x2="227.1" y2="328.5"/></g>
+            <g font-size="9.8" fill="#cbd5e1">
+              <text x="90" y="246">stand base, X 5.5&ndash;125.5, Y &minus;539.7&ndash;&minus;366.3</text>
+              <text x="90" y="410" fill="#f9a8d4">mic U16 at X 100.6</text>
+              <line x1="150" y1="404" x2="211" y2="287" stroke="#f472b6" stroke-width="0.8"/>
+              <text x="90" y="425" fill="#6ee7b7">V2 board faces the ball</text>
+              <text x="90" y="440" fill="#94a3b8">+ chassis origin (the dock), Y &minus;408.1</text>
+              <text x="90" y="455" fill="#7dd3fc">o camera pupils, X 65, Y &minus;368.8</text>
+              <text x="420" y="352" fill="#fca5a5" font-weight="700">light sheet, X = 65 &plusmn; 15 mm (assumed)</text>
+            </g>
+            <line x1="270.3" y1="642" x2="676" y2="642" stroke="#94a3b8" marker-start="url(#ar2)" marker-end="url(#ar2)"/>
+            <text x="473" y="636" text-anchor="middle" fill="#94a3b8" font-size="10">368.8 mm, pupils to target line</text>
+
+            <!-- Right panel: legend -->
+            <rect x="828" y="20" width="276" height="650" rx="10" fill="#111a2e" stroke="#263554"/>
+            <text x="844" y="46" fill="#38bdf8" font-size="12" font-weight="700">Per-club hitting zones (RH)</text>
+            <text x="844" y="63" fill="#94a3b8" font-size="9.5">Each club's best 100 &times; 50 mm zone of ball-start</text>
+            <text x="844" y="76" fill="#94a3b8" font-size="9.5">offsets, chosen independently by the model.</text>
+            <rect x="844" y="94" width="26" height="14" fill="none" stroke="#38bdf8" stroke-width="1.6" stroke-dasharray="6 3"/>
+            <text x="878" y="105" fill="#e2e8f0" font-size="10">driver: Y &minus;25..+25 &middot; 98.7 %</text>
+            <rect x="844" y="118" width="26" height="14" fill="none" stroke="#fbbf24" stroke-width="1.6"/>
+            <text x="878" y="129" fill="#e2e8f0" font-size="10">mid-iron: Y &minus;75..&minus;25 &middot; 99.3 %</text>
+            <rect x="844" y="142" width="26" height="14" fill="none" stroke="#a78bfa" stroke-width="1.4" stroke-dasharray="2 3"/>
+            <text x="878" y="153" fill="#e2e8f0" font-size="10">wedge, chip: Y &minus;50..0 &middot; 98.4 / 92.4 %</text>
+            <rect x="844" y="166" width="26" height="14" fill="none" stroke="#f472b6" stroke-width="1.4" stroke-dasharray="1 3"/>
+            <text x="878" y="177" fill="#e2e8f0" font-size="10">lob/flop: Y 0..+50 &middot; 69.0 %</text>
+            <text x="844" y="200" fill="#94a3b8" font-size="9.5">All zones span X &minus;75..+25 (behind the start</text>
+            <text x="844" y="213" fill="#94a3b8" font-size="9.5">is negative). Negative Y is towards the stand.</text>
+            <line x1="844" y1="232" x2="1090" y2="232" stroke="#263554"/>
+            <text x="844" y="256" fill="#38bdf8" font-size="12" font-weight="700">Left-handed</text>
+            <text x="844" y="273" fill="#cbd5e1" font-size="9.8">Same stand, turned 180&deg;, chassis origin</text>
+            <text x="844" y="286" fill="#cbd5e1" font-size="9.8">at (65, +408.1). Zones mirror in Y.</text>
+            <line x1="844" y1="304" x2="1090" y2="304" stroke="#263554"/>
+            <text x="844" y="328" fill="#38bdf8" font-size="12" font-weight="700">Golfer (RH)</text>
+            <text x="844" y="345" fill="#cbd5e1" font-size="9.8">stands on the far side of the ball (+Y),</text>
+            <text x="844" y="358" fill="#cbd5e1" font-size="9.8">facing the stand: the cameras look</text>
+            <text x="844" y="371" fill="#cbd5e1" font-size="9.8">across the ball at the golfer.</text>
+            <line x1="844" y1="389" x2="1090" y2="389" stroke="#263554"/>
+            <text x="844" y="413" fill="#38bdf8" font-size="12" font-weight="700">Field of view</text>
+            <text x="844" y="430" fill="#cbd5e1" font-size="9.8">Mira220 1600 &times; 1400 px, 2.79 &micro;m;</text>
+            <text x="844" y="443" fill="#cbd5e1" font-size="9.8">ND3630 lens 3.60 mm F/3.0; pinhole</text>
+            <text x="844" y="456" fill="#cbd5e1" font-size="9.8">model, no distortion. Horizontal</text>
+            <text x="844" y="469" fill="#cbd5e1" font-size="9.8">half-angle 31.8&deg; if the long side is</text>
+            <text x="844" y="482" fill="#cbd5e1" font-size="9.8">horizontal (12 % narrower if not).</text>
+          </svg>
+          <div class="figcaption">
+            <strong>Figure 2.</strong> Plan view, 1.1 px per mm, RH placement. The light-sheet band is the optimizer's 30 mm slab model; the real
+            sheet's effective thickness has not been measured. Hitting zones are offsets from each club's nominal ball start (all starts are at
+            X = Y = 0; the driver is teed).
+          </div>
+        </div>
+
+        <h3 id="p1-table">1.4 Positions &amp; Distances</h3>
+        <div class="table-wrap"><table>
+          <tr><th>Part</th><th class="num">X</th><th class="num">Y</th><th class="num">Z</th><th>Aim</th><th>Source</th></tr>
+          <tr><td>CAM0 entrance pupil (lower camera)</td><td class="num">65.0</td><td class="num">&minus;368.8</td><td class="num">97.6</td><td>level; focus 390 mm</td><td>optimizer; matched by the build</td></tr>
+          <tr><td>CAM1 entrance pupil (upper camera)</td><td class="num">65.0</td><td class="num">&minus;368.5</td><td class="num">333.5</td><td>&minus;22&deg;; focus 388.2 mm</td><td>optimizer; matched by the build</td></tr>
+          <tr><td>Strobe, LED-array centroid</td><td class="num">65.0</td><td class="num">&minus;372.3</td><td class="num">231.8</td><td>&minus;16&deg;</td><td>20 positions; 10 LEDs fitted in the middle rows</td></tr>
+          <tr><td>Trigger anchor (lens holder's rear face)</td><td class="num">65.0</td><td class="num">&minus;404.7</td><td class="num">143.5</td><td>towards the ball</td><td>optimizer</td></tr>
+          <tr><td>D11 beam LED</td><td class="num">65.0</td><td class="num">&minus;419.1</td><td class="num">143.5</td><td>behind <code>Lens_LED</code></td><td>build + KiCad</td></tr>
+          <tr><td>D12 photodiode (36 V)</td><td class="num">65.0</td><td class="num">&minus;419.1</td><td class="num">183.5</td><td>behind <code>Lens_Photodiode</code></td><td>build + KiCad</td></tr>
+          <tr><td>U16 microphone (CMM-2718AT)</td><td class="num">100.6</td><td class="num">&minus;419.1</td><td class="num">201.9</td><td>faces the ball</td><td>build + KiCad</td></tr>
+          <tr><td>Ball resting on the mat / on a 40 mm tee</td><td class="num">0</td><td class="num">0</td><td class="num">57.3 / 76.0</td><td>&mdash;</td><td>36 mm mat assumed</td></tr>
+        </table></div>
+        <div class="card-grid">
+          <div class="card"><h4>Distances to the resting ball</h4>CAM0 pupil <strong>376.6 mm</strong> &middot; CAM1 pupil <strong>465.1 mm</strong>
+            &middot; mic <strong>454.6 mm</strong> (449.0 mm to a teed driver ball) &middot; stand face <strong>366 mm</strong> from the ball's centre line.</div>
+          <div class="card"><h4>Where the light sheet is</h4>The plane <strong>X = 65 mm</strong>, perpendicular to the target line. A resting
+            ball's leading edge starts <strong>43.7 mm</strong> from that plane, or 28.7 mm from the near face of a 30 mm sheet.</div>
+          <div class="card"><h4>What each camera covers</h4>At the ball line, CAM0 spans X &minus;164 to +294 mm and both cameras see from the mat up
+            to Z &asymp; 298 mm. CAM1's focus point is 152 mm above the mat, for rising shots; CAM0's focus plane lies 21 mm beyond the ball line.</div>
+        </div>
+      </section>
+
+      <!-- ==================== PART II ==================== -->
+      <section id="part-2" class="doc-part">
+        <div class="part-banner"><span class="part-num">Part II</span><h2>Why This Layout</h2></div>
+
+        <h3>2.1 The Requirements It Was Optimized Against</h3>
+        <p>The owner confirmed these in the optimizer project's 5 and 6 September 2026 handoffs.</p>
+        <div class="card-grid">
+          <div class="card"><h4>One rigid unit, both hands</h4>To switch hands, move the intact unit to the marked handed position. No
+            recalibration, no refocusing. The cameras and strobe never move when the trigger is toggled.</div>
+          <div class="card"><h4>The shots</h4><span class="tag tag-ok">required</span>drivers, irons, wedges and chips, both hands.
+            <span class="tag tag-warn">wanted</span>lob/flop. Putting: at least one camera must see the ball, under different lighting.</div>
+          <div class="card"><h4>The hitting area</h4>A shared 150 &times; 100 mm area strongly desired, not required. Different recommended ball
+            positions for driver, irons and short game are allowed.</div>
+          <div class="card"><h4>The envelope</h4>Finished enclosure &le; 350 mm wide, &le; 350 mm high, face &le; 70,000 mm&sup2;. No larger fallback.</div>
+          <div class="card"><h4>The trigger and strobe model</h4>Hardware-triggered Mira220s; speed from the time the ball takes to cross one light
+            sheet, modelled 30 mm thick; exposure and strobing start after the trailing edge, 25 &micro;s readiness assumed; a fixed fallback burst
+            when speed is unusable.</div>
+        </div>
+
+        <h3 id="p2-timeline">2.2 Decision Timeline (2026)</h3>
+        <ul class="timeline">
+          <li><span class="when">Jul 21&ndash;22</span><div class="what">First placement optimizer</div>
+            <div class="detail"><code>pitrac_placement_optimizer.py</code>: the "optimizer" the board design doc &sect;18 refers to. Its <code>joint_v12</code>
+            successor is the historical kernel that every later study, and today's workbench, still calls.</div></li>
+          <li><span class="when">Jul&ndash;Aug</span><div class="what">Camera and lens campaigns</div>
+            <div class="detail">Settled on the Mira220 global-shutter sensor (1600 &times; 1400, 2.79 &micro;m).</div></li>
+          <li><span class="when">Sep 3</span><div class="what">The lens: Spinel ND3630, 3.60 mm F/3.0</div>
+            <div class="detail">Highest modelled capture of six pairs at matched geometry (&sect;2.3).</div></li>
+          <li><span class="when">Sep 5&ndash;6</span><div class="what">Four layout families compared</div>
+            <div class="detail">3,221 evaluations across incumbent, vertical spine, low/wide and diagonal layouts, fixed and sliding (&sect;2.4).</div></li>
+          <li><span class="when">Sep 6</span><div class="what">The controller model</div>
+            <div class="detail">Hardware triggering, 30 mm sheet, post-trailing-edge exposure, fallback bursts: geometry held fixed.</div></li>
+          <li><span class="when">Sep 8</span><div class="what">Bounded follow-ups</div>
+            <div class="detail">Keep CAM0 level: tilting it up helped lob/flop but cost focus margin. A 6&deg; counter-yaw was rejected. Normal dark gaps +2 %.</div></li>
+          <li><span class="when">Sep 9</span><div class="what">The design workbench</div>
+            <div class="detail">A local browser editor and evaluator on the historical kernels, with STEP export (Part IV).</div></li>
+          <li><span class="when">Sep 9&ndash;14</span><div class="what">Searches on the vertical spine</div>
+            <div class="detail">Components &le; 250 mm high, then &le; 300 mm, with a movable-zone objective (&sect;2.5).</div></li>
+          <li class="key"><span class="when">Sep 15</span><div class="what">The selection: "weighted020", 97.22 %</div>
+            <div class="detail">All 335 saved candidates rescored with per-club zones weighted by how often each club is hit (&sect;2.6).</div></li>
+          <li><span class="when">Sep 17</span><div class="what">Floor kit</div>
+            <div class="detail">The 36 mm mat convention: the whole dock raised 36 mm; parts sized for Bambu H2S/H2D printers.</div></li>
+          <li><span class="when">Sep 30</span><div class="what">The pupil measured</div>
+            <div class="detail">PCB to entrance pupil 14 mm (sensor to pupil 13.706 mm). Camera boards move 5.29 mm towards the ball along their
+            axes; optical centres do not move.</div></li>
+          <li class="key"><span class="when">Oct 1</span><div class="what">The strobe repair: +20 mm, &minus;16&deg;</div>
+            <div class="detail">A CAD keep-clear screen found the strobe board blocking the trigger lens's light path (&sect;2.7).</div></li>
+          <li class="key"><span class="when">Oct 2</span><div class="what"><code>reference_003</code></div>
+            <div class="detail">The components alone at their operating poses, in CHASSIS, RH and LH frames: the basis of the built stand.</div></li>
+          <li><span class="when">Oct 5 &rarr; Nov 18</span><div class="what">The SolidWorks stand</div>
+            <div class="detail">First mounts, then <code>FullStand</code>: tilted camera mounts, base, lens holder, photodiode shroud, the V2 board as
+            the trigger, the Pi 5, an LRS-75 supply and a switch (&sect;2.8).</div></li>
+        </ul>
+
+        <h3 id="p2-lens">2.3 The Lens</h3>
+        <p>Six lens pairs were scored at matched geometry (3 September). <strong>G</strong> is modelled capture under focus error (higher is
+          better); <strong>H64</strong> counts hard-rejected scenarios of 64 (lower is better); <strong>Q64</strong> is a placement-and-error
+          penalty (lower is better, comparable only within the same H64 pool).</p>
+        <div class="table-wrap"><table>
+          <tr><th>Pair</th><th class="num">G</th><th class="num">H64</th><th class="num">Q64_cond</th><th class="num">Common area, mm&sup2;</th><th>Centred zone</th></tr>
+          <tr><td>CH1965B 3.25 mm F/2.5</td><td class="num">0.847</td><td class="num">6</td><td class="num">87,346</td><td class="num">3,050</td><td>60 &times; 20</td></tr>
+          <tr><td>S356 3.56 mm F/2.5</td><td class="num">0.834</td><td class="num">7</td><td class="num">69,140</td><td class="num">4,475</td><td>70 &times; 30</td></tr>
+          <tr class="chosen"><td><strong>ND3630 3.60 mm F/3.0 (chosen)</strong></td><td class="num"><strong>0.894</strong></td><td class="num">7</td><td class="num">69,039</td><td class="num">4,400</td><td>70 &times; 30</td></tr>
+          <tr><td>S390 3.90 mm F/2.8</td><td class="num">0.852</td><td class="num">7</td><td class="num">62,424</td><td class="num">4,500</td><td>60 &times; 30 (pupil check 4/9)</td></tr>
+          <tr><td>CH3749A 4.11 mm F/3.0</td><td class="num">0.765</td><td class="num">7</td><td class="num">50,367</td><td class="num">7,350</td><td>70 &times; 50</td></tr>
+          <tr><td>S430 4.30 mm F/3.0</td><td class="num">0.720</td><td class="num">7</td><td class="num">60,141</td><td class="num">4,175</td><td>80 &times; 20</td></tr>
+        </table></div>
+        <p>ND3630 led on capture, with balanced placement tolerance, a compact barrel and a confirmed $20 unit price. S356 and CH3749A were kept as
+          alternatives; CH3749A has the largest placement region but lower capture.</p>
+
+        <h3 id="p2-family">2.4 The Layout Family: a Fixed Vertical Spine</h3>
+        <div class="table-wrap"><table>
+          <tr><th>Family (Sep 5&ndash;6)</th><th>What the comparison found</th></tr>
+          <tr><td>Incumbent (historical layout)</td><td>Sliding variant's centred zone only 10 &times; 50 mm; fixed control 80 &times; 30 mm.</td></tr>
+          <tr><td>Vertical spine, sliding</td><td>Highest modelled capture, but a 20 &times; 90 mm centred zone, a moving part, and lob/flop 70.8 % RH against 19.8 % LH.</td></tr>
+          <tr class="chosen"><td><strong>Vertical spine, fixed</strong></td><td>Worst-focus capture 0.822 over an 80 &times; 100 mm zone; no moving parts. Its weakness: lob/flop 0.01 % (25 mm-sheet model).</td></tr>
+          <tr><td>Low/wide, side by side</td><td>Mid-iron capture 5.4 % RH and 5.9 % LH: rejected.</td></tr>
+          <tr><td>Staggered/diagonal</td><td>Substantial modelled gains in the balanced comparison; not carried forward.</td></tr>
+        </table></div>
+        <div class="callout">
+          <div class="callout-title">How the fixed spine became the baseline</div>
+          No formal ranking in the records selects it outright. The fixed spine met the "one rigid unit, no moving parts" requirement with the
+          widest validated zone, and on 9 September the owner asked for the workbench's default, <em>vertical spine, fixed trigger, level CAM0</em>,
+          to be the baseline of the next search. Its lob/flop weakness was then attacked by moving the upper camera and strobe, not by changing family:
+          weighted020 reaches 69 % mean lob/flop capture in its chosen zone.
+        </div>
+
+        <h3 id="p2-search">2.5 The Searches</h3>
+        <div class="card-grid">
+          <div class="card"><h4>Compact-250 (Sep 9&ndash;10)</h4>Every component datum &le; 250 mm. 20 variables: Y, Z and pitch of each of the four
+            components; X, Y and yaw of each handed dock; both focus distances. Component X fixed, positions shared by both hands.
+            <strong>1,672 trials.</strong> The best (Candidate B) beat the 95.64 % baseline on every category but scored slightly worse on placement robustness.</div>
+          <div class="card"><h4>Region 150 &times; 100 (Sep 14)</h4>Height cap raised to <strong>300 mm</strong>. Objective: the best movable 150 &times; 100 mm
+            rectangle per hand, 90 % its quality (half mean, half weakest-10 % mean) and 10 % the area outside it, ranked by the worse hand.</div>
+          <div class="card"><h4>Weighted per-club (Sep 15)</h4>No new search: all <strong>341 saved capture maps</strong> (336 unique, 335 within the
+            300 mm cap) rescored with the objective in &sect;2.6. Trial 20 of the region search won.</div>
+        </div>
+
+        <h3 id="p2-objective">2.6 The Selection Objective</h3>
+        <div class="formula">
+          score = min<sub>hand &isin; {RH, LH}</sub> &sum;<sub>club</sub> w<sub>club</sub> &middot; max<sub>100 &times; 50 mm zone</sub> mean capture(zone)
+          <div class="eq-note">w = driver 0.30, mid-iron 0.35, wedge 0.20, pitch/chip 0.12, lob/flop 0.03. Each club and each hand chooses its zone
+          independently on a 25 mm grid of 117 ball-start offsets (X &minus;225..+75, Y &minus;100..+100). Mean only: no floor, no weakest-tail
+          penalty, no outside-area term, at the owner's request.</div>
+        </div>
+        <div class="table-wrap"><table>
+          <tr><th>Club</th><th class="num">Weight</th><th>Zone X, mm</th><th>Zone Y (RH), mm</th><th class="num">Mean capture</th><th class="num">Lowest sample</th></tr>
+          <tr><td>driver</td><td class="num">0.30</td><td>&minus;75..+25</td><td>&minus;25..+25</td><td class="num">98.7 %</td><td class="num">98.0 %</td></tr>
+          <tr><td>mid-iron</td><td class="num">0.35</td><td>&minus;75..+25</td><td>&minus;75..&minus;25</td><td class="num">99.3 %</td><td class="num">98.8 %</td></tr>
+          <tr><td>wedge</td><td class="num">0.20</td><td>&minus;75..+25</td><td>&minus;50..0</td><td class="num">98.4 %</td><td class="num">97.4 %</td></tr>
+          <tr><td>pitch/chip</td><td class="num">0.12</td><td>&minus;75..+25</td><td>&minus;50..0</td><td class="num">92.4 %</td><td class="num">92.1 %</td></tr>
+          <tr><td>lob/flop</td><td class="num">0.03</td><td>&minus;75..+25</td><td>0..+50</td><td class="num">69.0 %</td><td class="num">50.4 %</td></tr>
+        </table></div>
+        <div class="callout warn">
+          <div class="callout-title">Different evidence, different leaders</div>
+          weighted020 leads on the nominal score (97.22 %). Under focus error it does not: among the 63 candidates with complete five-focus maps,
+          <code>focus_first v4 trial_002</code> ("focus002") led at 93.36 % nominal and <strong>91.13 %</strong> worst-focus. focus002 was carried as a
+          comparison CAD profile in the September floor kit, but the selection followed the nominal objective.
+        </div>
+
+        <h3 id="p2-strobe">2.7 The Strobe Repair (Oct 1)</h3>
+        <p>
+          A geometric keep-clear screen in CAD found weighted020's strobe board (chassis Z 180 mm, &minus;8&deg;) cutting <strong>364 mm&sup3;</strong> into the
+          clear light path of the trigger's upper half-rod lens. A bounded grid moved only the strobe: chassis Z 180&ndash;220 mm by pitch &minus;16..0&deg;.
+          Each cell shows nominal % / worst five-focus %; blocked cells were not focus-scored. RH Z = chassis Z + 33.5.
+        </p>
+        <div class="table-wrap"><table class="grid5">
+          <tr><th>Chassis Z</th><th>&minus;16&deg;</th><th>&minus;12&deg;</th><th>&minus;8&deg;</th><th>&minus;4&deg;</th><th>0&deg;</th></tr>
+          <tr><td>180</td><td class="blocked">97.21 &middot; blocked</td><td class="blocked">97.22 &middot; blocked</td><td class="blocked">97.22 / 79.31 &middot; blocked (original)</td><td class="blocked">97.13 &middot; blocked</td><td class="blocked">96.90 &middot; blocked</td></tr>
+          <tr><td>190</td><td class="blocked">97.21 &middot; blocked</td><td class="blocked">97.20 &middot; blocked</td><td class="blocked">97.14 &middot; blocked</td><td class="blocked">96.96 &middot; blocked</td><td class="blocked">96.75 &middot; blocked</td></tr>
+          <tr><td>200</td><td class="pick">97.20 / 79.30</td><td class="pass">97.15 / 79.24</td><td class="pass">97.01 / 79.11</td><td class="pass">96.84 / 78.06</td><td class="pass">96.50 / 83.27</td></tr>
+          <tr><td>210</td><td class="pass">97.14 / 79.24</td><td class="pass">97.04 / 79.14</td><td class="pass">96.88 / 78.09</td><td class="pass">96.62 / 83.38</td><td class="pass">96.13 / 82.91</td></tr>
+          <tr><td>220</td><td class="pass">97.06 / 79.16</td><td class="pass">96.90 / 78.11</td><td class="pass">96.70 / 85.08</td><td class="pass">96.27 / 83.05</td><td class="pass">95.92 / 87.63</td></tr>
+        </table></div>
+        <p>
+          <strong>Z 200 mm at &minus;16&deg; is the smallest passing rise</strong> and keeps every original hitting zone. The higher-scoring worst-focus cells
+          (e.g. 220 mm at 0&deg;: 87.63 %) move the selected mid-iron zone, so they are not better focus tolerance at the original ball position. The same
+          hardware also supports alternative mid-iron zones: X &minus;125..&minus;25 gives 96.99 % / 85.38 %, and X &minus;150..&minus;50 gives 96.40 % / 88.11 %.
+        </p>
+
+        <h3 id="p2-built">2.8 From Reference to Built Stand</h3>
+        <div class="card-grid">
+          <div class="card"><h4>Kept from the design</h4>Camera pupils, axes and focus distances; strobe height and pitch; the trigger anchor's position;
+            the handed dock pose; the 36 mm floor convention. The printed parts were drawn directly in <code>reference_003</code>'s RH frame.</div>
+          <div class="card"><h4>Changed</h4><strong>The V2 board became the trigger.</strong> D11 shines through <code>Lens_LED</code> and D12 looks through
+            <code>Lens_Photodiode</code>, with D11 placed exactly at the old trigger's height on the X = 65 plane. The optimizer modelled the earlier
+            separate trigger and an ideal 30 mm slab.</div>
+          <div class="card"><h4>Added, never modelled</h4>The Pi 5 behind the board, an LRS-75 supply on the base, a switch near its foot. None was in
+            the optimizer's obstruction model, and the Oct 1 keep-clear screen ran on the old trigger's lenses.</div>
+        </div>
+      </section>
+
+      <!-- ==================== PART III ==================== -->
+      <section id="part-3" class="doc-part">
+        <div class="part-banner"><span class="part-num">Part III</span><h2>Consequences</h2></div>
+
+        <h3>3.1 Built vs. Design Check</h3>
+        <p><code>Hardware/Stand/tools/stand_geometry.py</code> reads <code>FullStand.STEP</code> (2026-11-18), the V2 board's <code>.kicad_pcb</code> and
+          <code>reference_003</code>'s datums. Every check below reproduces from those files.</p>
+        <div class="table-wrap"><table>
+          <tr><th>Check</th><th>Result</th></tr>
+          <tr><td>Printed parts share one placement (base, both camera mounts, lens holder, shroud)</td><td><span class="tag tag-ok">yes</span>their origin is the RH origin</td></tr>
+          <tr><td>Both camera pupils, from one module offset fitted to both cameras (6 equations, 3 unknowns)</td><td><span class="tag tag-ok">0.000 mm</span>offset (19, 19, 9) mm</td></tr>
+          <tr><td>Camera axes against the design</td><td><span class="tag tag-ok">0.000&deg;</span>CAM0 level, CAM1 &minus;22.00&deg;</td></tr>
+          <tr><td>Strobe LED centroid against the design's strobe axis</td><td><span class="tag tag-ok">0.04 mm off axis</span>6.0 mm along it; board &minus;16.00&deg;</td></tr>
+          <tr><td>V2 board's M2 holes H1, H2, H7, H8 against the M2 standoffs</td><td><span class="tag tag-ok">0.00 mm</span>confirms the board placement</td></tr>
+          <tr><td>D11 against the design's trigger anchor</td><td><span class="tag tag-ok">same X and Z</span>14.35 mm behind the lens holder's rear face</td></tr>
+        </table></div>
+
+        <h3 id="p3-hidden">3.2 What the Score Hides</h3>
+        <div class="card-grid">
+          <div class="card"><h4><span class="tag tag-bad">largest</span>Focus sensitivity</h4>A &plusmn;10 &micro;m image-plane error in either camera drops the
+            weighted score from 97.20 % to <strong>79.30 %</strong>. Focus repeatability on real lenses is unmeasured.</div>
+          <div class="card"><h4><span class="tag tag-warn">weak</span>Lob/flop</h4>69 % mean, 50 % lowest sample, hidden by its 3 % weight.</div>
+          <div class="card"><h4><span class="tag tag-warn">idealized</span>Optics</h4>Pinhole projection, no measured distortion, a single hand-measured
+            pupil offset, no exact lens body.</div>
+          <div class="card"><h4><span class="tag tag-warn">assumed</span>Timing</h4>25 &micro;s readiness and a 30 mm sheet, neither measured. 7c.1 has since
+            measured the camera's trigger delay at about 0.2 &micro;s.</div>
+          <div class="card"><h4><span class="tag tag-warn">warnings</span>Mechanics</h4>Scored with mechanics as warnings; a legacy projection warning on the
+            strobe (9.09 mm) remains.</div>
+          <div class="card"><h4><span class="tag tag-bad">not accuracy</span>What the % means</h4>The fraction of a 333-shot catalog the model expects to
+            capture usefully. None of this is measured ball speed, launch or spin accuracy.</div>
+        </div>
+
+        <h3 id="p3-timing">3.3 Two Timing Models That Disagree</h3>
+        <div class="table-wrap"><table>
+          <tr><th></th><th>Optimizer (the stand was scored with this)</th><th>Board design doc, <code>The_One_Board_To_Rule_Them_All.md</code> &sect;13.1</th></tr>
+          <tr><td>Sheet</td><td>30 mm thick, centred on X = 65 mm</td><td><code>beam_width_mm = 3.0</code>, "calibrate!" &mdash; the owner: it should have been 3 cm</td></tr>
+          <tr><td>First flash</td><td>25 &micro;s after the trailing edge: ball centre at X &asymp; 101 mm</td><td><code>beam_to_fov_mm = 150</code>: ball centre at X &asymp; 215 mm</td></tr>
+          <tr><td>Spacing</td><td>47.33 mm; 10-pulse fallback</td><td>42.67 mm (the firmware's <code>STROBE_FREEZE_SPACING_UM</code>)</td></tr>
+        </table></div>
+        <div class="card-grid">
+          <div class="card"><h4>Where 150 mm came from</h4>A deliberately loose starting value. &sect;15 sized it for a camera delay assumed at 100&ndash;300 &micro;s
+            ("holds to ~90 m/s+"), and &sect;16 step 8 says to tighten it from the images. Even with 300 &micro;s the design's own formula needs only about
+            53 mm at 90 m/s. Neither optimizer used it.</div>
+          <div class="card"><h4>How early the first freeze can come</h4>The design formula's floor is
+            <code>(D + w)/2 + v &middot; 32 &micro;s</code> past the sheet centre: 39.5 mm at 100 m/s. The live current readback sets a larger one:
+            a live firing waits for 200 &micro;s of ADC0 baseline after the switch to BURST, 198&ndash;200 &micro;s on board 1. With 32 &micro;s of detection,
+            try about 230 &micro;s of readiness below: four whole-ball freezes still fit at 100 m/s (7c.3, passed 2026-11-20). The shot path is planned in <code>Hardware/firmware/SHOT_PATH_PLAN.md</code>.</div>
+          <div class="card"><h4>Why it matters</h4>With 150 mm, only about <strong>2</strong> whole-ball freezes land in CAM0's view; with the optimizer's
+            model, about <strong>4</strong>. An earlier burst, though, gives the microphone less time (&sect;3.4).</div>
+        </div>
+        <div class="formula">
+          t<sub>FIRE</sub>(150 mm model) = (X<sub>s</sub> + B) / v &nbsp;&nbsp;&nbsp; t<sub>FIRE</sub>(optimizer) = (X<sub>s</sub> + (D + w)/2) / v + t<sub>ready</sub>
+          &nbsp;&nbsp;&nbsp; t<sub>sound</sub> = 454.6 mm / 343 m/s = 1.325 ms
+          <div class="eq-note">X<sub>s</sub> = 65 mm, D = 42.67 mm, w = sheet thickness, B = beam_to_fov. Times from first club contact, assuming the ball moves at
+          full speed from X = 0; the ~0.45 ms of club contact actually delays it by roughly 0.2 ms, which moves every FIRE later.</div>
+        </div>
+
+        <h3 id="p3-sim">3.4 Interactive: Where the Freezes Land, and When the Impact Sound Arrives</h3>
+        <div class="figure-box">
+          <div class="sim-controls">
+            <div class="sim-slider"><label><span>Ball speed</span><span id="lblV">70 m/s</span></label>
+              <input type="range" id="rngV" min="20" max="100" step="1" value="70" oninput="updateSim()"></div>
+            <div class="sim-slider"><label><span>Sheet thickness w</span><span id="lblW">30 mm</span></label>
+              <input type="range" id="rngW" min="3" max="40" step="1" value="30" oninput="updateSim()"></div>
+            <div class="sim-slider"><label><span>Design doc beam_to_fov B</span><span id="lblB">150 mm</span></label>
+              <input type="range" id="rngB" min="30" max="200" step="1" value="150" oninput="updateSim()"></div>
+            <div class="sim-slider"><label><span>Optimizer readiness</span><span id="lblR">25 &micro;s</span></label>
+              <input type="range" id="rngR" min="0" max="1000" step="5" value="25" oninput="updateSim()"></div>
+          </div>
+          <svg viewBox="0 0 1120 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Ball positions at each flash along the target line, and FIRE times against the impact sound">
+            <!-- Position strip: X -200..360 mm -> px 80..1060 (1.75 px/mm) -->
+            <text x="16" y="22" fill="#38bdf8" font-size="11.5" font-weight="700">A. Ball centre at each flash, along the target line (mm)</text>
+            <rect id="simSheet" x="0" y="30" width="0" height="160" fill="rgba(248,113,113,0.18)" stroke="#f87171" stroke-opacity="0.6"/>
+            <line x1="143.5" y1="200" x2="944.0" y2="200" stroke="#38bdf8" stroke-width="3"/>
+            <line x1="180.8" y1="194" x2="180.8" y2="206" stroke="#7dd3fc" stroke-width="2"/>
+            <line x1="906.5" y1="194" x2="906.5" y2="206" stroke="#7dd3fc" stroke-width="2"/>
+            <text x="560" y="216" text-anchor="middle" fill="#7dd3fc" font-size="9.5">CAM0 view at the ball line: X &minus;164 to +294 (whole ball for centres up to X 272)</text>
+            <circle cx="430" cy="110" r="37.3" fill="none" stroke="#e2e8f0" stroke-dasharray="3 3"/>
+            <text x="430" y="114" text-anchor="middle" fill="#e2e8f0" font-size="9.5">start</text>
+            <text x="86" y="74" fill="#c4b5fd" font-size="9.5">Design doc</text>
+            <text x="86" y="154" fill="#7dd3fc" font-size="9.5">Optimizer</text>
+            <g id="simFreezesA"></g>
+            <g id="simFreezesB"></g>
+            <g font-size="9" fill="#64748b" text-anchor="middle">
+              <text x="80" y="232">&minus;200</text><text x="255" y="232">&minus;100</text><text x="430" y="232">0</text><text x="605" y="232">100</text>
+              <text x="780" y="232">200</text><text x="955" y="232">300</text>
+            </g>
+            <!-- Time strip: 0..6 ms -> px 80..1060 -->
+            <text x="16" y="256" fill="#38bdf8" font-size="11.5" font-weight="700">B. Time after first club contact (ms)</text>
+            <line x1="80" y1="292" x2="1060" y2="292" stroke="#475569" stroke-width="1.5"/>
+            <rect id="simSound" x="0" y="268" width="0" height="24" fill="rgba(251,191,36,0.45)"/>
+            <text id="simSoundTxt" x="0" y="264" fill="#fde68a" font-size="9.5" text-anchor="middle">impact sound at the mic</text>
+            <line id="simFireA" x1="0" y1="266" x2="0" y2="298" stroke="#a78bfa" stroke-width="3"/>
+            <line id="simFireB" x1="0" y1="266" x2="0" y2="298" stroke="#38bdf8" stroke-width="3"/>
+            <g font-size="9" fill="#64748b" text-anchor="middle">
+              <text x="80" y="310">0</text><text x="243.3" y="310">1</text><text x="406.7" y="310">2</text><text x="570" y="310">3</text>
+              <text x="733.3" y="310">4</text><text x="896.7" y="310">5</text><text x="1060" y="310">6</text>
+            </g>
+            <text x="1060" y="326" text-anchor="end" fill="#94a3b8" font-size="9">purple: FIRE, design doc &middot; blue: FIRE, optimizer &middot; amber: sound (iron 1.325 / driver 1.309 ms)</text>
+          </svg>
+          <div class="sim-readouts">
+            <div class="sim-stat"><div class="s-val" id="outFireA">&mdash;</div><div class="s-lbl">FIRE, design doc model</div></div>
+            <div class="sim-stat"><div class="s-val" id="outFireB">&mdash;</div><div class="s-lbl">FIRE, optimizer model</div></div>
+            <div class="sim-stat"><div class="s-val" id="outSnd">1.325 ms</div><div class="s-lbl">Impact sound reaches U16 (iron)</div></div>
+            <div class="sim-stat"><div class="s-val" id="outInA">&mdash;</div><div class="s-lbl">Whole-ball freezes in CAM0 view, design doc</div></div>
+            <div class="sim-stat"><div class="s-val" id="outInB">&mdash;</div><div class="s-lbl">Whole-ball freezes in CAM0 view, optimizer</div></div>
+            <div class="sim-stat"><div class="s-val" id="outMinB">&mdash;</div><div class="s-lbl">Smallest B the design formula allows (t_cam 0.2 &micro;s)</div></div>
+          </div>
+          <div class="figcaption"><strong>Figure 3.</strong> First-order model: straight flight along the target line at constant speed, 10 pulses,
+            pinhole camera, 1600-pixel side horizontal. Sound at 343 m/s (20 &deg;C). It shows why the first-freeze distance and the microphone plan
+            have to be decided together; it is not a capture simulation.</div>
+        </div>
+        <div class="table-wrap"><table>
+          <tr><th class="num">Ball speed</th><th class="num">FIRE, 150 mm model</th><th class="num">FIRE, optimizer model</th><th>Sound (1.31&ndash;1.33 ms) before FIRE?</th></tr>
+          <tr><td class="num">40 m/s</td><td class="num">5.38 ms</td><td class="num">2.56 ms</td><td>yes, both</td></tr>
+          <tr><td class="num">60 m/s</td><td class="num">3.58 ms</td><td class="num">1.71 ms</td><td>yes, both</td></tr>
+          <tr><td class="num">70 m/s</td><td class="num">3.07 ms</td><td class="num">1.47 ms</td><td>yes, both</td></tr>
+          <tr><td class="num">80 m/s</td><td class="num">2.69 ms</td><td class="num">1.29 ms</td><td>150 mm: yes &middot; optimizer: about level</td></tr>
+          <tr><td class="num">100 m/s</td><td class="num">2.15 ms</td><td class="num">1.04 ms</td><td>150 mm: yes &middot; optimizer: <strong>no</strong>, 0.27&ndash;0.29 ms after</td></tr>
+        </table></div>
+        <p>In the optimizer's model the crossover is about <strong>79 m/s</strong> (177 mph), or about 96 m/s once ~0.45 ms of club contact is allowed for.</p>
+      </section>
+
+      <!-- ==================== PART IV ==================== -->
+      <section id="part-4" class="doc-part">
+        <div class="part-banner"><span class="part-num">Part IV</span><h2>Changing It</h2></div>
+        <p>The optimizer, the selected design's record and the stand's CAD live outside this repo, in
+          <code>Github-Personal\Faceplate\Faceplate_Design</code>: a cleaned-up, verified copy that reproduces weighted020's recorded maps and scores
+          exactly. Paths below are relative to that folder.</p>
+
+        <h3>4.1 Where Each Assumption Lives</h3>
+        <div class="table-wrap"><table>
+          <tr><th>Assumption</th><th>Current value</th><th>Change it in</th><th>What must rerun</th></tr>
+          <tr><td>Component poses, focus</td><td><code>designs/weighted020/SCENE.json</code></td><td>workbench editor</td><td>Evaluate, Focus check, Capture map, Active-LUT64</td></tr>
+          <tr><td>Hand positions (docks)</td><td>RH (65, &minus;408.1), LH (65, +408.1), yaw 0/180&deg;</td><td>workbench, select the dock</td><td>as above</td></tr>
+          <tr><td>Ball starts, tee heights</td><td>driver 40 mm, others resting</td><td>workbench, select the ball</td><td>as above</td></tr>
+          <tr><td>Readiness, spacing, delay, fallback</td><td>25 &micro;s, 47.33 mm, 0 &micro;s, <code>flat15</code> &times; 10</td><td>workbench timing panel, then activate</td><td>timing rebuild, then evaluations</td></tr>
+          <tr><td>Sheet thickness</td><td>30 mm</td><td><code>.07267</code> in <code>optimizer/tools/design_workbench/backend/clock_model.py</code>, workbench stopped</td><td>every score; cached results recompute</td></tr>
+          <tr><td>Mat thickness</td><td>36 mm</td><td>the SolidWorks base (CAD only)</td><td><code>stand_geometry.py --mat-mm</code></td></tr>
+          <tr><td>Pupil (PCB to pupil)</td><td>14 mm</td><td>workbench per-camera pupil field</td><td>body positions only</td></tr>
+          <tr><td>Height cap</td><td>component datum Z &le; 300 mm (chassis)</td><td><code>BOUNDS</code> in a copied search script</td><td>the search</td></tr>
+          <tr><td>Club weights, zone size</td><td>0.30/0.35/0.20/0.12/0.03; 100 &times; 50 mm</td><td>a copied <code>weighted_club100x50_20260915/objective.py</code></td><td>rescoring the saved maps</td></tr>
+          <tr><td>Lens</td><td>ND3630 3.60 mm F/3.0</td><td>the historical optical kernels</td><td>a new campaign</td></tr>
+        </table></div>
+
+        <h3 id="p4-steps">4.2 Making a New Design</h3>
+        <ol>
+          <li><strong>Check the copy:</strong> run <code>Verify_Optimizer.cmd</code> (about 40 s; must say PASSED).</li>
+          <li><strong>Edit and score:</strong> <code>Launch_Workbench.cmd</code>, then <code>http://127.0.0.1:8765</code>. Pin weighted020 as the reference,
+            edit poses, focus, docks, ball starts or timing, and run Evaluate, Focus check, Capture map and Active-LUT64.</li>
+          <li><strong>Search (optional):</strong> copy <code>optimizer/work/d_optimization_v3/region150x100_20260914/campaign_v2.py</code> into a new dated folder,
+            change <code>BOUNDS</code> or the objective, then run its <code>init</code> and <code>search</code> phases with the bundled Python. The originals are
+            templates: they check historical run folders that were not copied.</li>
+          <li><strong>Export:</strong> Export STEP in the workbench gives chassis and world STEPs, RH and LH, with camera FOV, strobe and sheet references.
+            The world frame has the mat top at Z = 0; add the mat thickness to match the RH floor frame. Needs FreeCAD 1.1.3.</li>
+          <li><strong>Draw the parts</strong> in SolidWorks around the imported components, in that frame, as <code>FullStand</code> was.</li>
+          <li><strong>Check the build:</strong> <code>python Hardware/Stand/tools/stand_geometry.py --step &lt;assembly.STEP&gt;</code> in this repo, after
+            replacing <code>Hardware/Stand/reference_003/</code> with the new scene and datums.</li>
+        </ol>
+        <div class="callout warn">
+          <div class="callout-title">Traps</div>
+          The engine hashes every module it loads into a source identity, refuses to start if its historical coaxial sources differ from their
+          snapshot or a pinned input fails its hash, and stops if a file changes mid-session. Never let line endings change in <code>optimizer/</code>.
+          Builders and searches refuse an existing output folder: copy into a new dated folder, change the copy.
+        </div>
+
+        <h3 id="p4-files">4.3 Files &amp; Provenance</h3>
+        <div class="table-wrap"><table>
+          <tr><th>Where</th><th>What</th></tr>
+          <tr><td><a href="Hardware/Stand/README.md"><code>Hardware/Stand/README.md</code></a></td><td>This document's source: the same facts in text, with every evidence path</td></tr>
+          <tr><td><a href="Hardware/Stand/built/STAND_GEOMETRY_RH.csv"><code>Hardware/Stand/built/STAND_GEOMETRY_RH.csv</code></a></td><td>Part I's positions, written by the tool</td></tr>
+          <tr><td><a href="Hardware/Stand/tools/stand_geometry.py"><code>Hardware/Stand/tools/stand_geometry.py</code></a></td><td>Reads the assembly STEP and the board; prints Part III.1's checks</td></tr>
+          <tr><td><a href="Hardware/Stand/reference_003/SCENE.json"><code>Hardware/Stand/reference_003/</code></a></td><td>Byte-exact copies of the optimizer's scene and datums</td></tr>
+          <tr><td><code>Faceplate_Design\</code></td><td>The optimizer, <code>designs/weighted020</code>, the CAD (<code>CAD/PitracStand</code>, <code>CAD/reference_003</code>), the decision
+            records in <code>docs/history</code>, and <code>VERIFICATION/</code></td></tr>
+          <tr><td><code>Faceplate\PiTrac_Ambidextrous_Printable_Product_CODEX_Handoff_20260901\</code></td><td>The original 36 GB working folder with the full evidence</td></tr>
+        </table></div>
+        <div class="callout">
+          <div class="callout-title">Status</div>
+          A provisional prototype. Scores are modelled capture under declared assumptions; no source-tight optical assembly, fabrication or production
+          release is claimed. The geometry facts in Part I and the checks in Part III.1 are measured from the CAD; everything else is the optimizer's model.
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    function toggleTheme() {
+      const root = document.documentElement;
+      root.setAttribute('data-theme', root.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+    }
+    function filterPart(partId, btn) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      document.querySelectorAll('.doc-part').forEach(sec => {
+        if (partId === 'all' || sec.id === partId) sec.classList.remove('hidden'); else sec.classList.add('hidden');
+      });
+      if (partId !== 'all') {
+        const el = document.getElementById(partId);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+    function ensureVisible(partId) {
+      const sec = document.getElementById(partId);
+      if (sec && sec.classList.contains('hidden')) filterPart('all', document.querySelector('.tab-btn'));
+    }
+
+    // Figure 3: first-order flash positions and FIRE times. Geometry from Part I.
+    const D = 42.67, XS = 65, SND_IRON = 454.6 / 343, SND_DRIVER = 449.0 / 343;
+    const VIEW_MIN = -142.4, VIEW_MAX = 272.3;      // whole-ball centres in CAM0's view at the ball line
+    const SP_A = 42.67, SP_B = 47.33, N = 10;
+    const px = x => 80 + (x + 200) * 1.75;          // mm along X -> svg x
+    const pt = t => 80 + t * (980 / 6);             // ms -> svg x
+    function freezes(group, x0, spacing, y, colour) {
+      let html = '', inView = 0;
+      for (let k = 0; k < N; k++) {
+        const x = x0 + k * spacing;
+        if (x > 360) break;
+        const ok = x >= VIEW_MIN && x <= VIEW_MAX;
+        if (ok) inView++;
+        html += '<circle cx="' + px(x).toFixed(1) + '" cy="' + y + '" r="37.3" fill="' + (ok ? colour : 'none') +
+                '" fill-opacity="0.22" stroke="' + colour + '" stroke-width="1.6"' + (ok ? '' : ' stroke-dasharray="3 3"') + '/>';
+        html += '<circle cx="' + px(x).toFixed(1) + '" cy="' + y + '" r="2.6" fill="' + colour + '"/>';
+      }
+      document.getElementById(group).innerHTML = html;
+      return inView;
+    }
+    function fmt(ms) { return ms.toFixed(2) + ' ms'; }
+    function updateSim() {
+      const v = +document.getElementById('rngV').value;          // m/s == mm/ms
+      const w = +document.getElementById('rngW').value;          // mm
+      const B = +document.getElementById('rngB').value;          // mm
+      const r = +document.getElementById('rngR').value / 1000;   // ms
+      document.getElementById('lblV').textContent = v + ' m/s (' + Math.round(v * 2.23694) + ' mph)';
+      document.getElementById('lblW').textContent = w + ' mm';
+      document.getElementById('lblB').textContent = B + ' mm';
+      document.getElementById('lblR').textContent = Math.round(r * 1000) + ' µs';
+
+      const sheet = document.getElementById('simSheet');
+      sheet.setAttribute('x', px(XS - w / 2).toFixed(1));
+      sheet.setAttribute('width', (w * 1.75).toFixed(1));
+
+      const xA = XS + B, tA = xA / v;
+      const xB = XS + (D + w) / 2 + v * r, tB = (XS + (D + w) / 2) / v + r;
+      const inA = freezes('simFreezesA', xA, SP_A, 70, '#a78bfa');
+      const inB = freezes('simFreezesB', xB, SP_B, 150, '#38bdf8');
+
+      const snd = document.getElementById('simSound');
+      snd.setAttribute('x', pt(SND_DRIVER).toFixed(1));
+      snd.setAttribute('width', Math.max(2, pt(SND_IRON) - pt(SND_DRIVER)).toFixed(1));
+      document.getElementById('simSoundTxt').setAttribute('x', pt(SND_IRON).toFixed(1));
+      const clamp = t => pt(Math.min(t, 6)).toFixed(1);
+      ['simFireA', 'simFireB'].forEach((id, i) => {
+        const el = document.getElementById(id), xx = clamp(i ? tB : tA);
+        el.setAttribute('x1', xx); el.setAttribute('x2', xx);
+      });
+
+      const verdict = t => (t > SND_IRON ? ' <span class="good">sound first</span>' : (t > SND_DRIVER ? ' <span class="warn">about level</span>' : ' <span class="bad">sound after</span>'));
+      document.getElementById('outFireA').innerHTML = (tA > 6 ? '&gt; 6 ms' : fmt(tA)) + verdict(tA);
+      document.getElementById('outFireB').innerHTML = fmt(tB) + verdict(tB);
+      document.getElementById('outInA').textContent = inA + ' of ' + N;
+      document.getElementById('outInB').textContent = inB + ' of ' + N;
+      document.getElementById('outMinB').textContent = ((D + w) / 2 + v * 0.0322).toFixed(1) + ' mm';
+    }
+    updateSim();
+  </script>
+</body>
+</html>

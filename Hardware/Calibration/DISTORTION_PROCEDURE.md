@@ -11,7 +11,8 @@ diffuse 850 nm illumination. Distortion is an intrinsic optical mapping, not a
 PCB/pupil offset, camera-to-enclosure transform, or final mounting extrinsic.
 
 The starting operating-focus model references are CAM0 **390 mm** and CAM1
-**388.245268774 mm**. These are model references, not measured focus authority,
+**388.245268774 mm**, the stand layout's values ([../Stand/README.md](../Stand/README.md) §1.2).
+These are model references, not measured focus authority,
 distance setpoints, or proof of actual focus. Set and verify focus using the
 physical stack, then lock it. Do not refocus between board poses or fit/validation
 captures. Moving the board is allowed while it remains adequately sharp.
