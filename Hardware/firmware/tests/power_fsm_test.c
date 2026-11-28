@@ -387,6 +387,71 @@ static bool shutdown_during_pi_boot(void) {
     return true;
 }
 
+// Image 1.14 (V113-F4): the shutdown a Pi asks for itself is queued only in
+// RUNNING, where it is the orderly one. The reviewer's case: a Pi whose
+// userspace came up after the boot timeout, the FSM in FAULT with the latch
+// closed and the UART connected. There a plain request (USB's) drops the latch
+// and counts a power cut to a powered Pi; the Pi's is refused and changes
+// nothing. Before RUNNING (PI_BOOTING, late detection in BENCH_RUNNING) it is
+// refused too, so nothing waits to be consumed later.
+static bool shutdown_orderly_only(void) {
+    CHECK(!power_request_shutdown_orderly());                 // STANDBY
+    step(1);
+    CHECK(power_fsm_state() == PS_STANDBY);
+    CHECK(power_request_on());                                 // no stop was left pending
+
+    reset_fixture();
+    pins[PIN_PI_3V3_SENSE] = true;
+    power_request_on();
+    step(0);
+    step(RAIL_SETTLE_MS);
+    CHECK(power_fsm_state() == PS_PI_BOOTING);
+    CHECK(!power_request_shutdown_orderly());                 // PI_BOOTING
+    step(PI_BOOT_TIMEOUT_MS + 1);
+    CHECK(power_fsm_state() == PS_FAULT && pins[PIN_LATCH_CONTROL]);
+    pins[PIN_RPI5_ON] = true;                                  // userspace, late
+    step(1);
+    CHECK(uart_on);                                            // the Pi can talk
+    const uint32_t cuts = telemetry_get(TELE_PI_POWER_CUT);
+    CHECK(!power_request_shutdown_orderly());                 // FAULT
+    step(1);
+    step(1);
+    CHECK(power_fsm_state() == PS_FAULT && pins[PIN_LATCH_CONTROL] && uart_on);
+    CHECK(telemetry_get(TELE_PI_POWER_CUT) == cuts);
+    power_request_shutdown();                                  // the plain request, for contrast
+    step(1);
+    step(1);
+    CHECK(!pins[PIN_LATCH_CONTROL]);
+    CHECK(telemetry_get(TELE_PI_POWER_CUT) == cuts + 1u);     // what 1.13 let the Pi do
+
+    reset_fixture();
+    CHECK(start_bench());
+    pins[PIN_PI_3V3_SENSE] = true;                             // a late Pi, in the debounce
+    step(1);
+    CHECK(power_fsm_state() == PS_BENCH_RUNNING);
+    CHECK(!power_request_shutdown_orderly());                 // BENCH_RUNNING
+    step(1);
+    CHECK(power_fsm_state() == PS_BENCH_RUNNING && pins[PIN_LATCH_CONTROL]);
+    step(PI_PRESENT_DEBOUNCE_MS);
+    CHECK(power_fsm_state() == PS_PI_BOOTING);
+    pins[PIN_RPI5_ON] = true;
+    step(1);
+    step(1);
+    CHECK(power_fsm_state() == PS_RUNNING);                    // and nothing was left queued
+
+    CHECK(power_request_shutdown_orderly());                  // RUNNING: the orderly one
+    const uint32_t reqs = telemetry_get(TELE_PI_SHUTDOWN_REQ);
+    step(1);
+    CHECK(power_fsm_state() == PS_SHUTTING_DOWN && pins[PIN_LATCH_CONTROL]);
+    CHECK(telemetry_get(TELE_PI_SHUTDOWN_REQ) == reqs + 1u);
+    CHECK(!power_request_shutdown_orderly());                 // SHUTTING_DOWN
+    pins[PIN_RPI5_ON] = false;
+    step(PI_SHUTDOWN_MIN_HOLDOFF_MS);
+    step(1);
+    CHECK(power_fsm_state() == PS_STANDBY);
+    return true;
+}
+
 static bool supply_loss(void) {
     CHECK(start_bench());
     power_request_on();
@@ -1227,7 +1292,7 @@ int main(int argc, char **argv) {
         TEST(on_during_startup), TEST(on_during_shutdown), TEST(on_during_fault),
         TEST(standby_off), TEST(pending_on_shutdown), TEST(pending_on_forceoff),
         TEST(fresh_on_after_cancel), TEST(shutdown_during_startup),
-        TEST(shutdown_during_pi_boot), TEST(supply_loss), TEST(rail_collapse),
+        TEST(shutdown_during_pi_boot), TEST(shutdown_orderly_only), TEST(supply_loss), TEST(rail_collapse),
         TEST(usb_guard), TEST(button_cycle), TEST(long_press), TEST(stale_fault_ack),
         TEST(request_on_result), TEST(pi_boot_timeout), TEST(pi_shutdown_timeout),
         TEST(strobe_teardown), TEST(camera_teardown),

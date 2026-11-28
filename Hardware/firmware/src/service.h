@@ -67,9 +67,46 @@ yield_t pitrac_yield_ms(uint32_t ms);
 // boundary -- per sweep point, per burst -- rather than at every sleep.
 bool pitrac_abort_pending(void);
 
-// Clear the latch. A command calls this on entry so a stray keystroke typed
-// during the PREVIOUS command cannot abort this one.
+// Clear the latch, and the "taken" mark below. A command calls this on entry so
+// a stray keystroke typed during the PREVIOUS command cannot abort this one.
 void pitrac_abort_clear(void);
+
+// The USB console's next input byte, or PICO_ERROR_TIMEOUT for none. A CR LF pair
+// is ONE Enter: an LF that is the very next byte after a CR is dropped (image 1.16,
+// review finding V115-F1). Both readers of the console use this -- the line editor
+// (cli_service()) and the stop key (pitrac_yield_ms()) -- because the line editor
+// runs a command as soon as it reads the CR, and the command's key poll then read
+// the client's LF as a stop. Any other byte after the CR cancels the drop, so a
+// later LF is a key like any other.
+int pitrac_console_getc(void);
+
+// A second source of abort requests, polled with the USB key (image 1.13): while
+// the Pi runs a command over the link, pi_link.c registers one that reads the
+// link for that command's CLI_ABORT (and sends its keepalive), and clears it
+// afterwards. Polled ONLY from inside a blocking command (pitrac_yield_ms()),
+// never from the superloop -- the same rule as the key, for the same reason: in
+// the superloop it would consume the link's next request. NULL: none.
+void pitrac_abort_source(bool (*poll)(void));
+
+// A wait that a stop request ends EARLY (image 1.14, review finding V113-F3):
+// up to `ms`, servicing as pitrac_yield_ms() does, in pieces of at most 20 ms,
+// returning YIELD_ABORT_KEY as soon as the latch is set -- at once if it already
+// is. `ms` 0 is still one poll and one service pass (image 1.15, V114-F4), so a
+// loop with no wait between its steps still sees a stop and a new fault at every
+// step. For the waits of a command that can stop part-way -- a ramp's step, a
+// sweep's dwell, a demo's pattern -- never for a settling time (see
+// pitrac_yield_ms()). YIELD_ABORT_FAULT: a fault was raised. A command that
+// stops on YIELD_ABORT_KEY does its cleanup and calls pitrac_abort_taken().
+yield_t pitrac_yield_stoppable_ms(uint32_t ms);
+
+// "This command ENDED EARLY because a stop was asked" (image 1.14, V113-F3).
+// Called by a command at the point where it acts on the latch. The Pi's answer
+// says "stopped" only then: a stop the command did not act on -- it was too
+// late, or the command does not stop part-way -- is reported as asked for, not
+// as done. In 1.13 the answer read the latch alone, and `panel demo` reported
+// "stopped" after running all 24 s. Cleared by pitrac_abort_clear().
+void pitrac_abort_taken(void);
+bool pitrac_abort_was_taken(void);
 
 // ---------------------------------------------------------------------------
 // THE WATCHDOG, AND WHY IT IS CONDITIONAL

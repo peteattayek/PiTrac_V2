@@ -466,7 +466,11 @@ static void engine_fire(strobe_result_t *r, size_t n_words, uint64_t *t_enable,
                                                  { r->outcome = STROBE_RUN_ABORT_POWER; break; }
         if (y == YIELD_ABORT_FAULT || fault_current() != FAULT_NONE)
                                                  { r->outcome = STROBE_RUN_ABORT_FAULT; break; }
-        if (y == YIELD_ABORT_KEY)                { r->outcome = STROBE_RUN_ABORT_KEY;   break; }
+        if (y == YIELD_ABORT_KEY) {
+            pitrac_abort_taken();                // engine_reset() below ends the burst early
+            r->outcome = STROBE_RUN_ABORT_KEY;
+            break;
+        }
     }
     r->observed_us = (uint32_t)(time_us_64() - t0);
 
@@ -943,6 +947,7 @@ static bool cal_fire(strobe_cal_t *c, strobe_cal_point_t *p) {
     static const strobe_burst_t pulse = { STROBE_CAL_WIDTH_US, 0u, 1u };
     if (!wait_for_pacing(strobe_burst_charge_mc(pulse.width_us, pulse.count))) {
         c->res = s_live ? STROBE_CAL_RES_ABORTED : STROBE_CAL_RES_LIVE_LOST;
+        if (s_live && pitrac_abort_pending()) pitrac_abort_taken();
         return false;
     }
     strobe_result_t r = strobe_run(&pulse, (uint32_t)STROBE_SW_MAX_US);
@@ -986,7 +991,7 @@ strobe_cal_t strobe_cal(float target_a, strobe_cal_report_fn report) {
 
     for (;;) {
         if (s_cal_n >= STROBE_CAL_MAX_POINTS) { c.res = STROBE_CAL_RES_TOO_MANY; break; }
-        if (pitrac_abort_pending()) { c.res = STROBE_CAL_RES_ABORTED; break; }
+        if (pitrac_abort_pending()) { pitrac_abort_taken(); c.res = STROBE_CAL_RES_ABORTED; break; }
 
         strobe_cal_point_t p;
         if (!cal_fire(&c, &p)) break;
@@ -1023,7 +1028,12 @@ strobe_cal_t strobe_cal(float target_a, strobe_cal_report_fn report) {
         float sum = 0.0f;
         bool ok = true;
         for (uint32_t k = 0; k < STROBE_CAL_CONFIRM_PULSES; k++) {
-            if (pitrac_abort_pending()) { c.res = STROBE_CAL_RES_ABORTED; ok = false; break; }
+            if (pitrac_abort_pending()) {
+                pitrac_abort_taken();
+                c.res = STROBE_CAL_RES_ABORTED;
+                ok = false;
+                break;
+            }
             strobe_cal_point_t p;
             if (!cal_fire(&c, &p)) { ok = false; break; }
             if (report) report(&p, true);

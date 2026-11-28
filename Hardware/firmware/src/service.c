@@ -18,7 +18,11 @@
 // so 5 ms is far finer than anything needs while still costing nothing.
 #define SERVICE_SLICE_MS 5u
 
+// pitrac_yield_stoppable_ms(): how long a stop can go unseen.
+#define STOPPABLE_PIECE_MS 20u
+
 static volatile bool s_abort;
+static bool s_abort_taken;
 
 // Faults are LATCHED until acknowledged, so "a fault exists" is the wrong test
 // -- it would make every command refuse instantly while the board sat in
@@ -104,8 +108,35 @@ yield_t pitrac_service(void) {
 //
 // Reasoning about one caller and writing the conclusion down as a comment is
 // what made it look correct. Introduced and found 2026-08-31.
+static bool (*s_abort_source)(void);
+
+void pitrac_abort_source(bool (*poll)(void)) { s_abort_source = poll; }
+
+// The USB console's input, CR LF folded into one Enter (image 1.16, review
+// finding V115-F1). The line editor (cli_service()) dispatches on the CR and runs
+// the command there and then, so the LF of a client that ends its lines CR LF was
+// still waiting -- and the command's first key poll read it as a stop.
+// tools/scope.py sent CR LF, and its 4096-sample capture stopped after one sample
+// with no key pressed. The LF is dropped only as the very next byte after a CR,
+// whenever it arrives and whoever reads it; any other byte cancels that, so an LF
+// typed later is a key like any other.
+static bool s_lf_ends_cr;
+
+int pitrac_console_getc(void) {
+    for (;;) {
+        const int ch = getchar_timeout_us(0);
+        if (ch == PICO_ERROR_TIMEOUT) return PICO_ERROR_TIMEOUT;   // the LF may yet come
+        const bool pair = s_lf_ends_cr && ch == '\n';
+        s_lf_ends_cr = (ch == '\r');
+        if (!pair) return ch;
+    }
+}
+
 static void poll_abort_key(void) {
-    if (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) s_abort = true;
+    if (pitrac_console_getc() != PICO_ERROR_TIMEOUT) s_abort = true;
+    // The Pi's CLI_ABORT, while the Pi runs a command (pi_link.c). Called every
+    // slice even once aborted: it also sends the link's keepalive.
+    if (s_abort_source && s_abort_source()) s_abort = true;
 }
 
 yield_t pitrac_yield_ms(uint32_t ms) {
@@ -132,9 +163,35 @@ yield_t pitrac_yield_ms(uint32_t ms) {
     return r;
 }
 
+yield_t pitrac_yield_stoppable_ms(uint32_t ms) {
+    if (s_abort) return YIELD_ABORT_KEY;
+    // A zero wait is still one poll of both stop sources (the USB key, the Pi's
+    // CLI_ABORT) and one service pass, as pitrac_yield_ms(0) is (image 1.15,
+    // review finding V114-F4). In 1.14 it returned at once, so a `beam sweep`
+    // with a 0 ms dwell ran all 1000 steps with no poll and no FSM step, and a
+    // fault latched meanwhile went unseen by the loop.
+    if (ms == 0u) return pitrac_yield_ms(0u);
+    // No check of the latch in the loop: a piece that saw a stop returns it
+    // (pitrac_service() reports the latch), so one that returns YIELD_OK leaves
+    // none to find.
+    absolute_time_t end = make_timeout_time_ms(ms);
+    for (;;) {
+        int64_t left_us = absolute_time_diff_us(get_absolute_time(), end);
+        if (left_us <= 0) return YIELD_OK;
+        uint32_t left_ms = (uint32_t)(left_us / 1000);
+        if (left_ms == 0u) left_ms = 1u;
+        yield_t r = pitrac_yield_ms(left_ms < STOPPABLE_PIECE_MS ? left_ms : STOPPABLE_PIECE_MS);
+        if (r != YIELD_OK) return r;
+    }
+}
+
 bool pitrac_abort_pending(void) { return s_abort; }
+
+void pitrac_abort_taken(void) { s_abort_taken = true; }
+bool pitrac_abort_was_taken(void) { return s_abort_taken; }
 
 void pitrac_abort_clear(void) {
     s_abort = false;
+    s_abort_taken = false;
     s_fault_gen_at_entry = fault_generation();
 }

@@ -155,9 +155,13 @@ void cfg_init(void) {
 
 void cfg_apply_beam(void) {
     // Guard against a corrupt-but-CRC-valid record steering the beam somewhere
-    // dangerous: a frequency outside the range beam_configure() handles sanely,
-    // or a phase outside one period, is a reason to fall back to the default.
-    if (s_cfg.carrier_hz >= 5000u && s_cfg.carrier_hz <= 250000u) {
+    // dangerous: a frequency outside the carrier's range (board.h) is a reason to
+    // fall back to the default, and beam_configure() refuses it anyway. The range
+    // is the beam's own, beam_freq_allowed(), so whatever `cfg save` stored from a
+    // running carrier comes back (image 1.18, review note V117-N2): until 1.17 this
+    // took 5-250 kHz, and a saved 1250 Hz with its phase came back as the 104 kHz
+    // default with phase 0.
+    if (beam_freq_allowed(s_cfg.carrier_hz)) {
         beam_configure(s_cfg.carrier_hz, beam_duty(), s_cfg.demod_phase_ticks);
     }
 }

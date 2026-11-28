@@ -125,6 +125,8 @@ typedef struct {
     bool     too_small;     // peak under CAL_PEAK_MIN_FRAC of full scale (1.6).
                             //   NOT in `valid`: `cal demod` refuses to commit it,
                             //   `cal model` does not judge its points on it.
+    bool     stopped;       // ended early on a stop: not a measurement at all, and
+                            //   not a rejected one either (image 1.15, V114-F5)
 } cal_demod_t;
 
 // WHY THE PURITY BARS ARE DUTY-AWARE, AND WHY A FIXED h3 BAR WAS A TRAP
@@ -320,6 +322,11 @@ typedef struct {
 // looks fine, because each point IS fine -- they just describe different scenes.
 #define CAL_MODEL_AMP_SPREAD_MAX 0.20f
 
+// Fits the model over f0..f1 at npts points and puts the carrier back. *out is
+// written only when the fit succeeds; a stop, too few good points or a failed
+// fit return false and leave *out as it was (image 1.15, review finding
+// V114-F5: 1.14 zeroed it at the start, and a stop on a point was taken for a
+// rejected point, so the run went on and could publish a fit of fewer points).
 bool    cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts,
                         cal_phase_model_t *out);
 int32_t cal_model_phase_ticks(const cal_phase_model_t *m, uint32_t freq_hz);

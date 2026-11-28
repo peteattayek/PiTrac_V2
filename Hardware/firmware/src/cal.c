@@ -169,8 +169,11 @@ bool cal_demod_phase(uint32_t freq_hz, uint32_t n_points, uint32_t cycles,
         printf("  phase %4ld ticks -> %+8.1f codes\n", (long)ticks, (double)d[i]);
 
         // Abort at the point boundary, not mid-chop: a half-finished chop would
-        // leave the beam at duty 0 and the caller none the wiser.
+        // leave the beam at duty 0 and the caller none the wiser. `stopped` tells
+        // the caller this false is a stop, not a rejected sweep (V114-F5).
         if (pitrac_abort_pending()) {
+            pitrac_abort_taken();
+            out->stopped = true;
             beam_chop_end();
             printf("\nABORTED after %lu of %lu points -- nothing committed.\n",
                    (unsigned long)(i + 1), (unsigned long)n_points);
@@ -277,10 +280,20 @@ bool cal_demod_phase(uint32_t freq_hz, uint32_t n_points, uint32_t cycles,
 
 // ---------------------------------------------------------------------------
 
-bool cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts,
-                     cal_phase_model_t *out) {
+bool cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts, cal_phase_model_t *out) {
     if (!out || npts < 3 || npts > 8 || f1 <= f0) return false;
-    *out = (cal_phase_model_t){0};
+    // Every point lies between f0 and f1, so both inside the carrier's range puts
+    // every point inside it (image 1.17, V116-F1; beam_configure() refuses the rest).
+    if (!beam_freq_allowed(f0) || !beam_freq_allowed(f1)) {
+        printf("REFUSED: %lu..%lu Hz leaves the carrier's %u-%u Hz. Nothing was run.\n",
+               (unsigned long)f0, (unsigned long)f1,
+               (unsigned)BEAM_FREQ_MIN_HZ, (unsigned)BEAM_FREQ_MAX_HZ);
+        return false;
+    }
+    // Built here and published to *out only once the whole run has succeeded
+    // (image 1.15, review finding V114-F5). 1.14 zeroed *out first and filled it
+    // in place, so a stopped or failed run had already thrown away the model held.
+    cal_phase_model_t fit = {0};
 
     double fs[8], th[8]; uint32_t n = 0;
 
@@ -290,8 +303,12 @@ bool cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts,
     // commits the answer. That happened on 2026-08-24 and cost a bench session.
     // The giveaway is in the sweep listing: phases step by (TOP+1)/64, so a
     // period of 750 ticks instead of 1440 means 200 kHz, not 104 kHz.
-    uint32_t f_restore  = beam_actual_freq_hz();
-    int32_t  ph_restore = beam_phase_ticks();
+    // The setting itself, put back register for register on every way out (image
+    // 1.16, review finding V115-F3): 1.15 saved the frequency read back and the
+    // phase, re-planned TOP from that integer, and took beam_duty() as the points
+    // had left it -- a stop at 1021 Hz, 50 %, phase 333 came back at another TOP
+    // and 25 %.
+    const beam_setting_t carrier = beam_setting();
 
     // Optical stability across the run. See CAL_MODEL_AMP_SPREAD_MAX in cal.h:
     // the per-point checks cannot catch a scene that changes BETWEEN points,
@@ -311,8 +328,21 @@ bool cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts,
         // 300 ms/point and 0.12-0.15 at 400 ms/point for the same signal, with
         // no dependence on amplitude across a 2x change. Costs ~128 s for five
         // points instead of ~48 s.
-        if (!cal_demod_phase(f, CAL_PHASE_POINTS, CAL_CHOP_CYCLES,
-                             CAL_CHOP_HZ_DEFAULT, &r)) {
+        const bool good = cal_demod_phase(f, CAL_PHASE_POINTS, CAL_CHOP_CYCLES,
+                                          CAL_CHOP_HZ_DEFAULT, &r);
+        // A stop ends the run here, BEFORE the point is judged (V114-F5): in 1.14
+        // a point that stopped part-way came back false like a rejected one, took
+        // the `continue` below past this check, and the run measured the next
+        // frequency and could publish a fit of the points before the stop. A stop
+        // that came during a good point's last chop ends it too.
+        if (r.stopped || pitrac_abort_pending()) {
+            pitrac_abort_taken();
+            printf("STOPPED at model point %lu of %lu: nothing fitted.\n",
+                   (unsigned long)(i + 1), (unsigned long)npts);
+            beam_restore(&carrier);
+            return false;
+        }
+        if (!good) {
             printf("   REJECTED -- peak %.0f, sat %.0f %%, h3 %.3f vs %.3f expected, null %.1f\n",
                    (double)r.peak, (double)(r.sat_frac * 100.0f),
                    (double)r.h3_ratio, (double)r.h3_expected, (double)r.quad_null);
@@ -324,19 +354,12 @@ bool cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts,
         if (r.peak < pk_min) pk_min = r.peak;
         if (r.peak > pk_max) pk_max = r.peak;
 
-        if (pitrac_abort_pending()) {
-            printf("ABORTED after %lu of %lu model points.\n",
-                   (unsigned long)(i + 1), (unsigned long)npts);
-            beam_configure(f_restore, beam_duty(), ph_restore);
-            return false;
-        }
-
         fs[n] = (double)f;
         th[n] = 2.0 * M_PI * (double)r.best_ticks / (double)(beam_top() + 1u);
         n++;
     }
     // Put the carrier back before any early return below can skip it.
-    beam_configure(f_restore, beam_duty(), ph_restore);
+    beam_restore(&carrier);
 
     if (n < 3) { printf("model needs >=3 good points, got %lu\n", (unsigned long)n); return false; }
 
@@ -379,23 +402,23 @@ bool cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts,
     double c0 = m[0][3] / m[0][0], c1 = m[1][3] / m[1][1], c2 = m[2][3] / m[2][2];
 
     // Undo the 1e-5 scaling so the coefficients are in terms of Hz.
-    out->a0 = (float)c0;
-    out->a1 = (float)(c1 * 1e-5);
-    out->a2 = (float)(c2 * 1e-10);
+    fit.a0 = (float)c0;
+    fit.a1 = (float)(c1 * 1e-5);
+    fit.a2 = (float)(c2 * 1e-10);
 
     double resid = 0;
     for (uint32_t i = 0; i < n; i++) {
         double f = fs[i];
-        double p = out->a0 + out->a1 * f + out->a2 * f * f;
+        double p = fit.a0 + fit.a1 * f + fit.a2 * f * f;
         resid += (p - th[i]) * (p - th[i]);
     }
     // With exactly 3 points a quadratic fit is EXACT, so the residual is
     // identically zero and says nothing about fit quality. Report it as
     // unavailable rather than as a perfect score.
-    out->resid_rms_rad = (n > 3) ? (float)sqrt(resid / n) : -1.0f;
-    out->f_lo = (uint32_t)fs[0];
-    out->f_hi = (uint32_t)fs[n-1];
-    out->n_points = (uint8_t)n;
+    fit.resid_rms_rad = (n > 3) ? (float)sqrt(resid / n) : -1.0f;
+    fit.f_lo = (uint32_t)fs[0];
+    fit.f_hi = (uint32_t)fs[n-1];
+    fit.n_points = (uint8_t)n;
 
     // Judge "pure delay" on the CHAIN DELAY, not on the coefficients.
     //
@@ -404,15 +427,16 @@ bool cal_demod_model(uint32_t f0, uint32_t f1, uint32_t npts,
     // 2026-08-24 fit and printed "NOT a pure delay" for a chain whose delay
     // varies by 3.5 % across the whole band. The curvature half of that test
     // passed. Only the meaningless half fired.
-    out->amp_spread = (pk_min > 1.0f) ? (pk_max / pk_min - 1.0f) : 0.0f;
-    out->duty  = beam_duty();
-    out->valid = true;               // set first: the helpers below check it
+    fit.amp_spread = (pk_min > 1.0f) ? (pk_max / pk_min - 1.0f) : 0.0f;
+    fit.duty  = beam_duty();
+    fit.valid = true;                // set first: the helpers below check it
 
-    out->delay_lo_ns  = cal_model_delay_ns(out, out->f_lo);
-    out->delay_hi_ns  = cal_model_delay_ns(out, out->f_hi);
-    out->span_err_deg = fabsf(out->delay_hi_ns - out->delay_lo_ns) * 0.5f
-                      * 1.0e-9f * (float)out->f_hi * 360.0f;
-    out->pure_delay   = (out->span_err_deg < CAL_PURE_DELAY_MAX_DEG);
+    fit.delay_lo_ns  = cal_model_delay_ns(&fit, fit.f_lo);
+    fit.delay_hi_ns  = cal_model_delay_ns(&fit, fit.f_hi);
+    fit.span_err_deg = fabsf(fit.delay_hi_ns - fit.delay_lo_ns) * 0.5f
+                     * 1.0e-9f * (float)fit.f_hi * 360.0f;
+    fit.pure_delay   = (fit.span_err_deg < CAL_PURE_DELAY_MAX_DEG);
+    *out = fit;                      // the one write to *out: a whole, finished fit
     return true;
 }
 
@@ -445,16 +469,24 @@ bool cal_model_covers(const cal_phase_model_t *m, uint32_t f) {
 
 // ---------------------------------------------------------------------------
 
-bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts,
-                      const cal_phase_model_t *model, bool force_cold,
-                      cal_scan_point_t *best) {
+// One line, so tests/extract_functions.py can copy it into stop_test (image 1.16).
+bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts, const cal_phase_model_t *model, bool force_cold, cal_scan_point_t *best) {
     if (!best || npts < 2) return false;
+    // As `cal model` (image 1.17, V116-F1): the ends inside the range put every row in it.
+    if (!beam_freq_allowed(f0) || !beam_freq_allowed(f1)) {
+        printf("REFUSED: %lu..%lu Hz leaves the carrier's %u-%u Hz. Nothing was run.\n",
+               (unsigned long)f0, (unsigned long)f1,
+               (unsigned)BEAM_FREQ_MIN_HZ, (unsigned)BEAM_FREQ_MAX_HZ);
+        return false;
+    }
 
-    // A scan is minutes of continuous beam. The 35 % ceiling is a DESTRUCTION
-    // limit, not an operating point -- CR-12 measured the junction at 123-133 C
-    // at 30 % against a 145 C maximum. Hold the ceiling at the sustainable duty
-    // for the duration so nothing inside the scan can wander above it, and put
-    // it back afterwards so the ceiling means the same thing everywhere else.
+    // A scan is minutes of continuous beam. The 35 % design ceiling is a
+    // DESTRUCTION limit, not an operating point -- CR-12 measured the junction at
+    // 123-133 C at 30 % against a 145 C maximum. Hold the ceiling at the
+    // sustainable duty for the duration so nothing inside the scan can wander
+    // above it, and put it back afterwards. Since image 1.14 the ceiling is 25 %
+    // everywhere already and cannot be raised (beam.c), so this matters only to
+    // a session that lowered it: the scan runs at 25 % and puts that back.
     float saved_ceiling = beam_duty_ceiling();
     beam_set_duty_ceiling(BEAM_DUTY_OPERATING);
     if (beam_duty() > BEAM_DUTY_OPERATING) beam_set_duty(BEAM_DUTY_OPERATING);
@@ -463,9 +495,9 @@ bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts,
     // across the band and must put it back, or the beam is simply left at f1 and
     // everything typed afterwards silently runs at the wrong frequency. Note the
     // restore has to happen on the REFUSED path below too, which is why it is
-    // captured before the warm-up gate rather than after it.
-    uint32_t f_restore  = beam_actual_freq_hz();
-    int32_t  ph_restore = beam_phase_ticks();
+    // captured before the warm-up gate rather than after it. The setting itself,
+    // not the frequency read back (image 1.16, V115-F3, as `cal model`).
+    const beam_setting_t carrier = beam_setting();
 
     // WARM-UP GATE. From cold to plateau the LED loses 25-45 % of its optical
     // output while current moves +1.7 % and power +0.6 % -- so nothing
@@ -547,9 +579,10 @@ bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts,
         }
 
         if (pitrac_abort_pending()) {
+            pitrac_abort_taken();
             printf("# ABORTED after %lu of %lu candidates.\n",
                    (unsigned long)(i + 1), (unsigned long)npts);
-            beam_configure(f_restore, beam_duty(), ph_restore);
+            beam_restore(&carrier);
             beam_set_duty_ceiling(saved_ceiling);
             return false;
         }
@@ -561,10 +594,10 @@ bool cal_scan_carrier(uint32_t f0, uint32_t f1, uint32_t npts,
 
     // Put the carrier and phase back. Leaving the beam wherever the last scan
     // point landed is the trap `cal model` had until 2026-08-24.
-    beam_configure(f_restore, beam_duty(), ph_restore);
+    beam_restore(&carrier);
     beam_set_duty_ceiling(saved_ceiling);
     printf("Carrier restored to %lu Hz, phase %ld ticks.\n",
-           (unsigned long)f_restore, (long)ph_restore);
+           (unsigned long)beam_actual_freq_hz(), (long)beam_phase_ticks());
     // THE ACTUAL VERDICT.
     if (sn_n >= 3) {
         float mean = sn_sum / (float)sn_n;

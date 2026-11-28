@@ -273,6 +273,12 @@ void power_request_shutdown(void) {
     s_req_shutdown = (s_ps != PS_STANDBY && s_ps != PS_FORCE_OFF);
 }
 
+bool power_request_shutdown_orderly(void) {
+    if (s_ps != PS_RUNNING) return false;
+    power_request_shutdown();
+    return true;
+}
+
 void power_request_force_off(void) {
     s_req_on = s_req_shutdown = false;
     s_req_force_off = true;

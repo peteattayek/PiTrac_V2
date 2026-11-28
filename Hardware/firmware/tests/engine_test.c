@@ -203,6 +203,7 @@ bool    pitrac_watchdog_enabled(void) { return g_wdog; }
 yield_t pitrac_service(void) { return YIELD_OK; }
 yield_t pitrac_yield_ms(uint32_t ms) { g_now_us += (uint64_t)ms * 1000u; return YIELD_OK; }
 bool    pitrac_abort_pending(void) { return false; }
+void    pitrac_abort_taken(void) { }
 bool    beam_enabled(void) { return false; }
 bool    detect_armed(void) { return false; }
 bool    detect_arm(bool on) { (void)on; return true; }

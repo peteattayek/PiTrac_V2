@@ -181,7 +181,7 @@ nearly broke. **Keep these in mind when refactoring.**
 | 3 | **Every RP2354 reset is a hard power cut to the Pi.** That covers SW2, `reset`, `bootsel`, the watchdog and a +5V_IN brownout. | On any reset GPIO15 goes high-Z, R12 pulls Q2's gate low, and the latch opens. This is deliberate: the rail must drop if the MCU dies on a 9 A board. The cost is that a Pi can never be shut down gracefully through a reset. | `reset` and `bootsel` refuse while a Pi is powered (`force` overrides). The watchdog is **off by default**. SW2 is operator discipline: tape it over when a Pi is seated. |
 | 4 | **The +5 V rail never runs from USB.** Three thresholds apply: `V5_MIN_FOR_LATCH` 5.05 V before latching; `V5_MIN_UNDER_LOAD` 4.60 V once, 250 ms after latching; `V5_MIN_SUSTAINED` 4.90 V continuously with a **500 ms debounce**. The +5V_IN reading uses a default scale of **1.063**. | USB VBUS feeds +5V_IN through **D8, an SS14 rated 1 A**, and a Pi 5 draws amps. The debounce is load-bearing, because strobe bursts are *expected* to sag the rail for milliseconds. The raw ADC reading is ~5.9 % low (PROGRESS Q9). | `power_fsm.c`, `board.h`. Per board, `adc5vcal` is a safety gate ([§8](#8-per-board-bring-up-only-what-repeats)) |
 | 5 | **`on` is accepted only from STANDBY with no stop pending.** Requests never queue across a power cycle. | On 2026-09-18 a stale `on` re-closed the latch after an `off`. | `power_request_on()`; power FSM host tests ([§6.6](#66-host-tests)) |
-| 6 | **Beam duty: 25 % operating, with a 35 % ceiling on the *effective* duty** (after U9's clamp). It is enforced inside `beam_configure()` and applies to every caller. The beam powers up at 2 %. | At 30 % duty the LED junction reaches 123–133 °C against a 145 °C maximum (CR-12). | [`beam.c`](Hardware/firmware/src/beam.c) |
+| 6 | **Beam duty: 25 %**, required on USB and the Pi (owner, 2026-11-24). In candidate 1.23 it is on the PWM pin's high time, the carrier stays within 1–200 kHz, and no change made while the beam runs stretches a pulse on the pin. It binds the pin, not the LED (owner, 2026-11-26): the LED adds the drive chain's stretch, measured per board (`BRINGUP_NEW_BOARD.md` Step 6.3b, at the carrier, 150 and 200 kHz, with nothing claimed between them). 1.14 and 1.15 bounded the LED with an assumed U9 width (V114-F3, V115-F2), 1.16 claimed the pin's bound for the LED at any frequency (V116-F1), and 1.17's check measured at 200 kHz only (V117-F1); all four failed review on it. Board 5 on 1.12 still relies on procedure. The beam powers up at 2 %. | At 30 % duty the LED junction reaches 123–133 °C against a 145 °C maximum (CR-12). | [`beam.c`](Hardware/firmware/src/beam.c) |
 | 7 | **PWM "same-channel" pairs share one compare register:** 12/28 (6A), 15/31 (7B), 11/27 (5B), 36/44 (10A), 2/18 (1A), 3/19 (1B). Slices are always resolved at runtime with `pwm_gpio_to_slice_num()`; there are deliberately no `PWM_SLICE_*` constants. | Putting one pin of a pair on PWM silently drives the other pin, which may be a safety line or Pi-facing, with the same waveform. Three hand-written slice constants were once wrong. | `board.h` slice map; [HARDWARE_REFERENCE §11](HARDWARE_REFERENCE.md) |
 | 8 | **The PIO GPIOBASE partition.** GPIO46 is reachable only from a block with base 16, and GPIO4–10 only from base 0. `pio_alloc_init()` runs before any `pio_add_program()`. | The SDK refuses to change a block's base once it holds code, and rejects configs that reach outside the window. This fails at run time, not at compile time. | [`pio_alloc.c`](Hardware/firmware/src/pio_alloc.c) (with `_Static_assert`s) |
 | 9 | **`safe_state_now()` reverts every pin to SIO.** Call `safe_state_reclaim_pins()` if the board should keep working afterwards. | Otherwise `beam on` reports success and emits no light. | `safe_state.h` |
@@ -484,7 +484,7 @@ superseded:
 | `HPF_Toggle` polarity | 1 = tracking | **0 = TRACK, 1 = HOLD** | `HPF_SEL_TRACK`; TMUX1219 truth table plus four bench confirmations |
 | LPF corner | 15.9 kHz | **15.39 kHz** (the annotation is stale) | HARDWARE_REFERENCE §5 |
 | USB-only supply / guard | ~4.6–4.7 V; one threshold `V5_MIN_FOR_PI` 4.90 V | 4.6–4.85 V; **three thresholds** (5.05 / 4.60 / 4.90 V + 500 ms) and a **1.063** ADC scale | `board.h`; PROGRESS Q9 |
-| Carrier | "~100 kHz at 30 %", a firmware parameter | **104.1667 kHz fixed for every board**; **25 %** operating, 35 % ceiling | PROGRESS §8; CR-12 |
+| Carrier | "~100 kHz at 30 %", a firmware parameter | **104.1667 kHz fixed for every board**; **25 %** operating limit (in candidate 1.23, held on the PWM pin's high time; the carrier within 1–200 kHz) | PROGRESS §8; CR-12 |
 | Demod phase calibration (§13.8) | Static reflector; sweep phase and read ADC5 | **Cannot work**, because ADC5 sits behind the 0.66 s HPF. Replaced by the chopped-beam differential `cal demod` plus the `cal model` fit, with **no** reflector | PROGRESS §8; `cal.h` |
 | Comparator timing | GPIO IRQ, RAM handler on core 1 | **PIO transit timer** (PIO2 SM0, GPIOBASE 16), one FIFO word per pulse | ARCHITECTURE A2 |
 | ADC scheduling | "Mode A" ch1/2/5/7 including while armed | IDLE {1,2,5,7} at 125 ksps each; ARMED {5,7} at 250 ksps; BURST {0} at 500 ksps; one continuous DMA ring | `adc_engine.h` |
@@ -843,9 +843,10 @@ ctest --test-dir build-tests -C Release        # CMake >= 3.20; otherwise cd bui
 - **Flags.** `-Wall -Wextra -Werror` (MSVC: `/W4 /WX`). It is not linked into the firmware.
   Relations between `board.h` constants are `_Static_assert`s in the test files (MSVC rejects a
   runtime check on a constant expression, C4127).
-- **Coverage: 265 cases as of 2026-11-10 (image 1.5)**: power FSM 44, strobe plan 17, strobe
-  live 59, service 9, ADC ring 8, telemetry 16, config store 12, link framing and SHA-256 13,
-  firmware update and link requests 51, camera plan 4, camera PIO 15, engine 17.
+- **Coverage: 349 cases as of 2026-11-27 (image 1.23).** At 265 (2026-11-10, image 1.5) they
+  were: power FSM 44, strobe plan 17, strobe live 59, service 9, ADC ring 8, telemetry 16,
+  config store 12, link framing and SHA-256 13, firmware update and link requests 51, camera
+  plan 4, camera PIO 15, engine 17.
   - **The camera PIO tests run the assembled programs** (pioasm, run by the test build) in
     `tests/pio_sim.c`, a cycle-counting model of one PIO state machine, and check every timing
     constant in `cam_plan.h` against them.
@@ -853,9 +854,18 @@ ctest --test-dir build-tests -C Release        # CMake >= 3.20; otherwise cd bui
     command copied verbatim from `cli.c` by `tests/extract_cli_gpio.py` (needs Python), against a
     register model of the SDK (`tests/sdk_standin/`). `strobe_fsm_test` adds the real power FSM
     and service loop under `strobe.c` (image 1.9), and from 1.10 the `reset` and `bootsel`
-    commands and `cfg save`'s guard, copied verbatim by `tests/extract_functions.py`. The update tests judge what a normal boot would launch with the
+    commands and `cfg save`'s guard, copied verbatim by `tests/extract_functions.py`; from
+    1.14 also `off`, `fault` and the Pi power rule. `stop_test` (1.14) runs the real `beam.c`
+    and `service.c` with `panel`, the beam sweep's steps and the capture wait copied the same
+    way, and from 1.15 both captures' print-outs and `cal.c`'s model fit: does a stop stop.
+    From 1.16 it also copies `cli.c`'s USB line editor and `strobe wave`, and `cal.c`'s carrier
+    scan; `stop_test console` is the board's console end to end, which `tools/tests/test_scope.py`
+    drives `scope.py`'s reader against (CTest `scope.reader`). From 1.17 its beam slices run in
+    time, and the carrier pin is traced through every change made while the beam runs.
+    `pi_link_test` (1.15) compiles the unchanged `pi_link.c` against a clock, UART and DMA-ring
+    stand-in (`tests/link_standin/`). The update tests judge what a normal boot would launch with the
   boot ROM's own block scanner, `s_varm_crit_next_block()` from pico-bootrom-rp2350, unchanged,
-  in `tests/rom_scan.c` (BSD-3-Clause, Raspberry Pi; test code only, never in the firmware). The Pi's link tool adds 23 Python tests
+  in `tests/rom_scan.c` (BSD-3-Clause, Raspberry Pi; test code only, never in the firmware). The Pi's link tool adds 73 Python tests (70 in the rejected 1.17, 66 in the rejected 1.16, 61 in the rejected 1.15, 49 in 1.14, 33 in 1.13, 23 before it)
   (`python -m unittest discover -s Hardware/firmware/pi/tests -p test_pitrac_link.py`). The
   breakdown below is the 2026-10-07 set, kept for its history:
   - Power FSM (21): redundant `on`/`off`; requests during startup, shutdown and fault;
@@ -903,7 +913,7 @@ ctest --test-dir build-tests -C Release        # CMake >= 3.20; otherwise cd bui
 | Tool | Purpose |
 |---|---|
 | [`tools/netlist_report.py`](Hardware/firmware/tools/netlist_report.py) | Regenerates `HARDWARE_REFERENCE.md` from the netlist. `--check` exits 1 if the file is stale, which makes it a good CI step. Standard library only |
-| [`tools/scope.py`](Hardware/firmware/tools/scope.py) | Host side of `capture`: block, `--roll` live, and `--trig` single-shot. Needs `pyserial` and `matplotlib` |
+| [`tools/scope.py`](Hardware/firmware/tools/scope.py) | Host side of `capture`: block, `--roll` live, and `--trig` single-shot. Takes only the first record after its command's own echo, with the id it sent (candidate 1.23 on). Needs `pyserial` and `matplotlib` |
 | [`tools/la_phase.py`](Hardware/firmware/tools/la_phase.py) | Analyses a logic-analyser CSV of carrier vs. demod clock (Phase 2a checks 1–7) with circular statistics; streams multi-GB CSVs |
 | [`tools/pilot_analysis.py`](Hardware/firmware/tools/pilot_analysis.py) | One triggered ADC5 ball pass (`capture trig 5 …`) from a serial log: windowed stats, peak, 0.2 ms-box FWHM, rail check; writes JSON + SVG next to the input. For the §3.7 20-pass set. Standard library only |
 | [`tools/check_doc_links.py`](Hardware/firmware/tools/check_doc_links.py) | Checks every relative link and `#anchor` in this guide, `CHANGELOG.md`, `HARDWARE_REFERENCE.md`, `Hardware/README.md`, `Hardware/firmware/*.md` and `Hardware/firmware/pi/*.md`; exit 1 on a break. Standard library only |
@@ -1017,12 +1027,13 @@ long "why" comment that is worth reading.
 | `config_store.[ch]` | Last 8 KB of flash | Versioned, CRC'd, dual-slot record ([Appendix B](#appendix-b-persistent-config-record)); `cfg_apply_beam()` split out of `cfg_init()` on purpose. Reads through the untranslated flash alias (A/B partitions) | ✅ 17 host tests |
 | `telemetry.[ch]` | no-init RAM mirror | Phase 8.6 halt telemetry: counters, a two-copy RAM mirror that survives a reset, saved through the config record | 🟡 written 2026-10-19, under review; 16 host tests |
 | `link_frame.[ch]` | none (pure) | The serial link's framing: `0xA5 len type seq payload crc16`, the byte decoder, and the RX ring's settle rule | 🟡 written 2026-10-20; 13 host tests (with SHA-256) |
-| `link_proto.[ch]` | none | The allowlist of Pi requests and their answers ([§9.3](#93-the-uart-protocol)) | 🟡 written 2026-10-20; host-tested |
-| `pi_link.[ch]` | UART1, 1 DMA channel | 921600 8N1; RX into a 2 KB DMA ring, TX polled from the superloop; one request at a time | 🟡 written 2026-10-20; no Pi yet |
+| `link_proto.[ch]` | none | The Pi's fixed requests and their answers, and protocol 4's message codes ([§9.3](#93-the-uart-protocol)) | 🟡 written 2026-10-20; host-tested |
+| `link_cli.[ch]` | none | The pure part of the Pi's CLI over the link (protocol 4, images 1.16–1.21; protocol 3 in 1.14 and 1.15): line checks, the ticket book (at most once, cancel, the record), the Pi-only power rule with the board's state, output chunks with offsets and a CRC, the abort scan and look-ahead; from 1.16 every answer names the session | 🟡 written 2026-11-24 (1.13's failed its review; rewritten for 1.14, which failed too); 1.15 failed confirm review on 2026-11-26 (V115-F1–F7), and 1.16 (V116-F1–F4), 1.17 (V117-F1–F3), 1.18 (V118-F1, F2), 1.19 (V119-F1–F3) and 1.20 (V120-F1–F4); 1.21 failed confirm review (V121-F1-F4); 1.22 NOT PASSED (V122-F1); 1.23 passed independent software review; hardware acceptance pending |
+| `pi_link.[ch]` | UART1, 1 DMA channel | 921600 8N1; RX into a 2 KB DMA ring, TX polled from the superloop; one request at a time. From 1.14 it runs the Pi's CLI requests under their tickets at the top of the superloop, streaming their output through a stdio driver enabled only then. From 1.15 a request's own cancel is looked for in everything already received, settled (V114-F2) | ✅ fixed requests on board 1 (§8.8–8.10); 🟡 the CLI: 1.13 failed independent review 2026-11-24; 1.14 failed independent review 2026-11-25; 1.15 to 1.18 failed confirm review 2026-11-26, 1.19 and 1.20 on 2026-11-27; 1.21 NOT PASSED; 1.22 NOT PASSED (V122-F1); 1.23 passed independent software review; hardware acceptance pending |
 | `fw_update.[ch]` | 288 KB RAM staging buffer, a no-init note | Updates from the Pi: staging and SHA-256 check, install into the other A/B partition, the trial and buy at boot, rollback reporting, the Pi's power after an update ([§9.4](#94-firmware-updates-from-the-pi)) | 🟡 written 2026-10-20; 27 host tests |
 | `fw_layout.[ch]` | boot ROM calls | Where this image runs (partition table, boot info), and the flash, buy and reboot calls behind `fw_update.c` | 🟡 written 2026-10-20; checked on the board by BENCH_P8 §8.7 |
 | `sha256.[ch]` | none (pure) | SHA-256 in software, for the staged image | ✅ FIPS 180-4 vectors |
-| `service.[ch]` | Watchdog | `pitrac_service()` (now also runs `strobe_live_service()`), `pitrac_yield_ms()`, the abort latch, fault detection by latch generation, conditional watchdog (1 s) | ✅ 8 host tests |
+| `service.[ch]` | Watchdog | `pitrac_service()` (now also runs `strobe_live_service()`), `pitrac_yield_ms()`, the abort latch, fault detection by latch generation, conditional watchdog (1 s); from 1.14 a stoppable wait and the "stop taken" mark; from 1.15 a 0 ms stoppable wait still polls; from 1.16 the console's reader, with CR LF one Enter | ✅ 14 host tests |
 | `shot.[ch]` | ADC BURST transition (by contract) | Firing sequencer: IDLE → ARMED → TRIGGERED → ANALYSING → CAM_WAIT → FIRING → LOGGING, plus ABORT. Per-state deadlines (SHOT-01) | 🟡 **test shots real (2026-11-10)**: `cam shot` / `cam trig` run CAM_WAIT and FIRING (the handshake and a dry camera-gated burst). A detected pass ends `NOT_IMPLEMENTED` after ANALYSING (no ball speed; SHOT-02), and **nothing calls `shot_arm()` yet** |
 | `camera.[ch]` + `cam_handshake.pio` | GPIO10 (PIO1 SM0 during a handshake), GPIO8/9 | Phase 7 handshake engine: start (refused with the rail down, a fault, GPIO10 high or a strobe input already high), non-blocking poll, `camera_safe_off()` from every rail-down route, `camera_manual_trigger()` behind `gpio 10` (a high only with the rail up, no fault, no handshake), hardware readback for `cam` | 🟡 written 2026-11-10; image 1.5 after the review's fixes; host-tested (PIO model, engine model); on board 1 (1.11), 7a and 7b PASS 2026-11-13 |
 | `cam_plan.[ch]` | none (pure) | The handshake's arithmetic: µs → 5-cycle loop counts, the result words → t_cam and the FIRE time | 🟡 4 + 15 host tests |
@@ -1155,7 +1166,7 @@ and where the evidence lives.
 | 2 | **Force the board and platform; assert 48 GPIOs** | An RP2350A build silently loses GPIO31–47 | `CMakeLists.txt`, `main.c` |
 | 3 | **"The CPU orchestrates, hardware executes"** | Deterministic timing without ISR jitter. With 3 PIO blocks and 12 SMs, it costs nothing | ARCHITECTURE |
 | 4 | **Carrier fixed at 104.1667 kHz for every board and user.** TOP = 1439 at 150 MHz, so 1 tick = 6.67 ns = 0.25° | Uniformity (one `board.h`, one calibration matrix, field-replaceable boards) is worth more than a few % of per-board SNR. `scan carrier` put boost harmonics *inside* the band and the noise stayed flat | PROGRESS §8; §6 (2026-08-31) |
-| 5 | **Beam duty 25 % operating, 35 % ceiling on *effective* duty**, enforced in `beam_configure()`; powers up at 2 % | LED junction temperature (CR-12). Peak current is set by the rail, Vf and ballast, not by duty | `board.h`, `beam.c` |
+| 5 | **Beam duty 25 %**, required by the owner: in candidate 1.23 on the PWM pin's high time, with the carrier within 1–200 kHz; the LED adds each board's measured drive stretch (owner, 2026-11-26). 1.15 assumed a U9 width (V115-F2); 1.16 claimed the pin's bound for the LED (V116-F1). The beam powers up at 2 % | LED junction temperature (CR-12). Peak current is set by the rail, Vf and ballast, not by duty | `board.h`, `beam.c` |
 | 6 | **Phase lock by preloading both counters while disabled, then enabling both in one RMW of `PWM_EN`** | Exact phase with no ongoing CPU maintenance. RMW rather than `pwm_set_mask_enabled()`, which would switch off the panel slices | ARCHITECTURE (measured scatter 1.02 ns) |
 | 7 | **Demod phase from a chopped-beam differential (`cal demod`) with no reflector, plus a phase-vs-frequency fit (`cal model`)** | The design doc's static-reflector method reads behind a 0.66 s HPF and sees noise. LED→PD crosstalk alone is a valid phase reference. The chain is a pure delay | `cal.h`; PROGRESS §3.4 |
 | 8 | **Transit timing on a PIO SM** (PIO2 SM0, GPIOBASE 16, 2 cycles per 1 µs tick, `push noblock`) | One FIFO word *is* the interval: no handler, no jitter, no XIP stall. PIO2 is forced by GPIOBASE | `detect.pio`; ARCHITECTURE A2 |
@@ -1182,7 +1193,7 @@ and where the evidence lives.
 | 29 | **The image is staged in RAM; no flash write while a Pi is powered** | The config store's rule: an erase blinds the supply monitor | `fw_update.h`, `config_store.h` |
 | 30 | **A trial image buys itself at the end of init, before the watchdog is disarmed; the Pi is powered only after** | The ROM's trial watchdog stays armed through init; a powered Pi must never have a reset pending | `main.c` |
 | 31 | **UART TX connected only with the latch closed, the Pi's 3V3 up AND RPI5_ON high** | Through 220 Ω an idle-high TX could feed ~12 mA into an unpowered Pi; RPI5_ON comes from the Pi's SoC, which back-feed cannot hold up | `safe_state.h`, `power_fsm.c` |
-| 32 | **Binary frames with a seq byte, an allowlist of requests, every request safe to repeat** — owner to confirm before Phase 8 messages build on it | Images are binary; retries need matching; the link must not expose the CLI | `link_frame.h`, `link_proto.h` |
+| 32 | **Binary frames with a seq byte; fixed requests safe to repeat; the whole CLI over the link, each command under a ticket the board runs at most once** — the allowlist became the CLI by the owner's decision (2026-11-24); 1.13's seq-matched retry failed review; 1.14 introduced tickets; 1.15 still had recovery errors (V115-F4/F7), and 1.16's protocol 4 names the session in every answer (1.16 failed its confirm review on other grounds, V116-F1–F4, and 1.17 and 1.18 too, V117-F1–F3, V118-F1/F2, V119-F1–F3 and V120-F1–F4; 1.21 keeps protocol 4) | Images are binary; retries need matching. The CLI's guards live in its dispatcher, so the Pi gets them unchanged. A command is not safe to repeat, so its identity is the board's, not the tool's seq: 1.13 could run one twice (V113-F1) | `link_frame.h`, `link_proto.h`, `link_cli.h` |
 
 ### 7.9 Assumptions not yet verified on hardware
 
@@ -1325,12 +1336,31 @@ only the design document's proposal (§13.7, §14).
   everything after the 0xA5. The proposal had no `seq`; it was added so an answer is matched to
   its request across a retry.
 - **Conversation:** one request at a time; the answer is `type | 0x80` with the same `seq` and a
-  status byte first. Every request is safe to repeat, so the Pi simply resends on a timeout. A
-  frame with bit 7 set is never answered.
-- **An allowlist, not the CLI** ([`link_proto.h`](Hardware/firmware/src/link_proto.h)): `PING`,
+  status byte first. Every fixed request is safe to repeat, so the Pi simply resends on a
+  timeout. A frame with bit 7 set is never answered.
+- **The fixed requests** ([`link_proto.h`](Hardware/firmware/src/link_proto.h)): `PING`,
   `INFO`, `STATUS`, `HIST`, and the update requests `UPD_BEGIN`, `UPD_DATA`, `UPD_END`,
-  `UPD_APPLY`, `UPD_ABORT`, `UPD_STATUS`. Nothing on the link can drive a pin, fire the strobe or
-  reset the board.
+  `UPD_APPLY`, `UPD_ABORT`, `UPD_STATUS`.
+- **The CLI over the link (the owner's decision, 2026-11-24).** Until 1.12 the link was only
+  the fixed requests, and could not drive a pin, fire the strobe or reset the board.
+  - **`CLI` carries a command line, which runs through the USB CLI's own dispatcher** at the
+    top of the superloop, so under every guard the CLI has.
+  - **Image 1.13's protocol 2 failed independent review** (V113-F1 through F6). A resend was
+    matched on the seq, so a command could run twice or a new one be skipped. A cancelled
+    command could still start. "Stopped" could mean finished, and lost output went unnoticed.
+    It never shipped.
+  - **Protocol 3 (image 1.14, NOT PASSED 2026-11-25; image 1.15, NOT PASSED 2026-11-26) and protocol 4 (images 1.16 to 1.18, NOT PASSED 2026-11-26; images 1.19 and 1.20, NOT PASSED 2026-11-27; image 1.21, NOT PASSED; 1.22 NOT PASSED (V122-F1); 1.23 passed independent software review; hardware acceptance pending)** give each command a ticket from the board
+    (`CLI_BEGIN`): this board session's random id and a count. The board runs a ticket at most
+    once and answers a resend from its record (16 deep).
+  - **`CLI_ABORT` names the ticket.** An acknowledged cancellation is permanent. 1.14's review found two ways for work to start after a cancel (V114-F1/F2); 1.15 watches the stop until the line goes out, and looks for the cancel in everything already received.
+  - **The answer separates "stop asked" from "stopped".**
+  - **Output carries offsets and a CRC.** The Pi tool locks the port. From 1.15 a port error after the line keeps the ticket. Protocol 4 (1.16) names the session in every answer, and the tool, `cli-cancel` included, takes only its own (V115-F4); a board that answers as protocol 1 after the line is UNKNOWN with the ticket (V115-F7). From 1.17 so is a `cli-cancel` that cannot open the port (V116-F4), from 1.18 through its whole run, open to close (V117-F3), from 1.19 an outcome once had stands whatever its output or the close then do (V118-F1), from 1.20 a Ctrl-C is only counted and acted on while an outcome is pending, in 1.22 each frame has one absolute write deadline (not a scheduling bound) and cleanup requires a dedicated single-producer UART and evidence about this operation across attempts, each exit decided at one point, and output that stalls is given up after 2 s, never holding up a stop or the poweroff request (V119-F1, F2), and after a restart the tool says no query can recover the outcome (V116-N2).
+  - **Shared with USB:** a live strobe session is shared, and each Pi command shows on the USB
+    console as `[pi] <command>`.
+  - **The Pi-only power rule:** `forceoff`, `reset force`, `bootsel force`, `adc5vcal <volts>`,
+    and `fault clear` while a fault holds the rail up, need a trailing `confirm`. Plain `off`
+    runs only in RUNNING, as the orderly shutdown.
+  - **The owner requires the beam's 25 % on USB and the Pi.** In candidate 1.23 it is on the PWM pin's high time, with the carrier within 1–200 kHz; it binds the pin, and the LED adds each board's measured drive stretch (owner, 2026-11-26). 1.15 assumed a 200 µs U9 width, which no published maximum supports (V115-F2, [independent review](Hardware/firmware/captures/review_2026-11-25/INDEPENDENT_REVIEW_v1.15.md)); 1.16 claimed the pin's bound for the LED at any frequency (V116-F1, [independent review](Hardware/firmware/captures/review_2026-11-26/INDEPENDENT_REVIEW_v1.16.md)).
 - **The Pi's end:** [`pi/pitrac_link.py`](Hardware/firmware/pi/README.md), installed as
   `pitrac-link`, standard library only.
 - **Side channels (planned):** `IRQ_OUT` for a low-latency "images ready", and `SYSTEM_READY`
@@ -1673,7 +1703,7 @@ The full reasoning, options and verification steps are in
     [Appendix D](#appendix-d-changes-made-alongside-this-guide));
   - run the camera-comparison bash, Python and node tests.
 - **Host tests: 228 as of 2026-10-20 (r5)** ([§6.6](#66-host-tests)), plus the Pi tools' own suites
-  (23 Python tests for `pitrac-link`, 21 shell cases for the shutdown hook). Pure logic that is
+  (33 Python tests for `pitrac-link`, 21 shell cases for the shutdown hook). Pure logic that is
   cheap to cover the same way, ranked in the code-audit backlog (PROGRESS §9):
   - a migration path before the first `CFG_VERSION` bump, since the loader rejects other
     versions (record validation and slot selection are covered since 2026-10-19);
@@ -1752,11 +1782,11 @@ board. Live strobe mode refuses `capture` (and everything else below except `str
 | | `adc5v` / `adc5vcal <V>` | +5V_IN in volts / trim the scale against a DMM (persist with `cfg save`) |
 | | `adcmode off\|idle\|armed\|burst` | Force an ADC mode |
 | | `capture <mask> <n> <rate>` | Block capture to CSV (e.g. `capture 0x20 2000 250000` is ADC5 at 250 ksps). Rate 733–500000 Hz; the header gives the rate the ADC ran at |
-| | `capture trig <ch> [thr] [rate] [pre%] [tmo_s]` | Triggered single shot with pre-trigger history (default: 80 codes, 500 ksps, 25 %, 30 s; rate 733–500000 Hz, pre 0–90 %, timeout 1–3600 s) |
+| | `capture trig <ch> [thr] [rate] [pre%] [tmo_s] [id=<n>]` | Triggered single shot with pre-trigger history (default: 80 codes, 500 ksps, 25 %, 30 s; rate 733–500000 Hz, pre 0–90 %, timeout 1–3600 s) |
 | Panel | `panel pwr <0-100\|auto>`, `panel rdy <0-100\|auto>`, `panel test`, `panel pattern <p\|auto>`, `panel demo` | J7 LEDs. Needs the rail up. `rdy` is on/off (≥ 50 lights it) since A7 |
 | Beam | `beam` | State plus hardware register readback |
-| | `beam on\|off`, `beam freq <hz>`, `beam duty <pct>`, `beam ramp <pct> [step_ms]`, `beam phase <ticks>` | Carrier control. Use `beam freq 104166`. Ramp above ~5 %. Operating maximum 25 % |
-| | `beam clamp` | 1 kHz / 50 %, to measure the U9 clamp at TP5. **Follow it with `beam duty 2`** |
+| | `beam on\|off`, `beam freq <hz>`, `beam duty <pct>`, `beam ramp <pct> [step_ms]`, `beam phase <ticks>` | Carrier control. Use `beam freq 104166`. Ramp above ~5 %. Operating maximum 25 %; from 1.20 the carrier takes 1–200 kHz only |
+| | `beam clamp` | 1 kHz / 50 % (25 % in candidate 1.23), to measure the U9 clamp at TP5. **Follow it with `beam duty 2`** |
 | | `beam sweep <f0> <f1> <n> <dwell_ms>` | Duty-fidelity sweep (Q2) |
 | Detection | `threshold [duty <pct>\|volts <v>\|vref <v>\|sweep [lo] [hi] [steps]]` | Threshold DAC. The subcommand word is required (`threshold 5` is rejected). `vref` is RAM-only |
 | | `hpf [track\|hold\|test [ms]]` | Gated-HPF mode, or the per-board polarity and leakage test |

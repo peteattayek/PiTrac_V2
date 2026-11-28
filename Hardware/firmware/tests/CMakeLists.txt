@@ -3,7 +3,8 @@ project(pitrac_host_tests C)
 
 # Native host tests. NOT an RP2350 target: these compile real firmware sources
 # (power_fsm.c, strobe_plan.c, strobe_live.c, service.c, telemetry.c,
-# config_store.c, link_frame.c, link_proto.c, sha256.c, fw_update.c, cam_plan.c)
+# config_store.c, link_frame.c, link_proto.c, link_cli.c, sha256.c, fw_update.c,
+# cam_plan.c, beam.c)
 # against small mocks and never talk to the board. cam_pio_test also runs the
 # real PIO programs (cam_handshake, strobe_gate, strobe_burst) in pio_sim.c.
 include(CTest)
@@ -27,7 +28,20 @@ pitrac_host_test(strobe_plan_test strobe_plan_test.c ../src/strobe_plan.c)
 pitrac_host_test(strobe_live_test strobe_live_test.c ../src/strobe_live.c ../src/strobe_plan.c)
 pitrac_host_test(service_test service_test.c ../src/service.c)
 pitrac_host_test(adc_ring_test adc_ring_test.c)
-pitrac_host_test(link_test link_test.c ../src/link_frame.c ../src/sha256.c)
+pitrac_host_test(link_test link_test.c ../src/link_frame.c ../src/link_cli.c ../src/sha256.c)
+# Image 1.15 (V114-F2): the unchanged pi_link.c, with the real decoder, settle rule
+# and ticket book, against a clock, UART and DMA-ring stand-in (link_standin/).
+pitrac_host_test(pi_link_test pi_link_test.c ../src/link_frame.c ../src/link_cli.c)
+target_include_directories(pi_link_test BEFORE PRIVATE link_standin)
+foreach(test IN ITEMS
+    cancel_in_ram_before_dispatch
+    cancel_still_landing
+    cancel_across_the_wrap
+    runs_without_abort
+    session_renewed_before_wrap
+)
+    add_test(NAME pilink.${test} COMMAND pi_link_test ${test})
+endforeach()
 pitrac_host_test(fw_update_test fw_update_test.c ../src/fw_update.c ../src/sha256.c
                  ../src/link_proto.c ../src/link_frame.c)
 pitrac_host_test(cam_plan_test cam_plan_test.c ../src/cam_plan.c)
@@ -90,17 +104,18 @@ if(PITRAC_PIOASM)
             OUTPUT ${pio_gen}/fsm_guards_extract.c
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/extract_functions.py
                     ${pio_gen}/fsm_guards_extract.c
-                    ${CMAKE_CURRENT_LIST_DIR}/../src/cli.c reset_guard_ok,reset_still_ok,cmd_reset,cmd_bootsel
+                    ${CMAKE_CURRENT_LIST_DIR}/../src/cli.c reset_guard_ok,reset_still_ok,cmd_reset,cmd_bootsel,pi_power_now,pi_rule_admits,cmd_off,cmd_fault
                     ${CMAKE_CURRENT_LIST_DIR}/../src/config_store.c
                     cfg_save_blocked_reason,cfg_save_unblock_hint
             DEPENDS ${CMAKE_CURRENT_LIST_DIR}/../src/cli.c
                     ${CMAKE_CURRENT_LIST_DIR}/../src/config_store.c
                     ${CMAKE_CURRENT_LIST_DIR}/extract_functions.py
-            COMMENT "copy reset, bootsel and the cfg save guard out of src/ (host test)")
+            COMMENT "copy reset, bootsel, off, fault, the Pi power rule and the cfg save guard out of src/ (host test)")
         set_source_files_properties(${pio_gen}/fsm_guards_extract.c PROPERTIES HEADER_FILE_ONLY TRUE)
         pitrac_host_test(strobe_fsm_test strobe_fsm_test.c ../src/strobe.c ../src/power_fsm.c
                          ../src/service.c ../src/telemetry.c ../src/camera.c ../src/shot.c
                          ../src/strobe_plan.c ../src/strobe_live.c ../src/cam_plan.c
+                         ../src/link_cli.c ../src/link_frame.c
                          ${pio_headers} ${pio_gen}/fsm_guards_extract.c)
         target_include_directories(strobe_fsm_test BEFORE PRIVATE sdk_standin ${pio_gen})
         target_compile_definitions(strobe_fsm_test PRIVATE PICO_NO_HARDWARE=1)
@@ -118,9 +133,76 @@ if(PITRAC_PIOASM)
             reset_settled
             reset_rise_in_wait
             reset_rise_in_message
+            pi_power_in_fault
+            pi_off_orderly_only
+            cal_stop_marked_taken
         )
             add_test(NAME fsm.${test} COMMAND strobe_fsm_test ${test})
         endforeach()
+
+        # Image 1.14 (V113-F3): does a stop stop? The REAL service.c and beam.c, with
+        # `panel`, `beam sweep`'s steps and `capture trig`'s wait copied verbatim out
+        # of cli.c, against the SDK stand-in. Image 1.15 (V114-F3..F6) adds `capture`,
+        # `capture trig` and their dump, and `cal model`'s outer function from cal.c.
+        # Image 1.16 (V115-F1, F3, F6, N1) adds the dump's last line, the capture's
+        # watchdog refusal, `scan carrier`'s outer function, and the USB line editor
+        # with its buffers -- the console end to end, which tools/tests/test_scope.py
+        # also drives (`stop_test console`, the scope.e2e test below). Image 1.17
+        # (V116-F1, F3) adds the carrier's range, the pin traced through a
+        # reconfiguration, and `capture`'s id (its type copied too, as @capture_id_t).
+        set(stop_cli_names
+            "#DUMP_POLL_EVERY,#CAPTURE_WDOG_MAX_MS,#CLI_MAX_LINE,#CLI_MAX_ARGS,$s_line,$s_len,$s_overflow,@capture_id_t,parse_u32,parse_u32_in,bad_arg,bad_rate,capture_wait_poll,dump_poll_due,dump_stopped,dump_end,capture_take_id,capture_header_end,cmd_capture_trig,cmd_capture,cmd_strobe_wave,cmd_panel,beam_sweep_steps,split_line,dispatch,handle_line,cli_service")
+        set(stop_cal_names
+            "wrap_ticks_centered,delay_ns_from_ticks,cal_model_delay_ns,cal_demod_model,cal_model_phase_ticks,cal_model_covers,cal_scan_carrier")
+        # Image 1.18 (V117-N2): the boot's carrier restore, with its config record.
+        set(stop_cfg_names "$s_cfg,cfg_apply_beam")
+        add_custom_command(
+            OUTPUT ${pio_gen}/cli_stop_extract.c
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/extract_functions.py
+                    ${pio_gen}/cli_stop_extract.c
+                    ${CMAKE_CURRENT_LIST_DIR}/../src/cli.c ${stop_cli_names}
+                    ${CMAKE_CURRENT_LIST_DIR}/../src/cal.c ${stop_cal_names}
+                    ${CMAKE_CURRENT_LIST_DIR}/../src/config_store.c ${stop_cfg_names}
+            DEPENDS ${CMAKE_CURRENT_LIST_DIR}/../src/cli.c ${CMAKE_CURRENT_LIST_DIR}/../src/cal.c
+                    ${CMAKE_CURRENT_LIST_DIR}/../src/config_store.c
+                    ${CMAKE_CURRENT_LIST_DIR}/extract_functions.py
+            COMMENT "copy panel, the beam sweep, capture, cal model, scan carrier and the carrier restore out of cli.c, cal.c and config_store.c (host test)")
+        set_source_files_properties(${pio_gen}/cli_stop_extract.c PROPERTIES HEADER_FILE_ONLY TRUE)
+        pitrac_host_test(stop_test stop_test.c ../src/service.c ../src/beam.c ${pio_gen}/cli_stop_extract.c)
+        target_include_directories(stop_test BEFORE PRIVATE sdk_standin ${pio_gen})
+        target_compile_definitions(stop_test PRIVATE PICO_NO_HARDWARE=1)
+        foreach(test IN ITEMS
+            ramp_stops
+            beam_ceiling_25
+            sweep_stops
+            panel_demo_stops
+            panel_test_stops
+            capture_wait_polls
+            beam_bound_on_the_pwm
+            sweep_zero_dwell
+            cal_model_stops
+            capture_trig_dump_stops
+            capture_dump_stops
+            capture_stop_on_the_last_line
+            capture_refused_under_watchdog
+            carrier_put_back
+            console_whole_capture
+            console_stop_after_the_command
+            strobe_wave_dump_stops
+            beam_carrier_range
+            beam_pin_never_stretched
+            capture_says_its_id
+            cfg_carrier_comes_back
+        )
+            add_test(NAME stop.${test} COMMAND stop_test ${test})
+        endforeach()
+        # tools/scope.py's reader, end to end through the board's console code above
+        # (image 1.16, V115-F1 and F5), and on its own against scripted replies.
+        add_test(NAME scope.reader
+                 COMMAND ${Python3_EXECUTABLE} -B -m unittest discover
+                         -s ${CMAKE_CURRENT_LIST_DIR}/../tools/tests -p test_scope.py)
+        set_tests_properties(scope.reader PROPERTIES
+                             ENVIRONMENT "PITRAC_STOP_TEST=$<TARGET_FILE:stop_test>")
 
         # The UNCHANGED strobe.c, camera.c and shot.c -- and the `gpio` command copied
         # verbatim out of cli.c -- against a register model (sdk_standin/), for the
@@ -220,6 +302,7 @@ foreach(test IN ITEMS
     fresh_on_after_cancel
     shutdown_during_startup
     shutdown_during_pi_boot
+    shutdown_orderly_only
     supply_loss
     rail_collapse
     usb_guard
@@ -273,6 +356,18 @@ foreach(test IN ITEMS
     sha_vectors
     sha_million_a_chunked
     sha_padding_boundaries
+    cli_valid_line
+    cli_ticket_once
+    cli_two_clients
+    cli_wrap_and_age
+    cli_session
+    cli_book_never_wraps
+    cli_cancel
+    cli_power_rule
+    cli_answer_names_session
+    cli_out_offsets
+    cli_scan_ticket
+    cli_abort_ahead
 )
     add_test(NAME link.${test} COMMAND link_test ${test})
 endforeach()
@@ -327,6 +422,7 @@ foreach(test IN ITEMS
     reset_during_install_repowers
     note_commit_resets
     proto_shapes
+    proto_cli_requests
     proto_info_fields
     proto_update_flow
 )
@@ -475,6 +571,11 @@ foreach(test IN ITEMS
     watchdog_kicks
     strobe_hook_every_pass
     disarm_clears_mark
+    abort_source_yield_only
+    stoppable_ends_early
+    abort_taken_mark
+    stoppable_zero_still_polls
+    console_crlf_is_one_enter
 )
     add_test(NAME service.${test} COMMAND service_test ${test})
 endforeach()

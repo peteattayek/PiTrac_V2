@@ -24,10 +24,28 @@ Raw TIA carrier (ADC2). Note you only get ~4.8 samples per period at a
 
 Channels: 0=strobe current  1=+5V_IN/2  2=TIA raw  5=detect  7=mic
 (3 and 4 are digital outputs on this board -- the firmware will reject them.)
+
+Needs firmware 1.23 or later (1.17 to 1.22 had it too, but none of them was ever
+flashed): every request carries a fresh `id=`, which the board
+says back in the record's header, and only that record is taken (review finding
+V116-F3). Older firmware ignores the id, so this tool finds no record of its own and
+says so. Use it only when nothing else is using the board's console: a byte that
+arrives while any command runs -- the Pi's over the link too -- stops that command.
+
+What it cannot tell apart (review note V118-N1, accepted for this bench): an earlier
+request with the same command line AND the same id leaves an echo and a record
+identical to this one's, and if they are still on the console they are taken. Ids
+count up by one from a random start, so a run repeats one only after 2^32 requests,
+and two runs share one by chance (1 in 2^32 for any one pending id). This relies on
+one supervised user and one program at the console at a time. On Windows a COM port
+has one opener; on Linux nothing here stops a second program opening it.
 """
 
 import argparse
 import os
+import random
+import re
+import struct
 import sys
 import time
 
@@ -61,59 +79,291 @@ def read_capture_on(ser, mask, samples, rate, timeout=60.0):
     settle above costs more dead time than the capture itself, and every
     reopen resets the board's CDC endpoint.
     """
-    return read_block_on(ser, f"capture 0x{mask:02x} {samples} {rate}", timeout)
+    return read_block_on(ser, Request.plain(mask, samples, rate), timeout)
 
 
-def read_block_on(ser, command, timeout=60.0):
-    """Send one command and collect its `# capture` ... `# end` CSV block."""
+class CaptureRejected(Exception):
+    """The board's reply is not one whole, well-formed record of this request, so no
+    samples are returned. The message says why."""
+
+
+ADC_CAPTURE_MAX_SAMPLES = 16384     # src/adc_engine.h
+ADC_RATE_MAX_HZ = 500000            # src/adc_engine.h
+ADC_CLK_HZ = 48000000.0             # src/adc_engine.c
+
+
+def _f32(x):
+    """x rounded to a C float, as the firmware's single-precision arithmetic rounds it."""
+    return struct.unpack("<f", struct.pack("<f", x))[0]
+
+
+def adc_rate_for(rate_hz):
+    """The rate the board's ADC runs at for a requested one, which the header gives:
+    src/adc_ring_math.h's adc_div_for_rate() and adc_rate_for_div() and adc_engine.c's
+    rounding, step by step in single precision. 0 for a rate it cannot make. A request
+    between 494.8 and 500 kHz runs at 494.8 kHz (the 96-cycle floor); elsewhere the
+    divider's 8-bit fraction moves it by under 0.01 %."""
+    if rate_hz <= 0 or rate_hz > ADC_RATE_MAX_HZ:
+        return 0
+    clk = _f32(ADC_CLK_HZ)
+    d = 0
+    if rate_hz < ADC_RATE_MAX_HZ:
+        f = _f32(_f32(clk / _f32(rate_hz)) - 1.0)
+        if f < 96.0:
+            f = 96.0
+        if not f < 65536.0:
+            return 0
+        d = int(_f32(f * 256.0))
+    r = _f32(clk / 96.0) if d == 0 else _f32(clk / _f32(1.0 + _f32(d / 256.0)))
+    return int(_f32(r + 0.5))
+
+
+_last_id = [random.getrandbits(32)]
+
+
+def _new_id():
+    """A fresh id: random for the first request of a run, then one more each time,
+    modulo 2^32: a run repeats one only after 2^32 requests (image 1.18; image 1.19,
+    review note V118-N1: 1.18 said "ever")."""
+    _last_id[0] = (_last_id[0] + 1) & 0xFFFFFFFF
+    return _last_id[0]
+
+
+def _trig_offset(n, pre_pct):
+    """Where `capture trig` puts the trigger in its record: adc_capture_triggered()'s
+    (size_t)(n * pre_frac), with pre_frac = pre / 100.0f, in single precision
+    (src/adc_engine.c; the CLI takes 0-90 %)."""
+    frac = _f32(_f32(pre_pct) / 100.0)
+    return int(_f32(_f32(n) * frac))
+
+
+class Request:
+    """One capture request: the line sent -- ending in a fresh id=0x<8 hex> that the
+    board says back in the record's header (firmware 1.17, review finding V116-F3) --
+    and the record it must produce: mask, sample count and rate, as the firmware rounds
+    them, and for `capture trig` the trigger's offset as the firmware places it.
+    `echo` matches this command's own echo at the USB console: the line exactly as
+    sent, after any prompts (image 1.18, review finding V117-F2)."""
+
+    def __init__(self, words, mask, n, rate, trig_at=None, ident=None):
+        self.ident = _new_id() if ident is None else ident
+        self.token = f"id=0x{self.ident:08x}"           # as sent, and so as echoed
+        self.command = f"{words} {self.token}"
+        self.echo = re.compile(r"^(?:>\s*)*" + re.escape(self.command) + r"$")
+        self.mask, self.n, self.rate = mask, n, rate
+        self.trig = trig_at is not None
+        self.trig_at = trig_at
+
+    @classmethod
+    def plain(cls, mask, samples, rate, ident=None):
+        """`capture`: the count is cut to the buffer, then down to whole rows of the
+        mask's channels (adc_capture())."""
+        nch = bin(mask & 0xFF).count("1")
+        n = min(samples, ADC_CAPTURE_MAX_SAMPLES)
+        if nch:
+            n -= n % nch
+        return cls(f"capture 0x{mask:02x} {samples} {rate}", mask, n, adc_rate_for(rate),
+                   ident=ident)
+
+    @classmethod
+    def triggered(cls, ch, threshold, rate, pre_pct, timeout_s, ident=None):
+        """`capture trig`: one channel, always the whole buffer, with trig= at the
+        pre-trigger share of it and base= a 12-bit ADC code."""
+        return cls(f"capture trig {ch} {threshold} {rate} {pre_pct} {timeout_s}", 1 << ch,
+                   ADC_CAPTURE_MAX_SAMPLES, adc_rate_for(rate),
+                   trig_at=_trig_offset(ADC_CAPTURE_MAX_SAMPLES, pre_pct), ident=ident)
+
+    def owns(self, header_line):
+        return _header_fields(header_line).get("id") == f"{self.ident:08x}"
+
+
+def _header_fields(line):
+    """The key=value pairs of a `# capture ...` line."""
+    fields = {}
+    for tok in line.split()[2:]:
+        if "=" in tok:
+            k, v = tok.split("=", 1)
+            fields[k] = v
+    return fields
+
+
+def _checked_header(line, req):
+    """The header of this request's record, checked against what was asked."""
+    header = _header_fields(line)
+    try:
+        want = int(header["n"])
+        mask = int(header["mask"], 16)
+        rate = int(header["rate"])
+        if want < 1 or rate < 1:
+            raise ValueError
+    except (KeyError, ValueError):
+        raise CaptureRejected(f"a header without a usable n, mask or rate: {line}")
+    if mask != req.mask:
+        raise CaptureRejected(f"the record is of mask 0x{mask:02x}, not the 0x{req.mask:02x} "
+                              f"asked for: {line}")
+    if want != req.n:
+        raise CaptureRejected(f"the record declares {want} samples where this request makes "
+                              f"{req.n}: {line}")
+    if abs(rate - req.rate) > 1:
+        raise CaptureRejected(f"the record's rate is {rate} Hz where this request runs at "
+                              f"{req.rate} Hz: {line}")
+    if req.trig:
+        # The trigger where this request's pre-trigger share puts it, and a baseline
+        # that is an ADC code (image 1.18, review note V117-N3: 1.17 took any trig in
+        # the record and any base from 0 up, and the plot is placed by both).
+        try:
+            trig, base = int(header["trig"]), int(header["base"])
+        except (KeyError, ValueError):
+            raise CaptureRejected(f"a triggered record without a usable trig and base: {line}")
+        if trig != req.trig_at:
+            raise CaptureRejected(f"the record puts its trigger at {trig}, where this request's "
+                                  f"pre-trigger share puts it at {req.trig_at}: {line}")
+        if not 0 <= base <= 4095:
+            raise CaptureRejected(f"the record's baseline {base} is not an ADC code (0-4095): "
+                                  f"{line}")
+    elif "trig" in header:
+        raise CaptureRejected(f"a triggered record for a plain capture: {line}")
+    return header
+
+
+def read_block_on(ser, req, timeout=60.0):
+    """Send one Request and return its `# capture` ... `# end` CSV block as
+    (header, columns, rows): ONLY a whole record OF THIS REQUEST, or CaptureRejected.
+
+    THIS REQUEST'S (image 1.17, review finding V116-F3; image 1.18, V117-F2): the first
+    record after THIS COMMAND'S OWN ECHO at the USB console -- the line exactly as sent,
+    after any prompts -- and its header must say back the request's id. Until 1.16 the
+    first well-formed block after the request was taken, and the console carries
+    others: the Pi's commands print there too, and a record still draining from an
+    earlier request looks like the next one. 1.17 took any header with the id, even
+    before the echo, and counted any line holding the id as the echo, a `[pi] ...`
+    one too: a record from before, with the id reused, was taken. Now:
+    - everything before the echo is passed over, records included, whatever their id
+      (said, not used);
+    - a line holding the id that is not a clean echo, and not the Pi's, means this
+      command did not reach the board as one line: rejected;
+    - after the echo, the first record must carry the id, else it is rejected;
+    - no echo by the timeout: rejected.
+    An earlier request's whole transaction with the same line and the same id is the
+    one thing this cannot tell from this one (module docstring; review note V118-N1).
+    The header must also give the mask asked for, the count and rate as the firmware
+    rounds them (Request), and for `capture trig` only, the trigger's offset as its
+    pre-trigger share puts it and a 12-bit baseline. The board's refusals count only
+    after the echo: an earlier REFUSED was another command's.
+
+    WHOLE means (image 1.16, review finding V115-F5): a header with n, mask and
+    rate; a `# columns:` line naming exactly the mask's channels; exactly n
+    samples, in rows of exactly that many values, each 0-4095; then an end line
+    that is exactly `# end`. A `# end PARTIAL ...` (a stop cut the print-out short),
+    a missing or extra row, a short or long row, a stray line inside the data, or
+    no end line before the timeout: all rejected. An `ERR` or `usage:` line exits.
+
+    LINES ARE WHOLE (image 1.17, review finding V116-F2): readline() returns what it
+    has when the port's timeout runs out, which can be part of a line. 1.16 took each
+    piece for a line, and a row `1234` cut by a pause came back as rows `12` and `34`,
+    making a record one row short look whole. Pieces are joined until a line ends.
+
+    The command ends in ONE terminator, CR (V115-F1): the board runs a command on
+    the CR, and the LF of the CR LF this sent until 1.15 was still waiting --
+    firmware 1.15 read it as a stop, and a 4096-sample capture ended after one
+    sample. Firmware 1.16 takes CR LF as one Enter; either way, one byte is sent.
+    """
     ser.reset_input_buffer()
-    ser.write((command + "\r\n").encode())
+    ser.write((req.command + "\r").encode())
 
-    header = {}
-    columns = []
-    rows = []
+    header, columns, rows = None, None, []
+    nch = want = 0
+    ours = False          # this command's echo has gone by: what follows is its output
+    others = 0            # records of other commands passed over
+    piece = b""           # a line not yet ended
     deadline = time.time() + timeout
-    started = False
 
     while time.time() < deadline:
         raw = ser.readline()
         if not raw:
             continue
-        line = raw.decode("utf-8", "replace").strip()
+        piece += raw
+        if not piece.endswith(b"\n"):
+            continue                                  # cut by the read timeout: more to come
+        line = piece.decode("utf-8", "replace").strip()
+        piece = b""
         if not line:
             continue
 
-        if line.startswith("# capture"):
-            for tok in line.split()[2:]:
-                if "=" in tok:
-                    k, v = tok.split("=", 1)
-                    header[k] = v
-            started = True
-            continue
-        if line.startswith("# columns:"):
-            columns = [c.strip() for c in line.split(":", 1)[1].split()]
-            continue
-        if line.startswith("# end"):
-            break
-        if line.startswith("ERR") or line.startswith("usage:"):
-            sys.exit(f"board said: {line}")
-        if line.startswith("NO TRIGGER") or line.startswith("aborted"):
-            print(f"board said: {line}")
-            return {}, [], []
-        if line.startswith("armed:") or line.startswith("  window"):
-            print(f"  {line}")
-            continue
-        if not started:
-            continue
-        if line.startswith("#") or line.startswith(">"):
+        if header is None:
+            if not ours:
+                # Before this command's echo: the prompt, other commands' output and
+                # records -- one carrying this id too, if an id was ever reused.
+                if req.echo.match(line):
+                    ours = True
+                elif req.token in line and not line.startswith("[pi]"):
+                    raise CaptureRejected(f"this command's echo is not one clean line -- a "
+                                          f"command already running took its first byte as a "
+                                          f"stop, or other output cut into it: {line}")
+                elif line.startswith("# capture"):
+                    others += 1
+                    print(f"  (passed over a record from before this command's echo: {line})")
+                continue
+            if line.startswith("# capture"):
+                if not req.owns(line):
+                    if "id" not in _header_fields(line):
+                        raise CaptureRejected(f"a record without an id, after this command: the "
+                                              f"board's firmware is older than 1.23, which says "
+                                              f"the id back: {line}")
+                    raise CaptureRejected(f"a record that is not this request's, after its "
+                                          f"command: {line}")
+                header = _checked_header(line, req)
+                want = req.n
+                continue
+            if line.startswith("ERR") or line.startswith("usage:"):
+                sys.exit(f"board said: {line}")
+            if (line.startswith("REFUSED") or line.startswith("NO TRIGGER")
+                    or line.startswith("aborted") or line.startswith("? '")):
+                raise CaptureRejected(f"board said: {line}")
+            if line.startswith("armed:") or line.startswith("window"):
+                print(f"  {line}")
             continue
 
+        if columns is None:
+            if not line.startswith("# columns:"):
+                raise CaptureRejected(f"no `# columns:` line after the header: {line}")
+            columns = line.split(":", 1)[1].split()
+            named = [f"ch{c}" for c in range(8) if req.mask & (1 << c)]
+            if not columns or columns != named:
+                raise CaptureRejected(f"columns {columns} are not the mask's {named}")
+            nch = len(columns)
+            if want % nch:
+                raise CaptureRejected(f"n={want} is not a whole number of {nch}-channel rows")
+            continue
+
+        if line.startswith("#"):
+            if line == "# end":
+                if len(rows) * nch != want:
+                    raise CaptureRejected(f"the end line came after {len(rows) * nch} of "
+                                          f"{want} samples")
+                return header, columns, rows
+            raise CaptureRejected(f"board said: {line}")      # # end PARTIAL -- ..., or other
+        values = line.split(",")
         try:
-            rows.append([int(v) for v in line.split(",")])
+            row = [int(v) for v in values]
         except ValueError:
-            pass  # echoed command characters etc.
+            raise CaptureRejected(f"a line inside the data that is not a row of samples: {line}")
+        if len(row) != nch or any(v < 0 or v > 4095 for v in row):
+            raise CaptureRejected(f"row {len(rows) + 1} is not {nch} samples of 0-4095: {line}")
+        rows.append(row)
+        if len(rows) * nch > want:
+            raise CaptureRejected(f"more than the {want} samples the header declared")
 
-    return header, columns, rows
+    got = len(rows) * nch
+    cut = f" (and a line cut short: {piece[:40]!r})" if piece else ""
+    if header is not None:
+        raise CaptureRejected("no end line: %d of %d samples before the %.0f s timeout%s"
+                              % (got, want, timeout, cut))
+    if not ours:
+        raise CaptureRejected("no echo of this command before the %.0f s timeout%s%s" % (
+            timeout, cut, ("; %d record(s) from before it passed over" % others) if others else ""))
+    raise CaptureRejected("no `# capture` block after this command before the %.0f s timeout%s"
+                          % (timeout, cut))
 
 
 def out_path(name):
@@ -238,12 +488,13 @@ def roll(args, mask):
                     continue
 
                 t0 = time.time()
-                hdr, cols, rows = read_capture_on(ser, mask, args.samples,
-                                                  args.rate, timeout=30.0)
-                t1 = time.time()
-                if not rows:
-                    print("  (no samples -- is the board still there?)")
+                try:
+                    hdr, cols, rows = read_capture_on(ser, mask, args.samples,
+                                                      args.rate, timeout=30.0)
+                except CaptureRejected as e:
+                    print(f"  (block rejected: {e})")
                     continue
+                t1 = time.time()
 
                 n_block += 1
                 rate = int(hdr.get("rate", args.rate))
@@ -378,22 +629,24 @@ def main():
         if args.channel is None:
             sys.exit("--trig needs --channel N (a trigger on interleaved channels "
                      "would be ambiguous)")
-        cmd = (f"capture trig {args.channel} {args.trig} {args.rate} "
-               f"{int(args.pre*100)} {int(args.trig_timeout)}")
-        print(f"> {cmd}")
+        req = Request.triggered(args.channel, args.trig, args.rate, int(args.pre * 100),
+                                int(args.trig_timeout))
+        print(f"> {req.command}")
         with serial.Serial(args.port, args.baud, timeout=1.0) as ser:
             time.sleep(0.3)
-            header, columns, rows = read_block_on(
-                ser, cmd, timeout=args.trig_timeout + 30.0)
-        if not rows:
-            sys.exit("no trigger.")
+            try:
+                header, columns, rows = read_block_on(
+                    ser, req, timeout=args.trig_timeout + 30.0)
+            except CaptureRejected as e:
+                sys.exit(f"no record: {e}")
         plot_block(args, header, columns, rows)
         return
 
-    header, columns, rows = read_capture(args.port, args.baud, mask,
-                                         args.samples, args.rate)
-    if not rows:
-        sys.exit("no samples returned -- check the port, and that the firmware is running")
+    try:
+        header, columns, rows = read_capture(args.port, args.baud, mask,
+                                             args.samples, args.rate)
+    except CaptureRejected as e:
+        sys.exit(f"no record: {e} -- check the port, and that the firmware is running")
     plot_block(args, header, columns, rows)
 
 

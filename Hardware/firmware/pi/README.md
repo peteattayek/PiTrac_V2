@@ -71,11 +71,10 @@ In short:
 ## The serial link: `pitrac-link`
 
 921600 baud, 8N1, framed and CRC-checked (the board's `src/link_frame.h`; the requests are in
-`src/link_proto.h`). The board answers a fixed list of requests, not its USB CLI: nothing on
-the link can drive a pin, fire the strobe or reset the board.
+`src/link_proto.h`).
 
 ```bash
-pitrac-link ping          # board : PiTrac RP2354, protocol 1, version 1.1
+pitrac-link ping          # board : PiTrac RP2354, protocol 4, version 1.23
 pitrac-link info          # version, build stamp, A/B partition, boot type
 pitrac-link status        # power state, fault, +5V_IN
 pitrac-link hist          # the board's halt telemetry (its `hist`)
@@ -87,6 +86,154 @@ At the board's USB CLI, `link` shows whether the lines are connected and counts 
 errors. The board answers between CLI commands, so during a long one (`cal model`, `scan`) the
 tool retries and may give up.
 
+### The board's CLI from this Pi (image 1.23 on, protocol 4)
+
+**The Pi can run anything the USB CLI can** (the owner's decision, 2026-11-24): drive the
+beam, fire the strobe live, set the gate, `off`. Until image 1.12 the link was a fixed list
+of requests and could do none of that. Image 1.13's protocol 2 failed its independent review
+and never shipped, and so did 1.14 and 1.15 with protocol 3 (V114-F1–F8, V115-F1–F7), and 1.16
+to 1.20 with protocol 4 (V116-F1–F4, V117-F1–F3, V118-F1/F2, V119-F1–F3, V120-F1–F4). This tool
+needs protocol 4, image 1.23 on, for `cli` and `shell`; it still updates a protocol-1 board.
+
+```bash
+pitrac-link cli stat                      # one command, its output as it is printed
+pitrac-link cli strobe live on confirm    # every word as typed at the USB console
+pitrac-link shell                         # interactively; 'exit' or Ctrl-D leaves
+pitrac-link cli-cancel 5eed0001:12        # how a command ended, or cancel it if it has not run
+```
+
+- **The same guards.** The line goes through the board's own dispatcher, so every refusal the
+  USB CLI has applies:
+  - the live-mode allowlist;
+  - the strobe staircase, cap and budget;
+  - the beam/live interlock;
+  - `reset`/`bootsel` with a Pi powered;
+  - the beam's 25 %, which is firmware for USB and the Pi alike: the PWM pin's high time is
+    never more than a quarter of its period, and the carrier stays within 1-200 kHz. That
+    binds the pin; the LED adds the board's drive stretch, measured per board (the owner,
+    2026-11-26; image 1.17).
+
+  A live strobe session is shared: USB and the Pi can each arm, fire and end it.
+- **The Pi-only power rule.** What would cut this Pi's power with no shutdown runs from here
+  only with a trailing `confirm`:
+  - `forceoff confirm`;
+  - `reset force confirm`, `bootsel force confirm`;
+  - `adc5vcal <volts> confirm`: a wrong scale makes the supply monitor drop the rail;
+  - `fault clear confirm`, while a fault holds the rail up.
+
+  Plain `off` runs only when the board is RUNNING this Pi: there it is the orderly shutdown,
+  and anywhere else it would be a hard cut. A refusal is exit 3, and the board prints why.
+- **Seen at the bench.** Each command shows on the board's USB console as `[pi] <command>`,
+  with its output. A key typed there asks it to stop.
+- **At most once.** A command is not safe to repeat: `strobe pulse 20` twice is two pulses.
+  - It first takes a ticket from the board. The board runs a ticket once, and only once.
+  - The tool sends it again only if nothing comes back. The board answers a resend from its
+    record, the last 16 tickets.
+  - A ticket from before a board reset, or older than the record, runs nothing: the outcome is
+    then reported UNKNOWN, never guessed.
+- **Use one actual UART producer**: no other open writer, serial console or service
+  on this link. Cooperating clients take `flock`; the tool also requests `TIOCEXCL`
+  where supported. Neither revokes an already-open descriptor. The idle-state
+  preflight is not atomic arbitration between independent producers.
+- **Ctrl-C before the command line goes out** -- while the tool waits for its ticket, or
+  observed at the last check before writing the first byte on the **first** send --
+  means nothing ran, exit 6. The check and the OS write are not atomic. After partial
+  progress the tool tries to finish that frame. A stop during a retry still at byte
+  zero abandons the retry, not the original ticket. If that wait raises an I/O
+  error, the client checks the pending stop before returning: it attempts the
+  original ticket's abort, even after two Ctrl-Cs. A port that cannot take the
+  abort still leaves UNKNOWN; a retry error without a stop does not auto-cancel.
+- **Ctrl-C after** sends `CLI_ABORT` for the command's ticket, and the command is never sent
+  again. The board then does one of three things:
+  - not started yet: cancels it, and it never runs;
+  - running: asks it to stop;
+  - already done: says how it ended. A stop that arrives after the command finished is exit 8.
+
+  A second Ctrl-C stops waiting after attempting the ticket's stop, also when the two
+  come together (image 1.21, V120-F2: 1.20 then gave up with no stop sent, and the command
+  ran on). Once the line may have gone out, the outcome is then UNKNOWN, and the tool prints
+  the ticket for `cli-cancel`. Both are looked for before each wait, never between an answer
+  and the outcome made from it: an answer that has arrived is the outcome.
+- **If the serial port fails** once the line may have gone out, the outcome is UNKNOWN, with
+  the ticket. Before that, nothing ran: exit 1.
+- **One 1 s write deadline per frame.** After a wait or partial progress the tool
+  starts no further write after it observes expiry. A zero-byte failure on the first
+  CLI send is exit 1; a partial or unavailable count is UNKNOWN with the ticket. A
+  retry taking zero bytes does not undo an earlier send. The usual eight fixed-request
+  attempts each budget 1 s for writing and 0.3 s for the reply; this is not a bound
+  on scheduling, kernel close, or total process duration.
+- **If the board answers as older firmware** (protocol 1, after a rollback, say) once the line
+  may have gone out, the outcome is UNKNOWN too, with the ticket and why. Before the line went
+  out, the same answer is exit 1 (update the board).
+- **A restart loses the board's record of its tickets, on any firmware** (image 1.17, review
+  note V116-N2). Each boot starts a new session with an empty record, so going back to 1.17
+  or later does not bring a ticket from before the restart back: `cli-cancel` then says no
+  query can recover it. A log of the board's USB console, which shows `[pi] <command>` for
+  every command the Pi ran, is then the only record. 1.16's tool said to ask again once the
+  board ran 1.16; that could not work.
+- **`cli-cancel` asks about a command that may already have run.** If it cannot hear the
+  answer, the outcome stays UNKNOWN: exit 5, with the ticket, and whether the query was never
+  sent or did not finish. That covers a port that cannot be opened, another program holding
+  it, a device that is no tty, a failing port, and a Ctrl-C at any point before the answer
+  (V116-F4, V117-F3). 1.16 exited 2 or 1, as for a new command, with no ticket; 1.17 still let a
+  Ctrl-C while opening, a tty that would not set up, and a failing close escape or replace the
+  exit. Otherwise it exits as `cli` would for how that command ended. Its UNKNOWN goes to
+  stderr, as every other UNKNOWN does, and its reason names the exception's class.
+- **Ctrl-C never interrupts the tool part-way** (image 1.20, V119-F1). From its start it is
+  only counted, and acted on where an outcome is still to be had: as above for `cli` and each
+  `shell` command; at a prompt (`shell`'s, the update's) it ends the wait, as no answer; for
+  `cli-cancel` before the answer (UNKNOWN, 5); for `ping`, `info`, `status`, `hist` and
+  `upd-status` before the answer (exit 130, nothing to report); for `update` through the
+  last stop check before its first APPLY write (not applied, exit 1, and the board drops what this run sent
+  it). An apply once any of it is taken, and an
+  `abort`, are waited for: their answer decides. Every exit is
+  decided at one point, and from there nothing changes it. 1.19 let a Ctrl-C between an
+  answer and its report replace it: UNKNOWN for a heard answer, a traceback after an accepted
+  update.
+- **An outcome once had stands, for every command** (image 1.19, V118-F1). Getting the outcome
+  and saying it are two steps. After the first, nothing changes the exit:
+  - a stdout or stderr that cannot be written (`| head`, a closed pipe, `>&-`): the line goes
+    to the other stream, an UNKNOWN's ticket included. With both gone, only the exit is left;
+  - a port that will not close, or a message about that which cannot be written either.
+
+  `cli` output that stdout cannot take does not disturb the command: the tool listens to its
+  end, the exit is the board's, and stderr says how many characters went nowhere (the board's
+  USB console printed them all). 1.18 turned a heard `cli-cancel` answer into UNKNOWN when
+  stdout was a closed pipe, lost an UNKNOWN's ticket to a Ctrl-C while it was printed, and
+  took a `cli` stdout error for the serial port failing.
+- **Output holds nothing up** (image 1.20, V119-F2). Each stream is written by a thread of its
+  own. One that takes nothing for 2 s -- a pipe nobody reads, a terminal paused with Ctrl-S --
+  is given up as a closed one is, once (the line it was taking may still appear later). It is
+  written 4 KB at a time, and each 4 KB taken counts, so a long piece read steadily is not
+  given up (image 1.21, V120-N1). A stream whose thread cannot be started -- the process is
+  out of threads -- is unavailable, as a closed one is, and the exit still stands (V120-F4:
+  1.20 let that error out, and the exit became 1). A command's output is queued, so a stalled
+  stdout never holds up the command or its stop. After an accepted apply, this Pi's shutdown is
+  requested before anything is printed.
+- **Answers name the session and the ticket** (protocol 4). Numbers restart at 1 when the board
+  restarts, so the tool, `cli-cancel` included, takes only an answer with both. None -- or the
+  command is still running, which the board takes as a stop -- is UNKNOWN.
+- **Output is checked.** Every chunk carries its offset, and the end carries the total and a
+  CRC. If any was lost on the way, the exit is 4, even though the command ran. The board's USB
+  console still has all of it.
+- **One at a time on the board.** While a command runs, the board reads nothing else from the
+  link but that command's own `CLI_ABORT`.
+- **Procedural rules still apply to Pi software:** nothing conductive near D12, eyes away from
+  the LED bank, the 30 % open-load stop on a strobe staircase (`HANDOFF.md` §3).
+- **Exit codes of `cli`:**
+
+  | Code | Meaning |
+  |---|---|
+  | 0 | it ran to its end, and all its output arrived |
+  | 1 | a link or tool error before the line went out -- the port busy, failing, or taking none of the line in 1 s, no board, or firmware before 1.23: nothing ran |
+  | 2 | not run: not a valid line (1-95 printable ASCII), refused as malformed, or the port could not be opened |
+  | 3 | not run: the Pi-only power rule (if the board's explanation was lost, the tool says so) |
+  | 4 | it ran, but some of its output was lost |
+  | 5 | outcome UNKNOWN (no answer, the board restarted or went back to older firmware, or the port failed or stopped taking frames after the line, or part of it, may have gone out). The tool says whether `cli-cancel` with the ticket it printed can still find out: not once the board has restarted |
+  | 6 | nothing ran: cancelled before it ran, or stopped before the line went out |
+  | 7 | it acted on a stop and ended early |
+  | 8 | a stop was asked, but it ran to its end: it does not stop part-way, or the stop came after it had finished |
+
 ## Updating the RP2354's firmware from this Pi
 
 Any RP2354 reset cuts this Pi's power, so the Pi cannot flash the board the usual ways. The
@@ -97,13 +244,24 @@ off:
 pitrac-link update pitrac.bin        # build/pitrac.bin (or build/pitrac.uf2) from the PC
 ```
 
-1. The tool checks the file (an RP2350 Arm image, flagged try-before-you-buy), sends it in
-   240-byte chunks into the board's RAM (288 KB at most; ~3 s for a 220 KB image), and the
-   board checks its SHA-256 and the image's header.
-2. It asks before going on (`--yes` skips the question). From the answer on, the board owes this
+1. The tool checks the file (an RP2350 Arm image, flagged try-before-you-buy). It asks the
+   board's update state first: if the board already holds an update -- receiving, verified,
+   armed or installing -- it stops there, sends none of the image and drops nothing, since
+   that update is not this run's (`pitrac-link upd-status` shows it, `pitrac-link abort`
+   drops it). 1.20 could drop such an update (V120-F1). Then it sends the image in 240-byte
+   chunks into the board's RAM (288 KB at most; ~3 s for a 220 KB image), and the board checks
+   its SHA-256 and the image's header. With one actual producer, the board may hold
+   this run's staging after BEGIN, or nothing (a cut frame, reset or USB abort).
+   A stop, a 'no', a transfer failure or refused APPLY may trigger cleanup. If **any**
+   APPLY attempt may have gone out and no conclusive answer was heard, nothing is
+   dropped. Reconcile with `pitrac-link upd-status`; do not start a new apply on
+   that evidence. An acknowledgement means **accepted**, not installed.
+2. It asks before going on (`--yes` skips the question; no answer -- the end of input, a
+   Ctrl-C, no stdin at all -- is no, and the staged image is dropped). From APPLY acceptance, the board owes this
    Pi its power back; it notes that before anything else, so no reset of the board loses it.
    Then the board shuts this Pi down the normal way, through J8.37, and the tool also runs
-   `systemctl poweroff`.
+   `systemctl poweroff`, before it prints anything (image 1.20): a terminal or pipe that does
+   not take its output cannot hold the request up. `--no-poweroff` leaves it to the board.
 3. With the Pi off and the latch open, the board writes the image into its **other** A/B flash
    partition, a sector at a time, reading each back, and reboots into it **on trial**.
 4. The new image checks itself and buys itself (the boot ROM's "try before you buy"), then powers
@@ -132,9 +290,8 @@ Before the first update, each board needs its partition table, once, over USB
   build): it could not roll back.
 - Bump the version for every image (`PITRAC_FW_VERSION_MINOR` in `CMakeLists.txt`). An image
   no newer than the running one still installs, but buying it erases the old one
-  whenever the old one would otherwise win the next normal boot: always for an older version, and for an equal one when the old image is in A (equal versions boot A). Then there is no fallback. The tool warns before it sends. Its warning says the
-  erase always happens, which overstates it; it will be reworded with the next change to the
-  tool.
+  whenever the old one would otherwise win the next normal boot: always for an older version, and for an equal one when the old image is in A (equal versions boot A). Then there is no fallback. The tool warns before it sends, in those
+  words (image 1.20; before, its warning said the erase always happens).
 
 ## Install
 
@@ -175,7 +332,7 @@ backup that has been restored and booted once before the Pi is seated.
 | The board's shutdown request, by hand: a female-female jumper from header pin 37 (GPIO26) to pin 39 (GND) for ~0.5 s. GPIO26 is an input with a pull-up, so this is a key press | the Pi starts an orderly shutdown within ~1 s. A menu, or nothing, means the request will not work on the board (see "Desktop images" below) |
 | `sudo sh /usr/lib/systemd/system-shutdown/pitrac-rpi5-on.shutdown check` | `pitrac: NOT safe -- / (/dev/mmcblk0p2) is still writable: would leave RPI5_ON (GPIO22) high`. That is the right answer on a running system: it shows the hook reads this image's mount table. `check` never touches GPIO22 |
 | `sh tests/test_shutdown_hook.sh`, in this folder | `21 cases, 0 failed` |
-| `python3 -m unittest discover -s tests -p test_pitrac_link.py`, in this folder | `Ran 23 tests` ... `OK (skipped=4)`. The four skipped tests compare the tool's tables with the firmware's C sources and run only in a repo checkout, where all 23 pass |
+| `python3 -m unittest discover -s tests -p test_pitrac_link.py`, in this folder | For 1.23 expect `Ran 141 tests` and `OK` in a Pi checkout with firmware sources. Without `src/`, four table comparisons skip. On Windows six need POSIX. Tests include the real process with closed/full pipes, SIGINT sweeps, and exact diagnostics, wire order and fake-board state on retry and transport failures. No test runs the real `systemctl poweroff`. |
 | `ls -l /dev/ttyAMA0` (after the reboot with `dtparam=uart0=on`), then `sudo fuser /dev/ttyAMA0` | the device exists, and `fuser` prints nothing: no console or getty holds it |
 | `pinctrl get 14-15` | GPIO14 is `TXD0` and GPIO15 is `RXD0`: UART0 is on header pins 8 and 10 |
 | `groups` | includes `dialout`, so `pitrac-link` can open `/dev/ttyAMA0` without `sudo` |

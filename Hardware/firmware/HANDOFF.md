@@ -122,6 +122,41 @@ explicit decision from the owner.
    test is a finding to report. Known gap: a zero-current
    firing counts as "within limits", so with an open load the staircase climbs — the 6c Step 3
    "nothing by 30 %" stop rule covers it until the firmware fix (PROGRESS §9).
+10. 🔴 **Image 1.23 lets the Pi run every CLI command** over the link (`pitrac-link cli`,
+    the owner's decision of 2026-11-24, `PROGRESS.md` §8). 1.21 failed independent
+    confirm review (V121-F1–F4, 2026-11-27); 1.22 also failed (V122-F1). 1.23 and its
+    matching Pi client passed software review; §8.11 is the separate owner-run hardware check. 1.20 (V120-F1–F4) and 1.19
+    (V119-F1–F3), both 2026-11-27, 1.18
+    (V118-F1, F2), 1.17 (V117-F1–F3), 1.16 (V116-F1–F4) and 1.15 (V115-F1–F7), all 2026-11-26,
+    1.14 (V114-F1–F8, 2026-11-25) and 1.13 (V113-F1–F6) failed theirs and never left this PC.
+    - **The firmware's own guards apply to it unchanged.**
+    - **Keep beam duty at or below 25 %.** The owner requires firmware enforcement on USB and
+      the Pi. From 1.16 it is on the PWM pin's high time, and from 1.17 the carrier stays within
+      1–200 kHz and no change made while the beam runs stretches a pulse on the pin. **It binds
+      the pin, not the LED** (the owner, 2026-11-26): the LED adds the drive chain's stretch,
+      which `BRINGUP_NEW_BOARD.md` Step 6.3b measures per board on the MSO54B, at the carrier,
+      150 and 200 kHz, with its uncertainty (V117-F1, V118-F2, V119-F3). 1.14 and 1.15 bounded the LED
+      with an assumed U9 width (V114-F3, V115-F2), and 1.16 claimed the pin's bound for the LED
+      at any frequency (V116-F1). Keep the procedural limit on released firmware.
+    - **The rules above that are procedure, not firmware, bind Pi software too:**
+      - the 30 % open-load stop on a staircase (rule 9's gap);
+      - eyes away from the LED bank;
+      - the Phase 6c board state for live current.
+
+      A Pi tool that drives the strobe carries them in its own code, as
+      `tools/strobe_focus.ps1` does on the PC.
+    - **From the Pi, what would cut the Pi's power needs a trailing `confirm`:** `forceoff`,
+      `reset force`, `bootsel force`, `adc5vcal <volts>`, and `fault clear` while a fault holds
+      the rail up. Plain `off` runs only in RUNNING, as the orderly shutdown.
+    - **Every Pi command shows on the USB console** as `[pi] <command>`.
+    - **`pitrac-link`'s exit codes say how a command ended** (`pi/README.md`): it ran; nothing
+      ran (cancelled before it ran, or stopped before the line went out); it stopped early; it
+      ran to its end despite a stop; output was lost; or the outcome is unknown, with the
+      ticket to ask about. Protocol 4 (1.16 on) names the session in every answer. Candidate 1.15
+      could report the wrong outcome (V115-F4, F6, F7), and 1.16's `cli-cancel` could on a port
+      it could not open (V116-F4), and 1.17's on a Ctrl-C while opening or a failing close
+      (V117-F3). A restart loses the board's record of a ticket: then only a log of the USB
+      console tells.
 
 ---
 
@@ -149,17 +184,40 @@ $env:PATH = "$env:USERPROFILE\.pico-sdk\ninja\v1.13.2;$env:USERPROFILE\.pico-sdk
 arm-none-eabi-size build\pitrac.elf
 ```
 
-**Host tests** (native, MSVC, separate `tests/build`; 300 cases as of 2026-11-18, image 1.12). Run
+**Host tests** (native, MSVC, separate `tests/build`; 349 cases as of 2026-11-27, image 1.23). Run
 them after any change to `power_fsm.c`, `strobe_plan.c`, `strobe_live.c`, `service.c`,
 `telemetry.c`, `config_store.c`, `cal_math.c`, `adc_ring_math.h`, `fw_update.c`, `link_frame.c`,
-`link_proto.c`, `sha256.c`, `cam_plan.c`, `strobe.c`, `camera.c`, `shot.c`, `cli.c`'s `gpio`,
-`reset` and `bootsel` commands, or any `.pio` file. The camera tests run the PIO
+`link_proto.c`, `link_cli.c`, `pi_link.c`, `sha256.c`, `cam_plan.c`, `strobe.c`, `camera.c`,
+`shot.c`, `beam.c`, `cal.c`'s `cal_demod_model()` and `cal_scan_carrier()`, `cli.c`'s line
+editor (`cli_service()`), `gpio`, `reset`, `bootsel`, `off`, `fault`, `panel`, `capture`,
+`capture trig` and `strobe wave` commands, the Pi power rule or `beam sweep`'s steps,
+`tools/scope.py`, or any `.pio` file. `stop_test` (image 1.14, extended in 1.15–1.18) runs
+the real `beam.c` and `service.c` with `cli.c`'s line editor, `panel`, the sweep, the captures
+and `strobe wave` and their print-out, and `cal.c`'s model fit and carrier scan, copied out by
+`tests/extract_functions.py` (functions, and `#NAME` defines, `$NAME` statics and `@NAME`
+typedefs). From 1.17 its beam slices run in time and the carrier pin is traced; from 1.18
+it also runs `config_store.c`'s `cfg_apply_beam()`. Its
+`stop_test console` mode is the board's console end to end, for `tools/tests/test_scope.py`:
+`scope.py`'s own reader against it (CTest `scope.reader`, which needs Python; two of its 38
+cases need pyserial, and are skipped without it; 44 from 1.18). `pi_link_test`
+(1.15) compiles the unchanged `pi_link.c` against `tests/link_standin/`, a clock, UART and DMA
+ring in which a byte lands after the write index passes it. The camera tests run the PIO
 programs themselves: the test build calls the SDK's `pioasm` (`%USERPROFILE%\.pico-sdk\tools\2.3.0\pioasm`)
 on the same `.pio` sources and runs the words in `tests/pio_sim.c`. Without pioasm the configure
 step warns and those tests are not built. `engine_test` also runs the unchanged `strobe.c`,
 `camera.c` and `shot.c` against a register model (`tests/sdk_standin/`), with the `gpio` command
 copied out of `cli.c` by a Python script at build time: no Python, no `engine_test`. The Pi's link tool has a Python suite, standard library only, any
-machine: `python -m unittest discover -s pi/tests -p test_pitrac_link.py` (23 tests). The Pi's
+machine: `python -m unittest discover -s pi/tests -p test_pitrac_link.py` (141 tests, 1.23,
+about 2 min; the port-lock test, `cli-cancel` run as a process against a held port, a port
+that is no tty, a process with no stdout or no stdin, and a write to a real tty that takes
+nothing need POSIX, so they run on the Pi and are skipped on Windows). Its `AsAProcess` tests
+run the tool as its own process, through `pi/tests/fake_board_process.py`, with OS pipes for
+stdout and stderr that are closed or already full, and with thread starts refused, on both;
+its `Sweep` tests put a real SIGINT at every line each command runs. Its fake board keeps the
+firmware's update state (UPD_STATUS, BEGIN refused while armed), and its port runs the tool's
+own bounded write, with a transport that can stall and resume (1.21).
+The suite puts a stand-in in for `systemctl poweroff` at import: it never shuts the machine
+down. The Pi's
 shutdown hook has its own POSIX-shell test, which runs under WSL here (on the Pi: `sh
 pi/tests/test_shutdown_hook.sh`):
 `MSYS_NO_PATHCONV=1 wsl.exe -e sh /mnt/c/<repo>/Hardware/firmware/pi/tests/test_shutdown_hook.sh`.
@@ -187,8 +245,96 @@ box. Don't rebuild a handed-over image just to check it: a doc-only change needs
 the boot ROM compares it between the two A/B partitions. **Bump the minor for every image that
 leaves this PC.** An image no newer than the running one still installs, but buying it erases
 the other partition's image whenever the old one would otherwise win the next normal boot: always for an older version, and for an equal one when the old image is in A (equal versions boot A). Then there is no fallback.
-`CMakeLists.txt` says **1.12** (2026-11-18). The minor is a number: 1.10, 1.11 and 1.12 are
-above 1.9.
+**1.23 independent confirm review PASS**, protocol 4, with its matching Pi client.
+[Independent verdict](captures/review_2026-11-27_v1.23/INDEPENDENT_REVIEW_v1.23.md): V122-F1 closed. A stop counted during a zero-byte
+failed retry is checked before returning; the client attempts the original ticket's
+abort. No delivery guarantee. Release `Nov 27 2026 22:52:29`, BIN 256484 B
+`20C16DD5…2570A641`, UF2 513024 B `6F5606E7…6A210028`. Not flashed.
+[Review brief](captures/review_2026-11-27_v1.23/REVIEW_BRIEF_v1.23.md).
+**1.22 independent confirm review NOT PASSED (V122-F1).** [1.22 report](captures/review_2026-11-27_v1.22/INDEPENDENT_REVIEW_v1.22.md).
+Release `Nov 27 2026 21:43:38`, BIN 256484 B `AE54FB09…0E77945C`, UF2 513024 B
+`AFE6D160…D5B21C16`. No MCU change from 1.21 except stamp and version. The Pi client
+distinguishes a stopped retry from a stopped first send, keeps accepted-prefix evidence
+through I/O errors, checks the frame deadline before each write attempt, and distinguishes
+APPLY accepted from unknown. One actual producer required. **Not flashed.**
+1.21 failed independent confirm review ([report](captures/review_2026-11-27_v1.21/INDEPENDENT_REVIEW_v1.21.md)).
+The minor is a number: 1.10 to 1.22 are above 1.9.
+- **As submitted (claims superseded by V121-F1–F4): 1.21 was 1.20's machine code with only the version changed; the prior review's findings were all
+  in `pi/pitrac_link.py`** (`PROGRESS.md` §6, 2026-11-27). The `.bin` differs from 1.20's in 11
+  bytes: the minor in the same seven places, and four digits of the build time. An update asks
+  the board's update state first and drops only what its own BEGIN started (V120-F1); two
+  Ctrl-Cs still send the stop before the tool stops waiting (V120-F2); every frame is written
+  in bounded time, a stop seen until the port takes its first byte (V120-F3); a writer thread
+  that cannot start leaves its stream unavailable, and the exit stands (V120-F4); output
+  progress counts per 4 KB (V120-N1); a Ctrl-C just before a prompt waits ends it (V120-N2).
+  Step 6.3b checks that the scope counts every edge (V120-N3). 349/349 host tests; 44/44
+  `scope.py`; the Pi tool's 131 (all on the Pi; 125 on the PC, where six need POSIX); 197
+  mutations, all caught (192 on the PC, the five POSIX ones on the Pi). Release
+  `Nov 27 2026 12:42:37`, `.bin` SHA256 `17F5694B…3621635C`. **Not flashed: awaiting its
+  confirm review at submission; subsequently rejected (V121-F1–F4).**
+- **1.20 independent confirm review NOT PASSED (V120-F1–F4, N1–N3).** Both artifacts
+  reproduced; 349/349 host tests; all 15 differing bytes explained. [Independent review](captures/review_2026-11-27_v1.20/INDEPENDENT_REVIEW_v1.20.md)
+- **1.20 was 1.19's machine code with only the version changed; its review's findings were all
+  off the board again** (`PROGRESS.md` §6, 2026-11-27). The `.bin` differs from 1.19's in 15
+  bytes: the minor in the same seven places, and the build stamp (the day as well as the time,
+  in two date strings). `pitrac_link.py` counts Ctrl-C from `main()` on and acts on it only
+  while an outcome is pending, with one decision point per exit (V119-F1); a stdout or stderr
+  that blocks is given up after 2 s, a command's output never holds up its stop, and after an
+  accepted apply the poweroff request comes before any line (V119-F2); no stdin is no answer
+  (V119-N1). `BRINGUP_NEW_BOARD.md` Step 6.3b's records (200 µs at 6.25 GS/s, on the MSO54B)
+  hold the periods they measure (V119-F3). 349/349 host tests; 44/44 `scope.py`; the Pi tool's
+  110 (all on the Pi; 105 on the PC, where five need POSIX); 173 mutations, all caught (168 on
+  the PC, the five POSIX ones on the Pi). Release `Nov 27 2026 10:59:33`,
+  `.bin` SHA256 `2D0F191A…E9A491B9`. Never flashed.
+- **1.19 independent confirm review NOT PASSED (V119-F1–F3, N1).** Both artifacts reproduced;
+  349/349 host tests; all 13 differing bytes explained. [Independent review](captures/review_2026-11-26_v1.19/INDEPENDENT_REVIEW_v1.19.md)
+- **1.19 was 1.18's machine code with only the version changed; its review's findings were all
+  off the board** (`PROGRESS.md` §6, 2026-11-26). The `.bin` differs from 1.18's in 13 bytes:
+  the minor in seven places and the build stamp. `pitrac_link.py` keeps an outcome once had,
+  whatever stdout, stderr, a Ctrl-C or the close then do (V118-F1). `BRINGUP_NEW_BOARD.md`
+  Step 6.3b takes the pin's high time from the period on the same trace, and claims nothing
+  between its three settings (V118-F2). `scope.py` words its id's limit (V118-N1). 349/349 host
+  tests; the Pi tool's 87/87 on the Pi (83 on the PC, where four need POSIX); mutations:
+  all 153 caught, 149 on the PC and the four POSIX-only ones (P7, P8, P31, P36) among the Pi tool's 58 on the Pi. Release `Nov 26 2026 22:28:40`, `.bin` SHA256 `1A18BDEC…03409826`. Never
+  flashed.
+- **1.18 independent confirm review NOT PASSED (V118-F1, F2).** Both artifacts reproduced;
+  349/349 host tests. [Independent review](captures/review_2026-11-26_v1.18/INDEPENDENT_REVIEW_v1.18.md)
+- **1.18 was 1.17 with V117-F2/F3 and N1–N3 fixed, and V117-F1 answered in the procedure**
+  (`PROGRESS.md` §6, 2026-11-26). `BRINGUP_NEW_BOARD.md` Step 6.3b measures at the carrier
+  itself, with its uncertainty. `scope.py` takes a record only after its command's own echo.
+  `cli-cancel` is UNKNOWN with the ticket through its whole run. The beam's pin rejoins after
+  its dark with no counter wait; a saved carrier comes back as saved. 349/349 host tests; the Pi
+  tool's 73/73 on the Pi (70 on the PC, where three need POSIX); mutations: all 130 caught, 126 on
+  the PC and the Pi tool's 36 on the Pi. Release
+  `Nov 26 2026 18:30:12`, `.bin` SHA256 `B8A5EA64…2A6B059C`. Never flashed.
+- **1.17 independent confirm review NOT PASSED (V117-F1–F3).** Both artifacts reproduced;
+  348/348 host tests. [Independent review](captures/review_2026-11-26_v1.17/INDEPENDENT_REVIEW_v1.17.md)
+- **1.17 is 1.16 with V116-F1–F4 fixed and N1/N2 addressed** (`PROGRESS.md` §6, 2026-11-26):
+  the carrier held to 1–200 kHz on every path; the beam's pin held low through any change made
+  while it runs, so no pulse is stretched; `capture ... id=<n>`. On the PC and Pi side,
+  `scope.py` joins a line a read timeout cut and takes only its own record, and `pitrac-link
+  cli-cancel` that cannot open the port is UNKNOWN with the ticket. 348/348 host tests; the Pi
+  tool's 70 pass on the PC but for the two POSIX ones; 116 of 116 mutations run on the PC
+  caught. P7, P8 and P31 need the Pi, which did not answer this round. Release `Nov 26 2026 17:38:39`,
+  `.bin` SHA256 `B4DFE0B6…CBE0A108`. **Failed its confirm review (above); never flashed.**
+- **1.16 independent confirm review NOT PASSED (V116-F1–F4).** Both artifacts reproduced;
+  345/345 host tests. Keep Board 5 on bought 1.12 in A with r5 in B. Hold §8.11.
+  [Independent review](captures/review_2026-11-26/INDEPENDENT_REVIEW_v1.16.md)
+- **1.16 is 1.15 with V115-F1–F7 and N1/N2 fixed** (`PROGRESS.md` §6, 2026-11-26): CR LF is one
+  Enter at the USB console; a stop on a dump's last line is too late to cut it; the beam's 25 %
+  is on the PWM's high time; `cal model` and `scan carrier` put the carrier back register for
+  register; link protocol 4 names the session in every CLI answer; a long `capture` is refused
+  under the watchdog. On the PC and Pi side, `scope.py` and `pitrac-link`. 345/345 host tests;
+  the Pi tool's 66 tests pass on the PC but for the POSIX port lock; 88 of 88 mutations run on
+  the PC caught. P7 and P8, the port's two locks, need the Pi, which did not answer this round;
+  that code is unchanged since 1.15, where both were caught on the Pi. Release
+  `Nov 26 2026 12:11:17`, `.bin` SHA256 `EE5338B0…933E18AB`. **Failed its confirm review
+  (above); never flashed.**
+- **1.15 independent confirm review NOT PASSED (V115-F1–F7).** Both artifacts reproduced.
+  Firmware tests passed 336/336. Keep Board 5 on bought 1.12 in A with r5 in B. Hold §8.11. [Independent review](captures/review_2026-11-25/INDEPENDENT_REVIEW_v1.15.md)
+- 1.14 introduced tickets and Pi power-command guards. **Independent review NOT PASSED (V114-F1–F8).** Keep Board 5 on bought 1.12 in A with r5 in B. The submitted binary reproduced and all 323 host tests passed. [Independent review](captures/review_2026-11-24/INDEPENDENT_REVIEW_v1.14.md)
+- 1.13 was protocol 2. **Independent review NOT PASSED (V113-F1 through F6); never left this
+  PC.**
 - 1.12 is 1.11 with text only:
   - the `J4: NO CAMERA (CR-09)` printouts and comments retired after 7c;
   - 7c.1's measured `t_cam` in comments;
@@ -234,7 +380,16 @@ above 1.9.
   rebuild them.
 - Later images are built apart, in `build_v<version>/`: `build_v1.2/`, `build_hang_v1.2/`,
   `build_v1.3/`, `build_v1.5/`, `build_v1.6/` (rejected), `build_v1.7/`, `build_v1.8/` (rejected),
-  `build_v1.9/` (rejected), `build_v1.10/` (rejected), `build_v1.11/` and `build_v1.12/` (review passed).
+  `build_v1.9/` (rejected), `build_v1.10/` (rejected), `build_v1.11/` and `build_v1.12/` (review passed),
+  `build_v1.13/` (the Pi's CLI over the link; independent review NOT PASSED, 2026-11-24),
+  `build_v1.14/` (protocol 3, independent review NOT PASSED, 2026-11-25), `build_v1.15/`
+  (independent confirm review NOT PASSED, 2026-11-26), `build_v1.16/` (protocol 4, independent
+  confirm review NOT PASSED, 2026-11-26), `build_v1.17/` (independent confirm review NOT
+  PASSED, 2026-11-26), `build_v1.18/` (independent confirm review NOT PASSED, 2026-11-26),
+  `build_v1.19/` (independent confirm review NOT PASSED, 2026-11-27), `build_v1.20/`
+  (independent confirm review NOT PASSED, 2026-11-27), `build_v1.21/` (submitted for
+  independent confirm review and rejected, 2026-11-27), `build_v1.22/` (rejected, V122-F1),
+  `build_v1.23/` (software review passed; hardware acceptance pending).
   They are
   gitignored (`PROGRESS.md` §6).
 A build folder reused for unreviewed work no longer holds what was reviewed: give the next image
@@ -314,6 +469,55 @@ Stop monitoring before giving COM11 to the host scope tool.
 view, and `--trig` hardware-triggered single shot. Auto-named output goes to `captures/`
 (gitignored). `plt.show()` blocks until the plot window is closed — that is not a hang.
 
+### Preparing an image for its independent review (how 1.14–1.23 were done)
+
+The owner pastes the reviewer's verdict; the full report is
+`captures/review_<date>_v<X>/INDEPENDENT_REVIEW_v<X>.md`. **`captures/` is gitignored:** the
+review folders (briefs, patches, mutation runners and their logs, `old_tool_check.py`) and
+`captures/review_tooling/` exist only on this PC. Never delete them; the next round starts
+from the last one. Nothing is flashed or committed in a round. A round, for image 1.N after
+1.X failed:
+1. **Record the verdict:** a `PROGRESS.md` §6 "NOT PASSED" entry (each finding and how it was
+   reproduced), §0's row, a §10 top block; `HANDOFF.md`'s version status.
+2. **Before any edit, snapshot the code paths:** `python captures/review_tooling/snapshot_round.py
+   captures/<1.X's folder>/v1.12_to_v1.X.patch <scratch>/v1X`.
+3. **Read every line each finding names**, and the firmware it reaches. Fix the cause, not a
+   guard after it, and word each claim at the layer it is tested (§5 rule 10).
+4. **Test at the layer the finding was reproduced:** through `main()`, as a process
+   (`pi/tests/fake_board_process.py`), at every line (`Sweep`), against a fake board that keeps
+   the state the claim touches. Then show the new checks fail on 1.X's tool: the latest
+   `old_tool_check.py` is the pattern (1.X's tool is `1522bd7`'s blob + 1.X's full patch).
+5. **The image:** `PITRAC_FW_VERSION_MINOR` + 1, with a history line in `CMakeLists.txt`; the
+   "first image" strings (`pi/pitrac_link.py`'s "image 1.N on" and firmware-before wording,
+   `tools/scope.py` and `tools/tests/test_scope.py`). Build into `build_v1.N/` with
+   `$env:SOURCE_DATE_EPOCH` set and the configure line `-G Ninja -DPICO_BOARD=pitrac_ltb_v1
+   -DPICO_PLATFORM=rp2350-arm-s -DCMAKE_BUILD_TYPE=Release`. Check the stamp's date is today's
+   (the epoch is read as UTC). Rebuild in a clean folder (`%TEMP%`) and compare both files byte
+   for byte; `captures/<last>/bindiff.py` against 1.X's `.bin` must show only the minor (seven
+   places) and stamp digits. Host tests, `scope.py` tests, the Pi suite with
+   `-W error::ResourceWarning`.
+6. **Mutations:** copy the last `mutate_v1X.py`; run `captures/review_tooling/check_mutations.py`
+   on it first; retarget what no longer applies, retire what the round removed, add one per new
+   safeguard, each naming what removing the code actually does. Hash the tree
+   (`review_tooling/tree_hash.py`) before and after; run all on the PC (`python -B mutate_v1N.py
+   .`, the pyserial wheel on `PYTHONPATH`, in the background: ~5 min). Anything but "caught" is
+   a defect in the test or the mutation. Never edit `src/`, `tests/`, `pi/` or `tools/` while
+   it runs.
+7. **The Pi:** `review_tooling/stage_pi.py`, `scp`, `unpack.sh`, then the review folder's
+   `run_on_pi.sh` (the suite, then every P mutation, as the ordinary user `pitrac2`, no sudo).
+   Copy `pi_run.txt` and `pi_tests.txt` back, then remove the folder on the Pi.
+8. **The patches:** `review_tooling/make_patches.py --prev <1.X's full patch> --snapshot
+   <step 2's copy> --out <new review folder> --old 1.X --new 1.N` → `PROBLEMS: none`.
+9. **The brief and the docs:** `REVIEW_BRIEF_v1.N.md` (the last brief is the template: findings
+   table, identity, patches, evidence, what to check, a hash table of every file). `PROGRESS.md`
+   §0/§6 (with an "I was wrong" list)/§10, this file's version status, §3 rule 10 and §5 rule 10,
+   `CHANGELOG.md`, `DEVELOPER_GUIDE.md`, `pi/README.md`, `BENCH_P8_PI.md` 8.11's identity and
+   `scp` names. `tools/check_doc_links.py`, `review_tooling/eols.py` on every touched file,
+   `AGENTS.md` == `CLAUDE.md`.
+10. **Report to the owner:** what changed, the evidence, what I got wrong, the owner's open
+    decisions, and a paste-ready message for the reviewer (the last one is in `PROGRESS.md` §6's
+    submission entry and the brief's header).
+
 ---
 
 ## 5. How the owner works — follow these
@@ -347,6 +551,54 @@ alternative cost time.
 9. **Read the owner's serial logs before assuming board state.** `captures/COM<n>_*.txt` are
    the Serial Monitor file logs. They have answered "which image is flashed?" when no `id` was
    sent: printed wording differs between builds.
+10. **Word each claim at the layer it was tested, and test at the layer the claim names.**
+    Images 1.14 to 1.18 failed five independent reviews in a row (`PROGRESS.md` §6), mostly on
+    claims one layer above their tests:
+    - a compare register for the LED;
+    - one frequency for a range, and a nominal time for a measured one;
+    - an id for a transaction;
+    - a zero-time model for a real delay;
+    - a printing callback for the process's real stdout.
+
+    Before writing "X holds", list every entry point and every layer between the test and X.
+    Then test each one: the process entry point with real pipes, every command and not only the
+    one reported, the physical quantity where the claim puts it, with its uncertainty. Or word
+    the claim at the layer tested, and say what it does not cover. A safeguard no test can
+    reach is either given a test or removed.
+
+    Image 1.19 failed a sixth time the same way (V119-F1–F3): a guard applied after the hazard
+    leaves a window before it, however small. Two habits from it:
+    - **Remove the hazard, then sweep it.** If something asynchronous (a signal, a stall) can
+      land between two lines, design so it cannot act there, and test with it at *every* line
+      the run executes, not at the lines you thought of (`pi/tests/test_pitrac_link.py`
+      `Sweep`: a real SIGINT at each line event).
+    - **Read every number in a procedure as the instrument will.** A timebase is also a record
+      length: check that what the step asks for fits in what it sets (V119-F3), and nothing
+      that must happen waits behind something that can stall (V119-F2).
+
+    Image 1.20 failed a seventh time (V120-F1–F4). Three habits from it:
+    - **Make the fake as stateful as the claim.** The tests' board answered UPD_STATUS as
+      always idle and took a BEGIN while armed, so no test could see an abort drop an update
+      the run had not begun. Model the state the claim touches as the firmware keeps it.
+    - **List every call on the path that can block or fail, and bound or handle each one.**
+      The serial write had no deadline, so "an apply is waited for, 8 × 0.3 s at most" was not
+      true; a thread start could raise after the exit was decided.
+    - **A sweep must assert the property, not only an allowed exit.** "Exit 5 is allowed for
+      two Ctrl-Cs" passed runs that sent no stop at all. Check what must have happened: the
+      stop frame, the board's state.
+
+    **1.21 failed on neighboring paths (V121-F1–F4).** Before coding, fix the
+    acceptance contract: distinguish this write attempt from the operation across
+    retries, and known zero from missing evidence. Cross accepted prefixes with timeout,
+    write error and wait error. Advance the clock during positive progress as well as a
+    stall. On old and new clients record ordered frames, final board-model state, OS
+    exit and the **whole** operator diagnostic together. A stop check is not atomic
+    with a syscall; a deadline check is not an OS scheduling bound.
+
+    **1.22:** test the signal and the transport fault *together*. Put the signal
+    inside the wait that raises, with the original command already running. A
+    ticket and UNKNOWN exit do not prove an abort was attempted; record its exact
+    frame even when the port accepts zero bytes of the abort.
 
 ---
 
@@ -380,12 +632,17 @@ design respin would change it, it is done once.
 | **Python 3.14 / numpy 2.x**: `ndarray.ptp()` is gone. | Use `np.ptp(arr)`. |
 | **Primary shell is PowerShell 5.1**; bash (Git Bash) is also available. | Don't mix their syntax in one command. No `&&`/`||` in PowerShell 5.1: use `;` and `if ($?) { ... }`. |
 | **Piping a Python script into `python -` from PowerShell mangles non-ASCII** (emoji, `—`, `µ`, `§`): the match string no longer matches, or the file gets `?` written into it. | Keep piped scripts' search strings ASCII-only, or write the script to a file first; for edits around emoji, use a plain editor/edit tool. Assert one match before replacing. |
-| **PowerShell 5.1 to `ssh` (the Pi, host `pitrac2` in `~/.ssh/config`)**: double quotes inside the remote command are stripped, so `$(...)`, `|` and quoted words break; and text piped into `ssh` arrives with a UTF-8 BOM in front and a CR at the end (a sudo password piped that way is rejected, 2026-11-18). | Write each remote step as a bash script with the file-writing tool, `scp` it, and run `ssh -o BatchMode=yes pitrac2 bash <script>`. Strip `\xEF\xBB\xBF` and `\r` from anything a remote script reads from stdin. |
+| **PowerShell 5.1 to `ssh` (the Pi, host `pitrac2` in `~/.ssh/config`)**: double quotes inside the remote command are stripped, so `$(...)`, `|` and quoted words break; and text piped into `ssh` arrives with a UTF-8 BOM in front and a CR at the end (a sudo password piped that way is rejected, 2026-11-18). | Write each remote step as a bash script with the file-writing tool, `scp` it, and run `ssh -o BatchMode=yes pitrac2 bash <script>`. Strip `\xEF\xBB\xBF` and `\r` from anything a remote script reads from stdin. When `pitrac2.local` does not resolve (it has not since 2026-11-25), the Pi answers over Tailscale: add `-o HostName=100.108.88.114 -o HostKeyAlias=pitrac2.local` to `ssh` and `scp` (owner, 2026-11-26). Give a remote script `< /dev/null`, so nothing in it can wait on the terminal. |
 | **.NET file calls in PowerShell (`[IO.File]::ReadAllText("rel\path")`) resolve relative paths against the process directory, not the PowerShell location.** | Always pass absolute paths to `[IO.File]` methods. |
 | **Host tests build with MSVC `/W4 /WX`**: a runtime check on a compile-time constant (`CHECK(CONST_A <= CONST_B)`) is warning C4127 → error. | Use file-scope `_Static_assert` for relations between `board.h` constants; keep `CHECK` for computed values. |
 | **KiCad 10 `.kicad_pcb` syntax**: a pad's net is `(net "GND")` with no net number (older parsers expect `(net 12 "GND")`); pad `(at x y rot)` is relative to the footprint and must be rotated by the footprint's angle (positive = counter-clockwise on screen, y down). The JLC CPL CSV has **no test points** (TP1–TP6). | Parse footprints between `\n\t(footprint "` markers; read positions from the `.kicad_pcb`, not the CPL. Verify a pad position against one known part before trusting the rest. |
 | **The netlist says what should connect, not what the copper does.** J8.17 is on +3V3_Pi5 in the netlist but has no copper; a bench step built on the netlist failed (2026-10-30, `NEXT_BOARD_REV.md` CR-27). | Before telling the owner two pads connect, run `& "C:/Program Files/KiCad/10.0/bin/kicad-cli.exe" pcb drc --format json --severity-all -o <scratchpad>/drc.json <the .kicad_pcb>` (read-only) and check `unconnected_items`; on these boards J8.17 is the only one. The fab gerbers name each copper object's net (`%TO.N,<net>*%`). |
 | **The view tool / an editor can show stale content right after a write.** | Verify an edit with a search, not by re-reading the view. |
+| **This PC's Python has no `pyserial`; WSL is blocked by policy.** | Put the wheel on `PYTHONPATH` for a run (`%TEMP%\pyserial_probe\*.whl`; if gone, `python -m pip download pyserial==3.5 --no-deps -d %TEMP%\pyserial_probe`); never install into the owner's Python. POSIX-only tests and mutations run on the Pi. |
+| **`git apply` in a plain folder writes CRLF here** (`core.autocrlf=true`). | In scratch folders run git with `-c core.autocrlf=false`, and compare files in git's stored form (CRLF folded to LF; check first that no `1522bd7` blob holds a CR). `captures/review_tooling/make_patches.py` does this. |
+| **Mutation runs lie in quiet ways.** | Run Python with `-B` and clear `__pycache__` (a reused `.pyc` ran the wrong mutation once); touch every test that `#include`s a `.c` (MSBuild skips files under `%TEMP%`); skip lists by exact name, never `startswith`; bound every wait in the tests themselves, so a mutation fails rather than hangs (the runner's HUNG is a failure); keep any real side effect out of reach (the suite replaces `systemctl poweroff` at import); a new safeguard can make an old one unreachable: remove it and retire its mutation. Verify the tree's hashes after every run. |
+| **The Pi 5's kernel uses 16 KB pages.** A pipe holds 256 KB and frees room a page at a time. | Pipe-timing tests move ≥ 64 KB per step, and their reader threads are non-blocking and joined before the test ends (one that outlived its test read the next test's pipe by its reused descriptor). |
+| **sudo on the Pi.** | The tests and mutations need none. If a step does, ask the owner; never put a password into a file, a command line, a doc or a message. |
 | **`picotool reboot -u` returns before the board has re-enumerated.** The next command fails: `...returned an error: rebooting`, or `Communication with RP2350 device failed` (Board 5, 2026-11-23). | `Start-Sleep -Seconds 5` after every `reboot -u`, before the next picotool command. A failed command wrote nothing; repeat it. |
 
 ---

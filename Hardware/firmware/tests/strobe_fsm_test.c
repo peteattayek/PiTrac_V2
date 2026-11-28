@@ -534,6 +534,13 @@ static int capture_printf(const char *fmt, ...) {
     }
     return r;
 }
+// Image 1.14 (V113-F4): cli.c's `off`, `fault clear` and the Pi-only power rule
+// are copied out too. s_from_pi is cli.c's own flag, set here as
+// cli_run_remote() sets it around a Pi command.
+#include "link_cli.h"
+static bool s_from_pi;
+const char *fault_name(fault_t f) { return f == FAULT_NONE ? "none" : "a fault"; }
+
 #define printf capture_printf
 #include "fsm_guards_extract.c"
 #undef printf
@@ -778,6 +785,182 @@ static bool reset_settled(void) {
     return true;
 }
 
+// ===========================================================================
+// Image 1.14 (V113-F4): what `off` and `fault clear` from the Pi do, through
+// cli.c's own rule and commands, against the real FSM.
+// ===========================================================================
+
+// A line as cli_run_remote() runs it: split, the Pi-only rule, then (only the
+// two commands under test) dispatched with s_from_pi set. True if it ran.
+static bool run_pi(const char *line) {
+    static char copy[96];
+    char *argv[8];
+    int argc = 0;
+    g_out[0] = '\0';
+    snprintf(copy, sizeof(copy), "%s", line);
+    for (char *p = copy; *p && argc < 8;) {
+        argv[argc++] = p;
+        while (*p && *p != ' ') p++;
+        if (*p) *p++ = '\0';
+    }
+    if (!pi_rule_admits(&argc, argv)) return false;
+    s_from_pi = true;
+    if (!strcmp(argv[0], "off")) cmd_off(argc, argv);
+    else if (!strcmp(argv[0], "fault")) cmd_fault(argc, argv);
+    else exit(5);
+    s_from_pi = false;
+    return true;
+}
+
+// The same command from USB: no rule, s_from_pi clear.
+static void run_usb(const char *line) {
+    static char copy[96];
+    char *argv[8];
+    int argc = 0;
+    g_out[0] = '\0';
+    snprintf(copy, sizeof(copy), "%s", line);
+    for (char *p = copy; *p && argc < 8;) {
+        argv[argc++] = p;
+        while (*p && *p != ' ') p++;
+        if (*p) *p++ = '\0';
+    }
+    if (!strcmp(argv[0], "off")) cmd_off(argc, argv);
+    else cmd_fault(argc, argv);
+}
+
+// The reviewer's FAULT: a Pi slower than the boot timeout, so the FSM latched
+// FAULT_PI_BOOT_TIMEOUT with the rail left up on purpose, and then its
+// userspace came up -- RPI5_ON high, the UART connected, the Pi talking.
+static void fault_with_late_pi(void) {
+    g_slow_pi = true;
+    power_on_reset(true);
+    g_slow_pi = false;
+    (void)power_request_on();
+    step(0);
+    step(RAIL_SETTLE_MS);
+    step(PI_BOOT_TIMEOUT_MS + 1u);
+    g_pin[PIN_RPI5_ON].in = true;
+    step(1);
+}
+
+// In that FAULT, a plain `off` and a plain `fault clear` from the Pi are refused
+// and change nothing; `fault clear confirm` cuts it, counted, as the owner
+// chose. From USB both still end FAULT, as before.
+static bool pi_power_in_fault(void) {
+    fault_with_late_pi();
+    show("FAULT after the boot timeout, the Pi's userspace up since");
+    CHECK(power_fsm_state() == PS_FAULT && gpio_get_out_level(PIN_LATCH_CONTROL));
+    CHECK(gpio_get(PIN_RPI5_ON) && power_pi_present());
+    const uint32_t cuts = telemetry_get(TELE_PI_POWER_CUT);
+
+    CHECK(!run_pi("off"));
+    CHECK(has(g_out, "REFUSED from the Pi: 'off' in FAULT would cut this Pi's power"));
+    CHECK(has(g_out, "'fault clear confirm'"));
+    CHECK(!has(g_out, "'off' is the orderly shutdown"));
+    CHECK(!run_pi("off confirm"));
+    CHECK(!run_pi("fault clear"));
+    CHECK(has(g_out, "acknowledging FAULT drops the rail under this Pi"));
+    CHECK(!has(g_out, "'off' is the orderly shutdown"));     // V113-F4's fallback text
+    CHECK(!run_pi("fault clear now"));
+    step(1);
+    step(1);
+    CHECK(power_fsm_state() == PS_FAULT && gpio_get_out_level(PIN_LATCH_CONTROL));
+    CHECK(telemetry_get(TELE_PI_POWER_CUT) == cuts);
+    CHECK(fault_current() == FAULT_PI_BOOT_TIMEOUT);
+
+    CHECK(run_pi("fault clear confirm"));                       // the owner's form
+    CHECK(has(g_out, "acknowledging FAULT: the rail drops"));
+    step(1);
+    step(1);
+    CHECK(power_fsm_state() == PS_STANDBY && !gpio_get_out_level(PIN_LATCH_CONTROL));
+    CHECK(telemetry_get(TELE_PI_POWER_CUT) == cuts + 1u);      // a cut, and counted
+
+    fault_with_late_pi();                                       // USB, unchanged
+    const uint32_t cuts2 = telemetry_get(TELE_PI_POWER_CUT);
+    run_usb("off");
+    CHECK(has(g_out, "requested shutdown"));
+    step(1);
+    step(1);
+    CHECK(!gpio_get_out_level(PIN_LATCH_CONTROL));
+    CHECK(telemetry_get(TELE_PI_POWER_CUT) == cuts2 + 1u);
+    fault_with_late_pi();
+    run_usb("fault clear");
+    step(1);
+    step(1);
+    CHECK(!gpio_get_out_level(PIN_LATCH_CONTROL));
+    return true;
+}
+
+// Image 1.15: `strobe cal` with a stop already asked as its loop starts ends
+// ABORTED, with the stop marked taken -- what tells the Pi it stopped -- the gate
+// at 0 and nothing fired. 1.14 had no host test of it (its mutation M24 went
+// unchecked); the 1.14 review checked it with its own probe, and this is that
+// check kept.
+static bool always_stop(void) { return true; }
+
+static bool cal_stop_marked_taken(void) {
+    boot(true);
+    CHECK(power_fsm_state() == PS_RUNNING);
+    CHECK(strobe_live_arm() == STROBE_OK);
+    g_complete_burst = true;
+    g_firings = 0u;
+    pitrac_abort_clear();
+    pitrac_abort_source(always_stop);                 // the Pi's CLI_ABORT, as pi_link.c gives it
+    (void)pitrac_yield_ms(0u);
+    pitrac_abort_source(NULL);
+    CHECK(pitrac_abort_pending() && !pitrac_abort_was_taken());
+    const strobe_cal_t c = strobe_cal(9.0f, NULL);
+    CHECK(c.res == STROBE_CAL_RES_ABORTED);
+    CHECK(pitrac_abort_was_taken());
+    CHECK(strobe_gate_level() == 0u);
+    CHECK(g_firings == 0u);
+    return true;
+}
+
+// Before the Pi is RUNNING -- late detection in BENCH_RUNNING, PI_BOOTING --
+// `off` from the Pi is refused and nothing is left queued; in RUNNING it is the
+// orderly shutdown, as before. A `fault clear` from the Pi outside FAULT clears
+// the code and queues no acknowledgement.
+static bool pi_off_orderly_only(void) {
+    boot(false);
+    g_pin[PIN_PI_3V3_SENSE].in = true;                          // a late Pi, in the debounce
+    g_pin[PIN_RPI5_ON].in = true;
+    step(0);
+    CHECK(power_fsm_state() == PS_BENCH_RUNNING);
+    CHECK(!run_pi("off"));
+    CHECK(has(g_out, "'off' in BENCH_RUNNING would cut this Pi's power"));
+    CHECK(has(g_out, "Retry once 'stat' shows RUNNING"));
+    step(1);
+    CHECK(power_fsm_state() == PS_BENCH_RUNNING && gpio_get_out_level(PIN_LATCH_CONTROL));
+    step(PI_PRESENT_DEBOUNCE_MS);
+    CHECK(power_fsm_state() == PS_PI_BOOTING);
+    CHECK(!run_pi("off"));
+    step(1);
+    CHECK(power_fsm_state() == PS_RUNNING);                     // nothing was left queued
+    step(10);
+    CHECK(power_fsm_state() == PS_RUNNING);
+
+    const uint32_t cuts = telemetry_get(TELE_PI_POWER_CUT);
+    fault_raise(FAULT_CAM_TIMEOUT);                             // a code, in RUNNING
+    CHECK(run_pi("fault clear"));                               // no confirm needed here
+    CHECK(fault_current() == FAULT_NONE && has(g_out, "cleared"));
+    step(1);
+    CHECK(power_fsm_state() == PS_RUNNING);
+
+    CHECK(run_pi("off"));
+    CHECK(has(g_out, "requested shutdown (orderly"));
+    step(1);
+    CHECK(power_fsm_state() == PS_SHUTTING_DOWN && gpio_get_out_level(PIN_LATCH_CONTROL));
+    CHECK(!run_pi("off"));                                      // already under way
+    CHECK(has(g_out, "A shutdown is already under way"));
+    g_pin[PIN_RPI5_ON].in = false;                              // the Pi halts
+    step(PI_SHUTDOWN_MIN_HOLDOFF_MS);
+    step(1);
+    CHECK(power_fsm_state() == PS_STANDBY);
+    CHECK(telemetry_get(TELE_PI_POWER_CUT) == cuts);            // orderly: no cut
+    return true;
+}
+
 int main(int argc, char **argv) {
     static const struct { const char *name; bool (*run)(void); } cases[] = {
 #define TEST(n) { #n, n }
@@ -787,6 +970,7 @@ int main(int argc, char **argv) {
         TEST(shutdown_ends_live), TEST(operator_watchdog),
         TEST(reset_late_pi), TEST(reset_powering_on), TEST(reset_settled),
         TEST(reset_rise_in_wait), TEST(reset_rise_in_message),
+        TEST(pi_power_in_fault), TEST(pi_off_orderly_only), TEST(cal_stop_marked_taken),
 #undef TEST
     };
     if (argc == 2) {

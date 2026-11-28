@@ -11,6 +11,137 @@ Earlier history is in `git log`. This file starts with the commit after `b467166
 
 ---
 
+## Not yet committed
+
+- **Firmware image 1.23 and matching Pi client passed [independent confirm review](Hardware/firmware/captures/review_2026-11-27_v1.23/INDEPENDENT_REVIEW_v1.23.md)** (protocol 4; the Pi can run any CLI command over the link).
+  **V122-F1 closed; not flashed.** Board 5 remains on bought 1.12 in A with r5 in B.
+  The software gate is closed; owner-run hardware acceptance starts at §8.11 Step 0.
+  1.23 is 1.22's machine code, as 1.22 was 1.21's,
+  with only the version changed; their reviews' findings were all off the board.
+  - **Images 1.13–1.22 failed their reviews:** V122-F1
+    ([review](Hardware/firmware/captures/review_2026-11-27_v1.22/INDEPENDENT_REVIEW_v1.22.md)); V121-F1–F4
+    ([review](Hardware/firmware/captures/review_2026-11-27_v1.21/INDEPENDENT_REVIEW_v1.21.md)); V113-F1–F6;
+    V114-F1–F8 ([review](Hardware/firmware/captures/review_2026-11-24/INDEPENDENT_REVIEW_v1.14.md));
+    V115-F1–F7, 2026-11-26
+    ([review](Hardware/firmware/captures/review_2026-11-25/INDEPENDENT_REVIEW_v1.15.md));
+    V116-F1–F4, 2026-11-26
+    ([review](Hardware/firmware/captures/review_2026-11-26/INDEPENDENT_REVIEW_v1.16.md));
+    V117-F1–F3, 2026-11-26
+    ([review](Hardware/firmware/captures/review_2026-11-26_v1.17/INDEPENDENT_REVIEW_v1.17.md));
+    V118-F1, F2, 2026-11-26
+    ([review](Hardware/firmware/captures/review_2026-11-26_v1.18/INDEPENDENT_REVIEW_v1.18.md));
+    V119-F1–F3, 2026-11-27
+    ([review](Hardware/firmware/captures/review_2026-11-26_v1.19/INDEPENDENT_REVIEW_v1.19.md));
+    V120-F1–F4, 2026-11-27
+    ([review](Hardware/firmware/captures/review_2026-11-27_v1.20/INDEPENDENT_REVIEW_v1.20.md)).
+  - **How:** `CLI` carries a command line through the USB CLI's own dispatcher, so under every
+    guard it has. Each command runs under a ticket the board issues (`CLI_BEGIN`), at most once;
+    a session's count never wraps. Every answer names the session and the ticket. `CLI_OUT`
+    streams the output with offsets, and a keepalive each second. The answer carries the total
+    and a CRC.
+  - **Cancel and stop:**
+    - A request's own cancel is looked for in everything already received before it runs.
+    - "Stop asked" and "stopped" are separate flags.
+    - These stop: `beam ramp`, `beam sweep` (a 0 ms dwell too), `panel`, `capture trig`, and
+      the print-outs of `capture`, `capture trig` and `strobe wave`. A print-out cut short ends
+      `# end PARTIAL`; a stop after its last line is too late and leaves it whole. `cal model`
+      stops too, and then publishes nothing.
+  - **At the USB console, CR LF is one Enter.** 1.15 read the LF as a stop, so `tools/scope.py`
+    got one sample.
+  - **From the Pi only:** what would cut the Pi's power needs a trailing `confirm`: `forceoff`,
+    `reset force`, `bootsel force`, `adc5vcal <volts>`, and `fault clear` while a fault holds the
+    rail up. Plain `off` runs only in RUNNING, as the orderly shutdown.
+  - **The beam's 25 % is firmware,** on USB and the Pi. It is on the PWM pin's high time, a
+    quarter of the period at most, and no change made while the beam runs stretches a pulse on
+    the pin. **It binds the pin** (the owner, 2026-11-26): the LED adds the drive chain's
+    stretch, measured per board by the new `BRINGUP_NEW_BOARD.md` Step 6.3b. **The carrier stays
+    within 1–200 kHz** on every path (it took 1 Hz to 75 MHz), and a saved carrier in that
+    range comes back as saved. The first pulse after a change may be short, never long. `beam
+    clamp` runs 1 kHz at 25 %.
+  - **`capture ... id=<n>`** says the id back in the record's header.
+  - **`cal model` and `scan carrier` put the carrier back register for register.** Before, they
+    re-planned it from the frequency read back.
+  - **`capture`'s acquisition is not stoppable.** With the watchdog armed, one over 0.5 s is
+    refused.
+  - **Also fixed:** `beam sweep` downwards stepped ~2^31 Hz off between its ends.
+  - **Tests:** host 349/349 (new `stop_test`, with the USB console end to end and the beam's pin
+    traced in time, and `pi_link_test`); scope 44/44; `pitrac-link` 141/141 on the Pi,
+    135 passed and six POSIX-only skipped on Windows; 210 distinct mutations caught
+    ([brief](Hardware/firmware/captures/review_2026-11-27_v1.23/REVIEW_BRIEF_v1.23.md)).
+- **`pitrac-link` for protocol 4** (`pi/pitrac_link.py`): `cli`, `shell` and a new `cli-cancel`.
+  - On the dedicated, single-producer UART, a stop observed at the last pre-write check
+    with zero accepted on the first CLI send means not sent; zero on a **retry** means
+    abandon the retry and attempt the original ticket's stop, even on two Ctrl-Cs.
+    1.23 also checks the counted stop if the retry wait ends in EIO. Failure to
+    deliver the abort still leaves UNKNOWN and the ticket.
+  - One absolute 1 s write deadline per frame, checked before each write attempt;
+    no wall-clock bound on scheduling or close. A known zero on the first CLI failure
+    is exit 1; a partial or unknown prefix is UNKNOWN with the ticket.
+  - **Ctrl-C never interrupts it part-way:** from `main()` on, SIGINT is counted and acted on
+    only while an outcome is still to be had, and each exit is decided at one point, which
+    `main()` returns. A query interrupted before its answer exits 130; an update interrupted
+    at the last check before its first APPLY write is not applied, and the board drops what this
+    run sent it.
+  - **One actual UART producer is required:** it asks the board's update state first, and if
+    anything is staged it sends nothing of its image and drops nothing. It drops only what its
+    own BEGIN started. Possible APPLY with no conclusive reply: outcome unknown, nothing
+    dropped; check `upd-status`. Acknowledged APPLY: accepted, not installation complete.
+  - It checks output length and CRC.
+  - It takes only answers that name its own session and ticket.
+  - A port error, or the board answering as older firmware, once the line may have gone out is
+    UNKNOWN, with the ticket. So is a `cli-cancel` that cannot hear the answer: from opening
+    the port and setting the tty up to a Ctrl-C before the answer. After a restart it says no
+    query can recover the outcome.
+  - **An outcome once had stands, for every command:** a stdout or stderr that cannot be
+    written, a failing close or a failing message about it change no exit. A line its stream
+    cannot take goes to the other, an UNKNOWN's ticket included. `cli` output stdout cannot take
+    is counted on stderr, and the exit is the board's.
+  - **Output holds nothing up:** each stream is written by a thread of its own, 4 KB at a time;
+    one that takes nothing for 2 s is given up, and one whose thread cannot start is
+    unavailable, the exit unchanged. A command's output never holds up its stop. After an
+    accepted apply, the Pi's shutdown is requested before anything is printed.
+  - Its exit codes separate ran, not run, stopped, ran-to-end, incomplete and unknown.
+  - It still updates protocol-1 boards; no answer at the update prompt (the end of input, a
+    Ctrl-C, no stdin at all) is no. The seq file is gone.
+  - 141 tests, among them a real SIGINT at every line each command runs (`Sweep`), the tool
+    run as its own process with closed or full pipes for stdout and stderr and with thread
+    starts refused (`pi/tests/fake_board_process.py`), and a fake board that keeps the
+    firmware's update state, behind a transport that stalls and resumes. The suite never runs
+    the real `systemctl poweroff`.
+- **`tools/scope.py`** sends one terminator and returns only a whole record of its own request:
+  the first record after its command's own echo, carrying the id it sent; lines joined across a
+  read timeout; the declared samples, in rows of the declared channels, then exactly `# end`;
+  for `capture trig`, the trigger where its pre-trigger share puts it. It needs candidate 1.23 or later.
+  It says what it cannot tell apart: an earlier request with the same line and the same id
+  (accepted for one supervised user at the console). Its tests, `tools/tests/test_scope.py`,
+  run its reader against the board's console code (CTest `scope.reader`), and two run with
+  pyserial's own timeout.
+- **`BENCH_P8_PI.md` 8.11 is ready for the owner, starting at Step 0**:
+  - a Step 0 that takes the board to `STANDBY` before the fixture is touched, saying what USB
+    `off` does in each state, and that a shutdown times out at 60 s;
+  - J4 empty and J3 disconnected;
+  - the USB scope's capture, `cli-cancel` against a held port, and two commands with stdout
+    closed;
+  - a timed stop gate, the beam's 25 % at 1250 Hz, and the carrier's range;
+  - exits by state, with a leave path for a powered FAULT.
+- **`HANDOFF.md` §3 rule 10:** the procedural safety rules (the open-load stop, eyes off the LED
+  bank) bind software on the Pi too. The owner requires the 25 % beam limit to be enforced in
+  firmware.
+- **`BRINGUP_NEW_BOARD.md` Step 6.3b (new):** each board's drive stretch at TP5, at the
+  104.17 kHz carrier itself and at 150 and 200 kHz, against the pin's high time taken from the
+  period on the same trace, with a screening uncertainty, PASS / FAIL / INCONCLUSIVE against a
+  +5 ns target, and a consistency check across the three. Nothing is claimed between them. On
+  the MSO54B: 200 µs records at 6.25 GS/s, measured over every cycle, a reading counting only
+  with 1000 cycles and no missed or extra crossing.
+- **`HANDOFF.md` §5 rule 10:** word each claim at the layer it was tested, and test at the
+  layer it names; remove a hazard rather than guard after it, and sweep it at every line; read
+  a procedure's numbers as the instrument will. §7 has the Pi's Tailscale route.
+  **`BENCH_P2_BEAM.md`:** what Q2's two-figure reading resolves; re-runs stop at 200 kHz.
+- **`tests/extract_functions.py`** matches definitions at column 0 only, as its docstring
+  always said, and copies `#define`s, statics and typedefs by name.
+
+---
+
 ## 2026-11-24: firmware 1.12, Board 5, 7c.0–7c.3 with two Mira220s, and focusing by the strobe
 
 - **A route to Phase 7c.1** (PROGRESS §6, 2026-11-16).

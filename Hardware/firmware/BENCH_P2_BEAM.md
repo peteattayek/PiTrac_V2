@@ -446,6 +446,13 @@ safe.
 beam clamp        # sets 1 kHz / 50 %, i.e. a 500 us commanded high phase
 ```
 
+> **From image 1.17** (in review, not released; 1.16 was rejected) `beam clamp` sets 1 kHz /
+> **25 %**: a 250 µs commanded high phase. The firmware's 25 % is on the PWM pin's high time
+> (review finding V115-F2, `beam.h`), and the carrier stays within 1–200 kHz on every path
+> (V116-F1). The measurement is unchanged: 250 µs is still far past every clamp measured
+> (121–135 µs). On 1.17 read the 500 µs below as 250 µs. A LOW width near 250 µs means U9 is
+> not clamping.
+
 **`beam clamp` turns the LED on immediately** — it reconfigures *and* enables, so you have a
 signal to scope straight away. That is intended.
 
@@ -570,6 +577,15 @@ Still to confirm on **U5** — same part and RC, expect 109–136 µs with toler
 on a new board, **use 25 %** and expect the same answer — Q2's conclusion (no duty-fidelity
 limit up to 250 kHz) is about U9's reset path, not about the duty.
 
+⚠ **From image 1.17 the carrier stays within 1–200 kHz** (the owner, 2026-11-26; review finding
+V116-F1), so a re-run sweeps to 200 kHz: `beam sweep 5000 200000 25 3000`. The 2026-08-13 run
+below went to 250 kHz on an earlier image. Each board's drive stretch is measured by
+`BRINGUP_NEW_BOARD.md` Step 6.3b, to the nanosecond with its uncertainty, at the 104.17 kHz
+carrier itself and at 150 and 200 kHz, on the MSO54B. Those three settings only: nothing is
+claimed between them (image 1.19, review finding V118-F2; the acquisition, image 1.20, V119-F3;
+the population screen, V120-N3; expected complete intervals from each record's
+endpoints, V121-N3). This is a screen, not proof about every acquisition.
+
 ```
 beam duty 30
 beam sweep 5000 250000 25 3000
@@ -606,6 +622,13 @@ low-impedance transistor, on the order of **0.1–0.2 µs**. Against a 2.8 µs l
 **Consequences:** the carrier stays **104.167 kHz**, and **Q3's search space is unconstrained
 up to at least 250 kHz** — `scan carrier` can optimise purely for SNR without a hardware
 ceiling in the way.
+
+> **What this reading does not resolve** (added 2026-11-26, review finding V116-F1): 1.2 µs of
+> 4.0 µs is two figures, so it bounds the drive chain's stretch (U9, U10 and Q11 turning off
+> later than on) only to about ±50 ns, 1.25 % of duty at 250 kHz. "Exactly 30 %" meant to that
+> resolution. From image 1.17 the beam's 25 % binds the PWM pin, the carrier stays within
+> 1–200 kHz, and each board's stretch is measured at the carrier and at 150 and 200 kHz
+> (`BRINGUP_NEW_BOARD.md` Step 6.3b).
 
 ---
 

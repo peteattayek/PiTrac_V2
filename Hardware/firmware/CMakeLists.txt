@@ -71,6 +71,7 @@ add_executable(pitrac
     src/fw_layout.c
     src/link_frame.c
     src/link_proto.c
+    src/link_cli.c
     src/pi_link.c
     src/cli.c
 )
@@ -103,6 +104,7 @@ target_link_libraries(pitrac
     hardware_flash
     hardware_xip_cache   # adc ringtest: exercise the snapshot with a cold XIP cache
     hardware_uart        # the Pi serial link (pi_link.c)
+    pico_rand            # the link's session id, new at every boot (pi_link.c)
     pico_flash
     pico_bootrom         # partitions, explicit buy, update reboot (fw_layout.c)
 )
@@ -146,11 +148,74 @@ target_link_libraries(pitrac
 # (2026-11-18): text only -- the `J4: NO CAMERA (CR-09)` printouts and comments
 # retired after 7c, t_cam's measured ~0.2 us in comments, and the 1.11 review's
 # two wording notes (V111-N1 watchdog bound, V111-N2 late-refusal message).
+# 1.13 (2026-11-24): link protocol 2 -- the Pi can run any CLI command over the
+# link, through the same dispatcher and guards (the owner's decision); a shared
+# live strobe session; `forceoff`, `reset force` and `bootsel force` need
+# `confirm` from the Pi; exactly-once for a resent command (link_cli.h). It
+# failed its independent review (V113-F1..F6: a command could run twice or after
+# a cancel, "stopped" could mean finished, a power cut from the Pi in FAULT, lost
+# output unnoticed) and never left this PC. 1.14 (2026-11-24): link protocol 3,
+# tickets the board issues and runs at most once, cancel by ticket, "stopped"
+# only when a command acts on it, output offsets and a CRC; from the Pi `off`
+# only as the orderly shutdown, `fault clear` in FAULT and `adc5vcal` need
+# `confirm`; the beam held to 25 % effective for USB and the Pi (the owner).
+# 1.14 failed its independent review (V114-F1..F8) and never left this PC.
+# 1.15 (2026-11-25): its fixes -- a cancel already received is found before a
+# ticket runs, the beam checks take U9 at its 200 us bound, a 0 ms wait still
+# polls, a stopped `cal model` publishes nothing, the long dumps stop and say
+# PARTIAL; and on the Pi's side, pitrac_link.py's stop, I/O-error and ticket fixes.
+# 1.15 failed its independent confirm review (V115-F1..F7) and never left this PC.
+# 1.16 (2026-11-26): its fixes -- CR LF is one Enter at the USB console, a stop on a
+# dump's last line is too late to cut it, the beam's 25 % is on the PWM's high time
+# (no U9 width assumed), `cal model` and `scan carrier` put the carrier back
+# register for register, and link protocol 4 names the session in every CLI answer.
+# On the Pi's and the PC's side: pitrac_link.py takes only its own (session, ticket),
+# and a rollback to protocol 1 is UNKNOWN with the ticket; scope.py sends one
+# terminator and takes only a whole record.
+# 1.16 failed its independent confirm review (V116-F1..F4) and never left this PC.
+# 1.17 (2026-11-26): the carrier held to 1-200 kHz on every path, the beam's pin held
+# low through any reconfiguration so no pulse is stretched, and `capture ... id=<n>`
+# says the id back in its header. On the PC's and the Pi's side: scope.py joins a
+# line cut by a read timeout and takes only the record with its own id, and a
+# cli-cancel that cannot open the port is UNKNOWN with the ticket. Link protocol 4,
+# unchanged.
+# 1.17 failed its independent confirm review (V117-F1..F3) and never left this PC.
+# 1.18 (2026-11-26): the beam's pin given back after its dark with no counter wait (the
+# first pulse may be short, never long), and a saved carrier restored over the beam's
+# own 1-200 kHz range. On the PC's and the Pi's side: scope.py takes a record only
+# after its command's own echo; cli-cancel is UNKNOWN with the ticket through open,
+# tty setup, query, Ctrl-C and close. Link protocol 4, unchanged.
+# 1.18 failed its independent confirm review (V118-F1, F2) and never left this PC.
+# 1.19 (2026-11-26): 1.18's machine code with only the version changed. Its review's
+# findings are all off the board: pitrac_link.py keeps a decided outcome whatever
+# its output, a Ctrl-C or a failing close then do (V118-F1), BRINGUP_NEW_BOARD.md
+# Step 6.3b takes the pin's high time from the period on the same trace (V118-F2),
+# and scope.py words its id's limit (V118-N1). Link protocol 4, unchanged.
+# 1.19 failed its independent confirm review (V119-F1..F3) and never left this PC.
+# 1.20 (2026-11-27): 1.19's machine code with only the version changed. Its review's
+# findings are all off the board again: pitrac_link.py counts Ctrl-C and acts on it only
+# while an outcome is pending, with one decision point per exit (V119-F1); a stdout that
+# blocks holds nothing up, and the poweroff request after an apply comes first (V119-F2);
+# Step 6.3b's records hold the periods they measure (V119-F3). Link protocol 4, unchanged.
+# 1.20 failed its independent confirm review (V120-F1..F4) and never left this PC.
+# 1.21 (2026-11-27): 1.20's machine code with only the version changed. Its review's
+# findings are all in pitrac_link.py: an update asks the board's update state first and
+# drops only an image its own BEGIN started (V120-F1); two Ctrl-Cs still send the stop
+# before the tool stops waiting (V120-F2); every frame is written in bounded time, a stop
+# seen until the port takes its first byte (V120-F3); a writer thread that cannot start
+# leaves its stream unavailable, and the exit decided stands (V120-F4). Link protocol 4,
+# unchanged.
+# 1.21 failed confirm review (V121-F1..F4); do not load it.
+# 1.22 (2026-11-27): version bump only on the MCU. Pi client: stoppable CLI retry,
+# accepted prefix on I/O errors, one frame deadline, truthful APPLY classification.
+# 1.22 failed confirm review (V122-F1): a counted stop was lost on a retry wait I/O error.
+# 1.23 (2026-11-27): MCU minor only; the Pi attempts the original ticket's abort
+# after a zero-byte failed retry when it observes a pending stop.
 # Images before
 # 1.1 carry no version and do not run from a partition: never load one onto a
 # converted board.
 set(PITRAC_FW_VERSION_MAJOR 1)
-set(PITRAC_FW_VERSION_MINOR 12)
+set(PITRAC_FW_VERSION_MINOR 23)
 pico_set_binary_version(pitrac MAJOR ${PITRAC_FW_VERSION_MAJOR} MINOR ${PITRAC_FW_VERSION_MINOR})
 
 # Try before you buy (fw_update.h): the boot ROM runs this image only on a

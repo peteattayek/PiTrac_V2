@@ -731,8 +731,10 @@ wired?" above).
    ready    : version 1.2 is staged in the board's RAM
    Apply now? ... [y/N]
    ```
-   (The partitions may read the other way round.) Answer `y`: `applied  : the board is shutting
-   this Pi down (J8.37)...`
+   (The partitions may read the other way round.) Answer `y`: the 1.23 client prints
+   `accepted : the board accepted APPLY. When the Pi is back, check:`; older clients
+   printed `applied  : the board is shutting this Pi down (J8.37)...`. Neither line
+   establishes installation; Step 3 does.
 2. The Pi shuts down. The board's CLI then prints `update: the Pi is off: installing into the
    other partition` and, ~3 s later, `update: installed and verified; rebooting into it on
    trial`; after the reboot the new banner, `update: the new image runs and has bought itself`
@@ -747,9 +749,9 @@ wired?" above).
    `build_hang_v1.2/pitrac.bin`, `Nov 10 2026 09:48:59` (built 2026-11-10). Copy it under its own
    name, `scp build_hang_v1.2\pitrac.bin pitrac2.local:pitrac_hang_v1.2.bin`, and run
    `pitrac-link update pitrac_hang_v1.2.bin` (`220876 B`, `SHA-256 93f780c0e86a1e43`). The tool
-   says the version is not newer; answer `y`. Its note says the buy will erase the old image.
-   That overstates the rule (`PROGRESS.md` §9), and this image never buys itself, so nothing is
-   erased. Expect the shutdown and the install as
+   says the version is not newer; answer `y`. Its note, up to image 1.19's tool, says the buy
+   will erase the old image. That overstates the rule (`PROGRESS.md` §9); from 1.20 the note
+   says when the erase happens. This image never buys itself, so nothing is erased. Expect the shutdown and the install as
    above, then the trial hangs, the board runs 1.2 again ~17 s later and powers the Pi. On it,
    `pitrac-link upd-status` → `update   : ROLLED BACK, 1.2 -> 1.2` and, on the next line, `the
    new image never bought itself (it crashed, hung or did not start)`.
@@ -1092,6 +1094,295 @@ fires live current with a Pi seated, so it needs, in order:
 **Stop if** CH1 goes under 4.75 V, a throttled bit appears, a fault latches or the Pi goes down.
 - Send `strobe live off`, then `off`, and keep the scope capture.
 - It is a +5 V budget finding (CR-25), not something to fix by raising a limit.
+
+---
+
+## 8.11 — Image 1.23 from the Pi, and the board's CLI over the link
+
+**1.23 and its matching Pi client passed [independent software review](captures/review_2026-11-27_v1.23/INDEPENDENT_REVIEW_v1.23.md). Hardware acceptance is pending.** Start at Step 0 on bought 1.12 in A, r5 in B; do not install the image before the update step.
+- **Never load 1.22:** [independent review NOT PASSED, V122-F1](captures/review_2026-11-27_v1.22/INDEPENDENT_REVIEW_v1.22.md).
+- **Never load 1.21:** [independent review NOT PASSED, V121-F1–F4](captures/review_2026-11-27_v1.21/INDEPENDENT_REVIEW_v1.21.md).
+- Image 1.20 failed its confirm review (V120-F1–F4, 2026-11-27, [independent review](captures/review_2026-11-27_v1.20/INDEPENDENT_REVIEW_v1.20.md)), 1.19 failed its own (V119-F1–F3, [independent review](captures/review_2026-11-26_v1.19/INDEPENDENT_REVIEW_v1.19.md)), 1.18 failed its own (V118-F1, F2, [independent review](captures/review_2026-11-26_v1.18/INDEPENDENT_REVIEW_v1.18.md)), 1.17 (V117-F1–F3, [independent review](captures/review_2026-11-26_v1.17/INDEPENDENT_REVIEW_v1.17.md)), 1.16 (V116-F1–F4, [independent review](captures/review_2026-11-26/INDEPENDENT_REVIEW_v1.16.md)), 1.15 (V115-F1–F7, [independent review](captures/review_2026-11-25/INDEPENDENT_REVIEW_v1.15.md)), 1.14 (V114-F1–F8, [independent review](captures/review_2026-11-24/INDEPENDENT_REVIEW_v1.14.md)) and 1.13 (V113-F1–F6) before them. Never load any of the eight.
+- This procedure is 1.17's, for 1.23 (`PROGRESS.md` §6). 1.21 was 1.20's machine code with
+  only the version changed, as 1.20 was 1.19's and 1.19 1.18's; their fixes are in
+  `pi/pitrac_link.py`, `tools/scope.py` and `BRINGUP_NEW_BOARD.md`. Step 5 has two commands with stdout closed
+  (V118-F1). From 1.17:
+  - Step 0 says what a shutdown under way does: a 60 s timeout ends in STANDBY too, with a
+    fault latched (the 1.16 review's note V116-N1).
+  - Step 5 adds `cli-cancel` against a held port (V116-F4).
+  - Step 7.6 checks the carrier's range (V116-F1).
+  - The USB scope in Step 5 now takes only the record with its own id (V116-F2, F3).
+
+**What to check on 1.23 during hardware acceptance** (`PROGRESS.md` §6):
+- **The Pi can run any CLI command** (`pitrac-link cli ...`, `pitrac-link shell`), through
+  the CLI's own dispatcher and so under every guard it has. A live strobe session is shared
+  between USB and the Pi.
+- **Tickets.** Each command first takes a ticket from the board. It then runs at most once,
+  however often it is resent and however many programs talk to the board.
+  - A second `pitrac-link` is refused while one holds the port.
+  - Every answer names the session and the ticket (link protocol 4), and the Pi takes only
+    its own.
+- **Stopping.** Ctrl-C on the Pi, or any key at the USB console, asks a command to stop. The
+  answer says which happened:
+  - it ended early: exit 7;
+  - it ran to its end anyway, or had already finished: exit 8;
+  - the board cancelled the ticket, or the tool observed a stop at its last check before
+    writing the first command byte on the first send: it never runs, exit 6.
+  - A stop observed on a zero-byte retry goes to the original ticket's abort. A second
+    Ctrl-C stops waiting after attempting that abort, also when both
+    come together (V120-F2): exit 5, with the ticket.
+- **`beam ramp`, `beam sweep`, `panel test`, `panel demo`, `capture trig` and its print-out,
+  `capture`'s print-out and `strobe wave` stop** on either.
+  - A print-out cut short ends `# end PARTIAL`.
+  - A stop that comes once the last line is out is too late: the print-out ends `# end`, then
+    `(a stop came after the last sample: the record above is whole)`, exit 8 from the Pi.
+  - `capture`'s acquisition before its print-out, up to n/rate seconds, cannot be stopped.
+    With the watchdog armed, one over 0.5 s is refused.
+- **At the USB console, CR LF is one Enter.** 1.15 read the LF as a stop, so `tools/scope.py`
+  got one sample.
+- **Output carries offsets and a CRC:** a lost frame is exit 4, never a silent 0.
+- **Exit 5 always carries the ticket.** That covers a port error once the line may have gone
+  out, and the board answering as older firmware. It also covers a `cli-cancel` that cannot hear
+  the answer: a port that will not open, is held or is no tty, a query that fails, or a Ctrl-C
+  before the answer (V116-F4, V117-F3).
+- **Ctrl-C never interrupts the tool part-way** (V119-F1). It is counted, and acted on only
+  while an outcome is still to be had: a stop or cancel for `cli`, UNKNOWN (5) for
+  `cli-cancel`, exit 130 for a query, "not applied" (1) for an update whose apply the port has
+  taken none of. An apply once any of it is taken, and an abort, are waited for. Every exit is
+  decided at one point, and nothing after changes it.
+- **Each frame has one 1 s write deadline.** No additional write starts after the tool
+  observes expiry. This is not a scheduling bound. Zero accepted on a failed **first**
+  command send: exit 1; partial or unknown: UNKNOWN (5), with the ticket.
+- **The dedicated link must have only one actual producer.** The client asks the board's update state
+  first; if anything is staged, it stops, sending none of its image and dropping nothing.
+  What its own BEGIN starts, it drops if it goes no further; an apply whose answer it did not
+  hear, it does not drop. Check `pitrac-link upd-status`; acceptance is not installation.
+- **An outcome once had stands, for every command** (V118-F1). After it, nothing changes the
+  exit: not a stdout or stderr that cannot be written, not a failing close or a failing
+  message about it. A line that cannot go to its stream goes to the other, an UNKNOWN's
+  ticket included. `cli` output that stdout cannot take is counted on stderr; the exit is
+  still the board's.
+- **Output holds nothing up** (V119-F2). A stdout or stderr that takes nothing for 2 s (a pipe
+  nobody reads, a terminal on Ctrl-S) is given up, as a closed one is. A command's output never
+  holds up its stop. After an accepted apply, this Pi's shutdown is requested before anything
+  is printed. A stream whose writer thread cannot start is unavailable, and the exit stands
+  (V120-F4).
+- **A restart loses the board's record of a ticket,** on any firmware: then `cli-cancel` says no
+  query can tell, and a log of the USB console (`[pi] <command>`) is the only record (V116-N2).
+- **`capture ... id=<n>` says the id back in the record's header.** `tools/scope.py` takes only
+  the first record after its command's own echo, and only if it carries the id it sent; it
+  joins a line its read timeout cut (V116-F2, F3, V117-F2).
+- **From the Pi only:** what would cut this Pi's power needs a trailing `confirm`:
+  - `forceoff confirm`;
+  - `reset force confirm` and `bootsel force confirm`;
+  - `adc5vcal <volts> confirm`;
+  - `fault clear confirm`, when a fault holds the rail up.
+- **From the Pi, plain `off` runs only in RUNNING,** as the orderly shutdown.
+- **The beam's 25 % is on the PWM pin's high time** (the owner, 2026-11-24, enforced on USB and
+  the Pi). The carrier's compare is never more than a quarter of its period, and no change made
+  while the beam runs stretches a pulse on the pin (V116-F1); the first pulse after a change
+  may be short (V117-N1). `beam clamp` runs 1 kHz at 25 %, 250 µs high.
+- **The 25 % binds the pin, not the LED** (the owner, 2026-11-26). The LED's duty is the pin's
+  plus the drive chain's stretch times the frequency, measured per board
+  (`BRINGUP_NEW_BOARD.md` Step 6.3b, at the carrier, 150 and 200 kHz, on the MSO54B; nothing
+  is claimed between them, V118-F2, V119-F3). **The carrier
+  stays within 1–200 kHz** on every path that sets it, and a saved carrier in that range comes
+  back as saved at boot (V117-N2).
+
+`build_v1.23/pitrac.bin`: Release `Nov 27 2026 22:52:29`, 256484 B, SHA256
+`20C16DD515F4CED944C6DDBB24F3FDAE1DC688DC89351892E9BB67782570A641`.
+UF2: 513024 B, SHA256 `6F5606E7838D96F99F5C0FEACFB6C80E96ADABDDAA97B8C86F507FB86A210028`.
+Its update hand-off sits where 1.12's does (`s_mirror` 0x20000110, `s_notes`
+0x200001b0, the same sizes).
+
+| | |
+|---|---|
+| Board | Board 5 (COM10): 1.12 in A (bought), r5 (1.1) in B. Board 1's Pi seated, SW2 taped over, the Pi's own USB-C unplugged, the LRS-75-5 at 5.20 V |
+| J4 | **Empty.** The owner allows a camera on J4 only for 7c (`HANDOFF.md` §3). Step 0 unplugs both TXS0108E modules' J4 and J5.2 leads, with PSU and USB off. They go back only for 7c, again with PSU and USB off |
+| J3 | **Disconnected**, in Step 0, with PSU and USB off. Step 8 fires once at gate 0, and with no LED bank no current can flow, whatever the firmware does |
+| USB | the PC on the board's CLI, logging to `captures/`: it shows the Pi's commands, and stops them |
+| Pi | the new `pi/pitrac_link.py` installed first (README.md "Install"). It still updates a protocol-1 board |
+
+0. **From where Board 5 was left, to `STANDBY`, before the fixture is touched** (V114-N2). It
+   was last recorded `RUNNING`, the Pi up, COM10 unplugged; read it, don't assume it.
+   1. Plug USB (COM10) into the PC and start the console's file log. `stat`.
+   2. By what `stat` shows. What USB `off` does depends on the state (the 1.15 review's note
+      V115-N2; `src/power_fsm.c`):
+      - `RUNNING`, `fault : none`: `off` at USB. In RUNNING it is the orderly shutdown.
+      - `BENCH_RUNNING` with the Pi up: **not** `off` at USB: in BENCH_RUNNING it drops the rail
+        at once, under a Pi the board has not classified. On the Pi, `sudo poweroff`; wait
+        until `stat` shows `userspace 0`; then `off` at USB.
+      - `POWERING_ON` or `PI_BOOTING`: send nothing; `stat` again in a few seconds. An `off`
+        sent now waits for the state the board reaches next. In RUNNING that is the orderly
+        shutdown. In BENCH_RUNNING, or FAULT after a boot timeout, it drops the rail at once.
+        Go on by that state.
+      - `SHUTTING_DOWN`: a shutdown is under way. Send nothing. It holds the rail at least
+        10 s (`PI_SHUTDOWN_MIN_HOLDOFF_MS`), then drops it once it reads the Pi down, or at
+        60 s whether or not (`PI_SHUTDOWN_MAX_WAIT_MS`, the 1.16 review's note V116-N1). Both
+        end in `STANDBY` with `latch : 0`, so the latch does not tell them apart. A timeout
+        also latches `fault : PI_SHUTDOWN_TIMEOUT`, and `hist` counts it under `...timed out
+        (latch opened anyway)`. A timeout is a finding: record it, with the `stat` and `hist`
+        output.
+      - `FAULT` with the Pi up: as "A fault latched with the Pi up" under **Then**, below.
+      - `STANDBY` already: go on.
+   3. Wait until `stat` shows `state : STANDBY` and `latch : 0` (`HANDOFF.md` §3 rule 7: an
+      acknowledgement is not rail-state evidence).
+   4. PSU off, then USB off.
+   5. Unplug both TXS0108E modules' J4 and J5.2 leads; disconnect J3.
+1. **Before** (PSU and USB on, `stat` → `STANDBY`): `id`, `upd`, `hist`, `link`. Keep the output.
+   - `id` → `version : 1.12 (partition A at 0x002000)`, `built : Nov 18 2026 15:57:13`, UID
+     `6093584a7790419d`.
+2. `on`. Wait for `RUNNING` and the Pi's login.
+3. **The update, from the Pi.**
+   - PC, in `Hardware\firmware`: `scp build_v1.23\pitrac.bin pitrac2:pitrac_v1.23.bin`. If
+     `pitrac2.local` does not resolve, add the Tailscale options (`HANDOFF.md` §7, the `ssh`
+     row).
+   - Pi: `pitrac-link update pitrac_v1.23.bin`. Expect:
+     - `image    : pitrac_v1.23.bin, 256484 B, version 1.23, try-before-you-buy, SHA-256
+       20c16dd515f4ced9`;
+     - `board    : version 1.12 ... installs into 0x100000`;
+     - no `NOTE`, and no `the board already holds an update` (Step 1's `upd` showed nothing
+       staged; if the tool says so, stop: record its line and `pitrac-link upd-status`, and
+       report).
+
+     Answer `y` only if the SHA-256 matches.
+   - `accepted : the board accepted APPLY` is not proof of installation. If the apply
+     outcome is unknown, stop; use `pitrac-link upd-status` to reconcile, not another apply.
+     After acceptance, as 8.9c Step 3: the Pi shuts down, the board installs, reboots on trial, buys the
+     image and powers the Pi back on.
+4. **When the Pi is back:**
+   - Pi: `pitrac-link upd-status` → `installed, 1.12 -> 1.23` and `it ran on trial and bought
+     itself`. `pitrac-link ping` → `protocol 4, version 1.23`.
+   - Board:
+     - `id` → `version : 1.23 (partition B at 0x100000)`, `built : Nov 27 2026 22:52:29`;
+     - `upd` → `partner  : version 1.12, bought: the fallback`.
+5. **The CLI from the Pi, read-only.**
+   - `pitrac-link cli id; echo $?` → the same text as `id` at USB, then `0`. The USB console
+     shows `[pi] id`, the output, then its prompt.
+   - `pitrac-link cli stat` → `state    : RUNNING ...`.
+   - `pitrac-link cli nosuch` → `? 'nosuch' -- try 'help'`, exit 0.
+   - `pitrac-link cli "$(printf 'x%.0s' $(seq 96))"` → exit 2, and nothing on the USB console.
+   - USB: `link` → `pi cli   : session <S>, N ticket(s) issued; ...`. Note S, eight hex
+     digits: the `id` above ran as ticket `S:1`.
+   - **The port lock, and a query that cannot be sent** (V116-F4).
+     - In a second SSH session, `pitrac-link shell`, and leave it at its `pi>` prompt.
+     - In the first, `pitrac-link ping; echo $?` → `... in use by another pitrac-link. Nothing
+       was sent.`, then `1`.
+     - `pitrac-link cli-cancel S:1; echo $?` → `pitrac-link: outcome UNKNOWN for ticket S:1: the
+       query was never sent: ... in use by another pitrac-link. Whether it ran is not known;
+       ...`, then `5`. 1.16 printed `Nothing was sent.` and exited 1, as if for a new command.
+     - `exit` the shell. `pitrac-link ping` works again, and `pitrac-link cli-cancel S:1; echo
+       $?` → `it ran: it ran to its end; it printed N bytes (not sent again)`, then `0`.
+   - **With stdout closed** (V118-F1; 1.18 turned the first into exit 5, UNKNOWN). `>&-`
+     closes the tool's stdout before it starts.
+     - `pitrac-link cli-cancel S:1 >&-; echo $?` → on stderr, `pitrac-link: (stdout could not
+       be written) it ran: it ran to its end; ...`, then `0`.
+     - `pitrac-link cli stat >&-; echo $?` → `pitrac-link: stdout could not be written (closed,
+       or taking nothing for 2 s): N characters of the command's output went nowhere ...`, then
+       `0`. USB: `[pi] stat` ran once.
+   - **The USB scope** (V115-F1; firmware 1.15 stopped this after one sample). Close the
+     console's terminal first: COM10 is one program's at a time. Nothing may run from the Pi
+     meanwhile: a byte this sends while a command runs stops that command. PC, in
+     `Hardware\firmware`: `python tools\scope.py --port COM10 --channel 5 --samples 4096 --rate
+     500000 --no-plot --csv captures\p811_scope.csv` → a `header :` line with `'id': '<8 hex>'`
+     (the id it sent, said back after its command's own echo: V116-F3, V117-F2), `rows   :
+     4096`, `wrote ...`, and no `no record`.
+     ADC5 at rest; nothing is driven. Then reopen the console and its log.
+6. **The Pi power rule. Run only these forms, never the `confirm` ones:**
+   - `pitrac-link cli forceoff` → `REFUSED from the Pi: 'forceoff' cuts this Pi's power at once
+     ...`, exit 3. The Pi stays up; `stat` → `RUNNING`.
+   - `pitrac-link cli reset force` and `pitrac-link cli bootsel force` → the same, exit 3.
+   - `pitrac-link cli adc5vcal 5.20` → `REFUSED from the Pi: 'adc5vcal' sets the scale ...`,
+     exit 3. USB `stat` → the `scale` unchanged from Step 1.
+   - `pitrac-link cli reset` → the CLI's own guard, `REFUSED: a Pi is present and powered ...`,
+     exit 0.
+   - `pitrac-link cli fault clear`, with no fault → `cleared`, exit 0. The board stays
+     `RUNNING`.
+7. **Stopping, timed** (V113-F3). Each Pi command under `time`, so its elapsed time is on
+   record.
+   1. `time pitrac-link cli panel demo`. Let it finish: about 24 s, `done -- ring returned to
+      automatic`, exit 0.
+   2. Again, and Ctrl-C after about 3 s:
+      - `STOPPED -- ring returned to automatic` and `(stopped: it ended early)`;
+      - exit 7, and `real` under 4 s;
+      - USB: `panel pattern` → `current: forced=auto`.
+   3. Again, and press a key at the USB console after about 3 s: the same, exit 7.
+   4. **The beam.**
+      - USB: `beam on`, then `beam duty 2`.
+      - Pi: `time pitrac-link cli beam ramp 20 1000`, and Ctrl-C after about 3 s →
+        `STOPPED -- duty held at N %`, N between 3 and 6, exit 7, and `real` under 4 s.
+      - USB: `beam`, then `beam` again 5 s later. Both show the same `duty`, N %: nothing was
+        written after the stop.
+      - USB: `beam off`.
+   5. **A stop the command does not act on.**
+      - `time pitrac-link cli adc ringtest 200`, and Ctrl-C after about 1 s → its `summary:`
+        lines, then `(a stop was asked, but it ran to its end ...)`, exit 8.
+      - If it prints `REFUSED`, run `pitrac-link cli detect disarm` and `pitrac-link cli
+        adcmode idle` first.
+   6. **The 25 % and the carrier's range (owner, 2026-11-24 and 2026-11-26), with the beam
+      off.** Both bind the PWM pin, so these check the firmware's arithmetic; no LED is
+      involved.
+      - `pitrac-link cli beam duty 26` → `REFUSED: 26.0% is over the 25% ceiling. The PWM pin's
+        high time is held to 25% of its period ...`, exit 0 (the command ran, and refused).
+      - **The 1.15 review's case (V115-F2).** USB, the beam still off: `beam freq 1250` (→
+        `1250 Hz actual (TOP=59999 ...)`), then `beam duty 50` → `REFUSED: 50.0% is over the 25%
+        ceiling`. 1.15 took it. Then `beam duty 25` → `duty <- 25.00 %  (level 15000 of 60000,
+        on the pin)`, and `beam` → `duty : 25.00 %  (level 15000: the pin high 200.000 of
+        800.000 us)` and `LED : ... about 15.25 % here with board 1's 122 us U9 clamp`.
+      - **The range (V116-F1).** `pitrac-link cli beam freq 250000` → `ERR: freq '250000' --
+        want whole Hz, 1000-200000 (the carrier's range).`, exit 0; 1.16 took it. USB: `beam
+        freq 999` → the same `ERR`, and `cal model 80000 250000` → `ERR: frequencies must be
+        whole Hz, 1000-200000 (the carrier's range).` Then `beam` → still `freq : 1250 Hz`:
+        nothing changed.
+      - USB: `beam duty 2`, then `beam freq 104166`, then `beam` → `freq : 104166 Hz
+        (TOP=1439)   (range 1000-200000 Hz)`, `duty : 2.00 %  (level 28: the pin high 0.187 of
+        9.600 us)`.
+   7. USB: `link` → `stop asked of 4, of which 3 stopped early`.
+8. **A shared live session at gate 0, J3 disconnected: no current can flow.**
+   - Pi: `pitrac-link cli beam off`, then `detect disarm`, then `strobe gate 0`, then `strobe
+     live on confirm` → `LIVE: ARMED. ... Watchdog NOT armed: a Pi is powered`.
+   - Pi: `pitrac-link cli strobe pulse 20` → `no current pulse above the ~72 mA floor`.
+     - With no load this reads the same as at gate 0 with one.
+     - This step checks the shared session, not current.
+   - USB: `strobe live` → `ARMED`. Then USB: `strobe live off`.
+   - Pi: `pitrac-link cli strobe live` → `live     : OFF -- last ended: strobe live off`.
+9. **Leave, from the Pi, with `stat` → `RUNNING`:** `pitrac-link cli off` → `requested shutdown
+   (orderly: ...)`, exit 0.
+   - The Pi shuts down, and the board goes to `STANDBY`: `stat` → `state : STANDBY`,
+     `latch : 0`.
+   - `hist`: the Pi shutdown requests +1, and the power cuts to a powered Pi unchanged.
+   - PSU and USB off. The modules go back on J4 only for 7c.
+
+**Pass:** Steps 4–9 as written, Step 7's times, unchanged duty and refusals included.
+
+**Stop if:**
+- anything cuts the Pi's power;
+- a refusal in Step 6 or 7.6 runs;
+- a command runs twice;
+- an exit code says a stop happened that did not, or the reverse;
+- a fault latches.
+
+**Then**, by what `stat` shows (USB `off` in each state: Step 0.2):
+- **`RUNNING`, no fault:** `pitrac-link cli off`, or `off` at USB: in RUNNING both are the
+  orderly shutdown.
+- **`BENCH_RUNNING` with the Pi up:** not `off` at USB, which drops the rail there at once.
+  From the Pi, `off` is refused outside RUNNING. On the Pi, `sudo poweroff`; wait until `stat`
+  shows `userspace 0`; then `off` at USB.
+- **`POWERING_ON`, `PI_BOOTING` or `SHUTTING_DOWN`:** send nothing; `stat` again until it shows
+  one of the other states, and go on from there. A shutdown ends in `STANDBY` either way, after
+  at most 60 s; one that timed out also latches `PI_SHUTDOWN_TIMEOUT` (Step 0.2).
+- **A fault latched with the Pi up** (`stat` → `FAULT`):
+  - At USB, send neither `off` nor `fault clear`: in FAULT either one drops the rail under the
+    Pi at once (V113-F4).
+  - From the Pi both are guarded: `off` is refused, and `fault clear` needs `confirm`. Send
+    neither, and not the `confirm` form.
+  1. On the Pi, `sudo poweroff`.
+  2. Wait until `stat` shows `userspace 0`.
+  3. Then `fault clear` at USB. `hist` still counts one power cut to a powered Pi: its 3V3
+     stays up at halt (8.2).
+- In every case, `stat` → `state : STANDBY` and `latch : 0` before PSU and USB go off and the
+  fixture is touched (`HANDOFF.md` §3 rule 7).
+- Keep the logs from both ends.
 
 ---
 

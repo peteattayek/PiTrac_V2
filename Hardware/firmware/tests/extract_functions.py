@@ -9,7 +9,11 @@ extract_cli_gpio.py copies the `gpio` command for engine_test, and the way the
 
 A function is matched from its definition line -- at column 0, optionally
 `static`, its whole parameter list on that line, ending in ` {` -- to the first
-`}` at column 0. Every name must match exactly once.
+`}` at column 0. A name written `#NAME` is a one-line `#define NAME ...` at
+column 0 instead, and `$NAME` a one-line `static ... NAME...;` variable (image
+1.16), so a test runs with the source's own constants and buffers; `@NAME` is a
+one-line `typedef ... NAME;` (image 1.17; not `%`, which cmd.exe expands in the
+Visual Studio build's custom-command script). Every name must match exactly once.
 
 usage: extract_functions.py <output.c> <source.c> <name>[,<name>...] [<source.c> <names> ...]
 """
@@ -28,7 +32,22 @@ def main():
         text = open(src, encoding='utf-8').read().replace('\r\n', '\n')
         parts.append('/* from src/%s */' % os.path.basename(src))
         for name in names.split(','):
-            pat = r'^(?:static )?[^\n(]*\b' + re.escape(name) + r'\([^\n]*\) \{\n.*?^\}'
+            if name[0] in '#$@':
+                if name[0] == '#':
+                    pat = r'^#define ' + re.escape(name[1:]) + r'\b[^\n]*'
+                elif name[0] == '@':
+                    pat = r'^typedef [^\n]*\b' + re.escape(name[1:]) + r';[^\n]*'
+                else:
+                    pat = r'^static [^\n=;(]*\b' + re.escape(name[1:]) + r'\b[^\n(]*;[^\n]*'
+                found = re.findall(pat, text, re.M)
+                if len(found) != 1:
+                    sys.exit(f'extract_functions.py: {name} found {len(found)} times in {src}')
+                parts.append(found[0])
+                continue
+            # At column 0: the first character a letter, so an indented call that
+            # happens to end its line in ` {` is not taken for a definition (image
+            # 1.14: `!parse_u32_in(argv[3], ...)) {` inside `beam sweep` was).
+            pat = r'^(?:static )?[A-Za-z_][^\n(]*\b' + re.escape(name) + r'\([^\n]*\) \{\n.*?^\}'
             found = re.findall(pat, text, re.M | re.S)
             if len(found) != 1:
                 sys.exit(f'extract_functions.py: {name}() found {len(found)} times in {src}')

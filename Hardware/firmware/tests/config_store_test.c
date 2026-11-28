@@ -77,7 +77,10 @@ bool     power_pi_maybe_present(void) { return pi_present || pi_sensed; }
 bool     beam_enabled(void)           { return beam_on; }
 bool     detect_armed(void)           { return armed; }
 float    beam_duty(void)              { return 0.02f; }
-void     beam_configure(uint32_t f, float d, int32_t p) { (void)f; (void)d; (void)p; }
+bool     beam_configure(uint32_t f, float d, int32_t p) { (void)f; (void)d; (void)p; return true; }
+// beam.c's range (board.h's BEAM_FREQ_*, 1-200 kHz), which cfg_apply_beam() uses from
+// image 1.18; stop_test runs the real one against the real beam.c (cfg_carrier_comes_back).
+bool     beam_freq_allowed(uint32_t f) { return f >= 1000u && f <= 200000u; }
 void     adc_set_5vin_scale(float s)  { (void)s; }
 float    adc_default_5vin_scale(void) { return 1.063f; }
 void     detect_set_coalesce_us(uint32_t us) { (void)us; }

@@ -14,6 +14,18 @@
 // must not happen inside a blocking CLI command. During a long CLI command the
 // link does not answer and the Pi retries; the DMA ring keeps the bytes (2 KB).
 //
+// THE PI'S CLI (protocol 4, image 1.16; link_proto.h, link_cli.h). A CLI request
+// runs right here, at the top of the superloop exactly where a USB line runs, so
+// it can never start inside another command, and only under a ticket the board
+// issued and has not used (the book, link_cli.h). Before it runs, the bytes that
+// arrived after it are searched for its own CLI_ABORT: a request and its cancel
+// queued together behind a USB command end cancelled. While it runs, its printf
+// output also goes to the Pi (a stdio driver enabled only then), the link is read
+// only for that ticket's CLI_ABORT, and a keepalive goes out each second -- both
+// from the yield path (pitrac_abort_source()). USB input waits, but any key typed
+// there asks it to stop. Its answer says whether a stop was asked, and whether
+// the command acted on it (pitrac_abort_was_taken()).
+//
 // Nothing here uses an interrupt (the firmware installs none): received bytes are
 // collected by DMA and read from the superloop.
 
@@ -40,6 +52,17 @@ typedef struct {
     uint32_t requests, unknown;   // answered; of those, unknown types
     uint8_t  last_type;      // the last request answered
     uint32_t last_ms;        // ...when
+    // The Pi's CLI (protocol 4), this boot.
+    uint32_t cli_session;    // this board session's id (link_cli.h)
+    uint32_t cli_tickets;    // tickets issued
+    uint32_t cli_runs;       // command lines run (refusals by the CLI's own guards included)
+    uint32_t cli_rule;       // refused by the Pi-only power rule (nothing ran)
+    uint32_t cli_repeats;    // resends and CLI_ABORTs answered from the record, nothing run
+    uint32_t cli_cancelled;  // tickets cancelled before they ran
+    uint32_t cli_refused;    // CLI or CLI_ABORT refused: malformed, another session, stale
+    uint32_t cli_stop_asked; // commands a stop was asked of (a CLI_ABORT, or a key on USB)
+    uint32_t cli_stopped;    // ...of those, commands that acted on it and ended early
+    uint32_t cli_dropped;    // frames that arrived while a command ran, other than its abort
 } pi_link_stat_t;
 
 void pi_link_status(pi_link_stat_t *out);

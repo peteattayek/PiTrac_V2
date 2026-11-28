@@ -22,6 +22,7 @@
 #include "fw_layout.h"
 #include "pi_link.h"
 #include "link_proto.h"
+#include "link_cli.h"
 
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
@@ -50,6 +51,11 @@ static size_t s_len;
 // A character did not fit in s_line. The line is refused at Enter rather than
 // dispatched with its tail missing -- a truncated argument is still a valid one.
 static bool   s_overflow;
+
+// The command now running came from the Pi over the link (cli_run_remote()).
+// Read by the two commands whose effect differs from there: `off` (the orderly
+// shutdown only) and `fault clear` (no FAULT acknowledgement unless confirmed).
+static bool   s_from_pi;
 
 // ---------------------------------------------------------------------------
 
@@ -152,27 +158,40 @@ static const char *k_help =
     "                             Pi down unrequested, power cuts to a Pi, faults\n"
     "  hist clear confirm         zero the counters (to flash after 10 s in STANDBY)\n"
     "  link                       the Pi serial link (UART1, J8.8/J8.10): lines, counters\n"
+    "                             The Pi can run ANY command here over the link\n"
+    "                             ('pitrac-link cli'), under the same guards; it shows\n"
+    "                             here as '[pi] <command>', and a key asks it to stop.\n"
+    "                             From the Pi, forceoff / reset force / bootsel force /\n"
+    "                             adc5vcal <v> / fault clear in FAULT need 'confirm'\n"
+    "                             (they can cut the Pi's own power), and 'off' runs\n"
+    "                             only in RUNNING, as the orderly shutdown\n"
     "  upd                        firmware version, A/B partitions, the partner image,\n"
     "                             a staged update from the Pi, the last update's result\n"
     "  upd abort                  discard a staged update; cancel a pending\n"
     "                             power-on of the Pi after an update\n"
     "\n"
     "  adc <ch> [n]               oversampled read (ch: 0,1,2,5,7)\n"
-    "  adc ringtest [n]           switch the ring IDLE -> BURST n times (1-20, default\n"
+    "  adc ringtest [n]           switch the ring IDLE -> BURST n times (1-200, default\n"
     "                             3), as a live strobe firing does: time when ADC0\n"
     "                             samples arrive, and check the coverage relation\n"
     "                             (samples x cycles/sample = SysTick). Fires nothing.\n"
     "  adc5v                      +5V_IN in volts (divider + cal applied)\n"
     "  adc5vcal <measured_volts>  trim the +5V_IN scale against a DMM\n"
-    "  capture <mask> <n> <rate>  block capture -> CSV. mask is a channel bitmask;\n"
+    "  capture <mask> <n> <rate> [id=<n>]\n"
+    "                             block capture -> CSV. mask is a channel bitmask;\n"
     "                             rate " CLI_XSTR(ADC_RATE_MIN_HZ) "-" CLI_XSTR(ADC_RATE_MAX_HZ)
     " Hz (the header gives the rate the ADC ran at)\n"
-    "  capture trig <ch> [thr] [rate] [pre%] [tmo_s]\n"
+    "                             A key stops the print-out, not the n/rate s of\n"
+    "                             acquisition before it (refused over 0.5 s with\n"
+    "                             the watchdog armed)\n"
+    "  capture trig <ch> [thr] [rate] [pre%] [tmo_s] [id=<n>]\n"
     "                             TRIGGERED single shot. Runs the DMA in a ring\n"
     "                             and stops AFTER the trigger, so the buffer holds\n"
     "                             the baseline and the leading edge. 80 codes,\n"
     "                             500 ksps, 25% pre-trigger, 30 s by default.\n"
     "                             e.g. 'capture 0x20 2000 250000' = ADC5 @ 250 ksps\n"
+    "                             id=<n>: printed back in the header as id=<8 hex>,\n"
+    "                             so a tool can tell its record from another's\n"
     "  adcmode off|idle|armed|burst\n"
     "\n"
     "  on                         request power on from STANDBY (USB guard applies)\n"
@@ -192,7 +211,8 @@ static const char *k_help =
     "  panel test                 ramp both LEDs 0->100->0 for a current check\n"
     "  panel pattern <p|auto>     force a ring pattern; p = off powering booting\n"
     "                             running shutdown fault\n"
-    "  panel demo                 play every pattern in turn, ~4 s each\n"
+    "  panel demo                 play every pattern in turn, ~4 s each. A key stops\n"
+    "                             this or 'panel test'; the LEDs go back to automatic\n"
     "\n"
     "\n"
     "  -- Phase 2: beam (needs the +5V rail up) --\n"
@@ -200,12 +220,17 @@ static const char *k_help =
     "  beam on | off\n"
     "  beam freq <hz>             use 104166 (actual 104166.67 Hz, TOP=1439)\n"
     "                             fixed carrier for every board; 25% at level 360.\n"
-    "  beam duty <pct>            IMMEDIATE. 25% operating maximum (CR-12).\n"
-    "                             use 'beam ramp' above ~5%.\n"
-    "  beam ramp <pct> [step_ms]  gradual, 1% steps -- watch temps as it climbs\n"
+    "                             1000-200000 Hz: no path sets the carrier outside it\n"
+    "  beam duty <pct>            IMMEDIATE. Refused over 25%: the PWM pin's high time\n"
+    "                             is held to a quarter of the period (the operating\n"
+    "                             limit, CR-12). 'beam ramp' above ~5%.\n"
+    "  beam ramp <pct> [step_ms]  gradual, 1% steps -- watch temps as it climbs.\n"
+    "                             A key stops it where it is\n"
     "  beam phase <ticks>         demod offset, 0..TOP (1 tick = 6.67 ns = 0.25 deg)\n"
-    "  beam clamp                 1 kHz / 50% -- scope TP5 to measure the U9 clamp (Q1)\n"
-    "  beam sweep <f0> <f1> <n> <dwell_ms>   duty-fidelity sweep (Q2)\n"
+    "  beam clamp                 1 kHz / 25% (250 us high) -- scope TP5 to measure\n"
+    "                             the U9 clamp (Q1)\n"
+    "  beam sweep <f0> <f1> <n> <dwell_ms>   duty-fidelity sweep (Q2); a key stops it.\n"
+    "                             The pin's duty never passes 25% at any frequency\n"
     "\n"
     "\n"
     "  -- Phase 3: detection (needs the +5V rail up) --\n"
@@ -531,14 +556,88 @@ static void cmd_pins(void) {
 
 // Passed to adc_capture_triggered() so the wait services the FSM and can be
 // broken by a keypress. Keeps adc_engine.c free of any service-layer include.
+//
+// A zero-length yield, not a bare pitrac_service() (image 1.14, review finding
+// V113-F3): only the yield path polls the USB key and the Pi's CLI_ABORT, and
+// sends the link's keepalive. Until 1.13 this read the latch without polling
+// either, so a quiet `capture trig` could hold the board for its whole timeout
+// (up to 3600 s) with no way to stop it but the long press. Called between scans
+// of the ADC ring, inside a command: the one place the key may be polled.
 static bool capture_wait_poll(void) {
-    pitrac_service();
+    (void)pitrac_yield_ms(0u);
     return pitrac_abort_pending();
 }
 
+// Between the lines of a long dump (`capture`, `capture trig`, `strobe wave`):
+// the same poll -- the USB key, the Pi's CLI_ABORT, one service pass that keeps
+// the FSM, the supply monitor and an armed watchdog fed -- and a stop ends the
+// dump there, with an end line that says it is PARTIAL, so neither a person nor
+// tools/scope.py takes it for the whole record. Image 1.15 (review finding
+// V114-F6): until 1.14 these loops called a bare pitrac_service(), which polls
+// neither, so a stop waited out up to 16384 lines, and the Pi was told the
+// command had run to its end.
+//
+// Called after line `done` of `total`: every DUMP_POLL_EVERY-th line, and the last
+// (dump_poll_due()). A stop seen once every line is out is too late to cut
+// anything (image 1.16, review finding V115-F6): 1.15 marked it taken and ended
+// a whole 257-of-257 dump PARTIAL, so scope.py dropped a complete record and the
+// Pi read "stopped early". The dump now ends normally, and the stop stays asked
+// but not taken -- the Pi's answer says "ran to its end" -- and dump_end() says so.
+#define DUMP_POLL_EVERY 256u
+// The longest unserviced acquisition `capture` runs with the watchdog armed (its 1 s
+// period, halved): see cmd_capture() (V115-N1).
+#define CAPTURE_WDOG_MAX_MS 500u
+static bool dump_poll_due(size_t done, size_t total, size_t every) {
+    return done >= total || ((done - 1u) % every) == 0u;
+}
+
+static bool dump_stopped(size_t done, size_t total) {
+    if (!capture_wait_poll()) return false;
+    if (done >= total) return false;          // all of it is out: too late (V115-F6)
+    pitrac_abort_taken();
+    printf("# end PARTIAL -- stopped after %u of %u samples\n", (unsigned)done, (unsigned)total);
+    return true;
+}
+
+// The end line of a whole dump; then, apart from it, a stop that came after the
+// last line (V115-F6), so an operator at USB knows the record above is whole.
+static void dump_end(void) {
+    printf("# end\n");
+    if (pitrac_abort_pending() && !pitrac_abort_was_taken())
+        printf("(a stop came after the last sample: the record above is whole)\n");
+}
+
+// An optional last word, id=<n> (image 1.17, review finding V116-F3): the record's
+// header says it back, as id=<8 hex digits>. A tool that sends a fresh id with each
+// request can then tell its own record from any other on this console: the Pi's
+// commands print here too, and a record still draining from an earlier request
+// looks just like the next one. tools/scope.py takes only a record with its id.
+typedef struct { bool has; uint32_t v; } capture_id_t;
+
+static bool capture_take_id(int *argc, char **argv, capture_id_t *id) {
+    id->has = false;
+    id->v = 0u;
+    if (*argc < 2 || strncmp(argv[*argc - 1], "id=", 3) != 0) return true;
+    if (!parse_u32(argv[*argc - 1] + 3, &id->v)) {
+        bad_arg("id", argv[*argc - 1] + 3, "a whole number, e.g. 0x1a2b3c4d");
+        return false;
+    }
+    id->has = true;
+    (*argc)--;
+    return true;
+}
+
+// The end of a `# capture` header line: the id, if one was given.
+static void capture_header_end(const capture_id_t *id) {
+    if (id->has) printf(" id=%08lx", (unsigned long)id->v);
+    printf("\n");
+}
+
 static void cmd_capture_trig(int argc, char **argv) {
+    capture_id_t id;
+    if (!capture_take_id(&argc, argv, &id)) return;
     if (argc < 3) {
-        printf("usage: capture trig <ch> [threshold] [rate_hz] [pre%%] [timeout_s]\n"
+        printf("usage: capture trig <ch> [threshold] [rate_hz] [pre%%] [timeout_s] [id=<n>]\n"
                "  defaults: threshold 80, rate 500000, pre 25%%, timeout 30 s\n"
                "  Runs the DMA continuously and stops it AFTER the trigger, so the\n"
                "  buffer contains the baseline and the leading edge -- which a\n"
@@ -594,34 +693,36 @@ static void cmd_capture_trig(int argc, char **argv) {
                    "  in %lu s. Lower the threshold, or get closer.\n",
                    thr, base, (unsigned long)(tmo / 1000u));
             return;
-        case ADC_TRIG_ABORTED: printf("aborted.\n"); return;
+        case ADC_TRIG_ABORTED: pitrac_abort_taken(); printf("aborted.\n"); return;
         case ADC_TRIG_ERROR:   printf("ERR: bad arguments\n"); return;
         case ADC_TRIG_OK:      break;
     }
 
     size_t got = adc_capture_count();
-    printf("# capture mask=0x%02x n=%u rate=%lu overran=%d trig=%u base=%u\n",
+    printf("# capture mask=0x%02x n=%u rate=%lu overran=%d trig=%u base=%u",
            adc_capture_mask(), (unsigned)got, (unsigned long)adc_capture_rate(),
            adc_capture_overran(), (unsigned)trig, base);
+    capture_header_end(&id);
     printf("# columns: ch%u\n", ch);
     const uint16_t *b = adc_capture_buffer();
     const size_t start = adc_capture_start();
     for (size_t i = 0; i < got; i++) {
         printf("%u\n", b[(start + i) % ADC_CAPTURE_MAX_SAMPLES]);
-        // A full dump is 16384 lines over CDC. Keep the FSM, the supply monitor
-        // and an armed watchdog fed while it drains.
-        if ((i % 256) == 0) pitrac_service();
+        // A full dump is 16384 lines over CDC: serviced, and stoppable, as it drains.
+        if (dump_poll_due(i + 1, got, DUMP_POLL_EVERY) && dump_stopped(i + 1, got)) return;
     }
-    printf("# end\n");
+    dump_end();
     if (adc_capture_overran())
         printf("WARN: FIFO overran -- samples are not evenly spaced.\n");
 }
 
 static void cmd_capture(int argc, char **argv) {
     if (argc >= 2 && !strcmp(argv[1], "trig")) { cmd_capture_trig(argc, argv); return; }
+    capture_id_t id;
+    if (!capture_take_id(&argc, argv, &id)) return;
     if (argc < 4) {
-        printf("usage: capture <mask> <n> <rate_hz>\n");
-        printf("       capture trig <ch> [threshold] [rate_hz] [pre%%] [timeout_s]\n");
+        printf("usage: capture <mask> <n> <rate_hz> [id=<n>]\n");
+        printf("       capture trig <ch> [threshold] [rate_hz] [pre%%] [timeout_s] [id=<n>]\n");
         return;
     }
     uint32_t mask_u, n_u, rate;
@@ -643,14 +744,39 @@ static void cmd_capture(int argc, char **argv) {
         return;
     }
 
+    // THE ACQUISITION IS NOT SERVICED (image 1.16, review note V115-N1). adc_capture()
+    // waits on the DMA in a tight loop -- it has to, to tell a FIFO overrun during
+    // the capture from one after it (adc_engine.c) -- so for n/rate seconds nothing
+    // polls a stop, steps the power FSM or kicks the watchdog: up to 22.4 s, 16384
+    // samples at 733 Hz. The print-out after it is serviced and stoppable. An armed
+    // watchdog (`wdog on`, 1 s) would reset the board in a long one -- a power cut
+    // to a Pi -- so one longer than CAPTURE_WDOG_MAX_MS is refused while it is armed.
+    {
+        const uint32_t run_hz = adc_capture_rate_for(rate);   // > 0: the range is checked
+        const uint64_t n_cap  = n < ADC_CAPTURE_MAX_SAMPLES ? (uint64_t)n : ADC_CAPTURE_MAX_SAMPLES;
+        const uint32_t acq_ms = (uint32_t)((n_cap * 1000u + run_hz - 1u) / run_hz);
+        if (pitrac_watchdog_enabled() && acq_ms > CAPTURE_WDOG_MAX_MS) {
+            printf("REFUSED: %lu samples at %lu Hz take %lu ms to acquire, and nothing services\n"
+                   "  the board meanwhile: the armed watchdog (1 s) would reset it. Fewer\n"
+                   "  samples or a higher rate (%u ms at most), or 'wdog off'. Nothing ran.\n",
+                   (unsigned long)n_cap, (unsigned long)run_hz, (unsigned long)acq_ms,
+                   (unsigned)CAPTURE_WDOG_MAX_MS);
+            return;
+        }
+        if (acq_ms >= 1000u)
+            printf("acquiring for %.1f s: a stop is seen only once the print-out starts.\n",
+                   (double)acq_ms / 1000.0);
+    }
+
     size_t got = adc_capture(mask, n, rate);
     if (!got) { printf("ERR: capture failed\n"); return; }
 
     // CSV, machine-readable for tools/scope.py. Header first so the host can
     // de-interleave without being told the mask separately.
-    printf("# capture mask=0x%02x n=%u rate=%lu overran=%d\n",
+    printf("# capture mask=0x%02x n=%u rate=%lu overran=%d",
            adc_capture_mask(), (unsigned)got, (unsigned long)adc_capture_rate(),
            adc_capture_overran());
+    capture_header_end(&id);
     printf("# columns:");
     for (uint c = 0; c < 8; c++) if (adc_capture_mask() & (1u << c)) printf(" ch%u", c);
     printf("\n");
@@ -668,10 +794,12 @@ static void cmd_capture(int argc, char **argv) {
         printf("\n");
         // The CDC pipe is slower than we can print. Service the FSM, the supply
         // monitor and an armed watchdog while it drains (2026-10-05 audit: this
-        // used to be tight_loop_contents(), which services nothing).
-        if ((i % 256) == 0) pitrac_service();
+        // used to be tight_loop_contents(), which services nothing), and stop on
+        // a stop (image 1.15) -- unless it comes on the last line (1.16).
+        if (dump_poll_due((i + nch) / nch, got / nch, DUMP_POLL_EVERY / nch) &&
+            dump_stopped(i + nch, got)) return;
     }
-    printf("# end\n");
+    dump_end();
 
     if (adc_capture_overran())
         printf("WARN: FIFO overran -- round-robin phase lost, samples are mislabeled.\n");
@@ -1017,7 +1145,22 @@ static void cmd_on(int argc, char **argv) {
 static void cmd_off(int argc, char **argv) {
     (void)argc;
     (void)argv;
- power_request_shutdown();  printf("requested shutdown\n"); 
+    // From the Pi, only the orderly shutdown (image 1.14, review finding
+    // V113-F4). In FAULT or BENCH_RUNNING `off` drops the latch at once, which
+    // would cut the Pi that asked. The power rule refused it before dispatch
+    // outside RUNNING; this is the FSM's own check, at the moment of queuing.
+    if (s_from_pi) {
+        if (!power_request_shutdown_orderly()) {
+            printf("REFUSED from the Pi: 'off' in %s would cut this Pi's power with no\n"
+                   "  shutdown. NOTHING was done.\n", power_state_name(power_fsm_state()));
+            return;
+        }
+        printf("requested shutdown (orderly: the board asks this Pi to shut down, and\n"
+               "  opens the latch once it reads it down)\n");
+        return;
+    }
+    power_request_shutdown();
+    printf("requested shutdown\n");
 }
 
 static void cmd_forceoff(int argc, char **argv) {
@@ -1058,12 +1201,28 @@ static void cmd_panel(int argc, char **argv) {
                    power_state_name(power_fsm_state()));
 
         // --- ramp, for a current / thermal check ---------------------------
+        // Both of these stop on a key, or the Pi's CLI_ABORT, within 20 ms, and
+        // put the LEDs back to automatic either way (image 1.14, V113-F3: until
+        // 1.13 they ignored a stop, and the Pi was told "stopped" after the demo
+        // had played all 24 s).
         if (!strcmp(argv[1], "test")) {
             printf("ramping both panel LEDs 0->100->0 ... (RDY is on/off: it lights\n"
                    "at >= 50 %%, since it gave up PWM for the strobe gate DAC -- A7)\n");
-            for (int p = 0; p <= 100; p += 5) { panel_override(p, p); pitrac_yield_ms(80); }
-            for (int p = 100; p >= 0; p -= 5) { panel_override(p, p); pitrac_yield_ms(80); }
+            bool stop = false;
+            for (int p = 0; p <= 100 && !stop; p += 5) {
+                panel_override(p, p);
+                stop = pitrac_yield_stoppable_ms(80) == YIELD_ABORT_KEY;
+            }
+            for (int p = 100; p >= 0 && !stop; p -= 5) {
+                panel_override(p, p);
+                stop = pitrac_yield_stoppable_ms(80) == YIELD_ABORT_KEY;
+            }
             panel_override(-1, -1);
+            if (stop) {
+                pitrac_abort_taken();
+                printf("STOPPED part-way -- both returned to automatic\n");
+                return;
+            }
             printf("done -- both returned to automatic\n");
             return;
         }
@@ -1072,9 +1231,10 @@ static void cmd_panel(int argc, char **argv) {
         // Most of these states are unreachable on the bench without a simulated
         // Pi, so this is the only way to eyeball them before Phase 1b.
         if (!strcmp(argv[1], "demo")) {
-            printf("playing all ring patterns, ~4 s each. Ctrl-C does nothing here;\n"
-                   "it runs to completion (~24 s) then returns to automatic.\n");
-            for (int p = 0; p < PANEL_PAT__COUNT; p++) {
+            printf("playing all ring patterns, ~4 s each (~24 s); any key stops it.\n"
+                   "Either way the ring returns to automatic.\n");
+            bool stop = false;
+            for (int p = 0; p < PANEL_PAT__COUNT && !stop; p++) {
                 printf("  %-9s %s\n", panel_pattern_name(p),
                        p == PANEL_PAT_OFF      ? "(dark -- what STANDBY looks like)"      :
                        p == PANEL_PAT_POWERING ? "(fast breath -- rails coming up)"       :
@@ -1083,9 +1243,15 @@ static void cmd_panel(int argc, char **argv) {
                        p == PANEL_PAT_SHUTDOWN ? "(fast blink -- teardown)"               :
                                                  "(double-blink -- fault)");
                 panel_force_pattern(p);
-                for (int i = 0; i < 400; i++) { pitrac_yield_ms(10); }
+                stop = pitrac_yield_stoppable_ms(4000) == YIELD_ABORT_KEY;
             }
             panel_force_pattern(-1);
+            if (stop) {
+                pitrac_abort_taken();
+                printf("STOPPED -- ring returned to automatic (now: %s)\n",
+                       panel_pattern_name(panel_pattern_for_state()));
+                return;
+            }
             printf("done -- ring returned to automatic (now: %s)\n",
                    panel_pattern_name(panel_pattern_for_state()));
             return;
@@ -1385,7 +1551,7 @@ static void cmd_level(int argc, char **argv) {
 
             // pitrac_service() consumes the keystroke inside the yield, so a
             // local getchar() here would almost never see one. Ask the latch.
-            if (pitrac_abort_pending()) break;
+            if (pitrac_abort_pending()) { pitrac_abort_taken(); break; }
         }
         adc_engine_set_mode(ADC_MODE_IDLE);
         printf("\nstopped. Beam left ON at %.2f %% duty; phase unchanged at %ld ticks.\n",
@@ -1422,6 +1588,13 @@ static void cmd_cal(int argc, char **argv) {
                                       CAL_CHOP_CYCLES, CAL_CHOP_HZ_DEFAULT, &r);
             adc_engine_set_mode(ADC_MODE_IDLE);
             if (!ok || !cal_demod_commit_ok(&r)) beam_set_phase(phase_before);
+            // A stopped sweep has no fit to show (image 1.15): until 1.14 the lines
+            // below printed its zeroed record, ending in a reflector hint.
+            if (r.stopped) {
+                printf("STOPPED -- nothing committed. The phase is back at %ld ticks.\n",
+                       (long)beam_phase_ticks());
+                return;
+            }
             printf("\nfit      : %ld ticks   (grid argmax %ld)\n",
                    (long)r.best_ticks, (long)r.argmax_ticks);
             // The tick count is an encoding; the delay is the measurement. It is
@@ -1507,10 +1680,12 @@ static void cmd_cal(int argc, char **argv) {
         }
         if (argc >= 2 && !strcmp(argv[1], "model")) {
             uint32_t f0 = 80000u, f1 = 200000u, n = 5u;
-            if ((argc > 2 && !parse_u32_in(argv[2], 1u, SYSCLK_HZ / 2u, &f0)) ||
-                (argc > 3 && !parse_u32_in(argv[3], 1u, SYSCLK_HZ / 2u, &f1))) {
-                printf("ERR: frequencies must be whole Hz, 1-%lu. Nothing was run.\n",
-                       (unsigned long)(SYSCLK_HZ / 2u));
+            // The carrier's range (board.h, image 1.17, V116-F1); was 1 Hz-75 MHz.
+            if ((argc > 2 && !parse_u32_in(argv[2], BEAM_FREQ_MIN_HZ, BEAM_FREQ_MAX_HZ, &f0)) ||
+                (argc > 3 && !parse_u32_in(argv[3], BEAM_FREQ_MIN_HZ, BEAM_FREQ_MAX_HZ, &f1))) {
+                printf("ERR: frequencies must be whole Hz, %u-%u (the carrier's range).\n"
+                       "     Nothing was run.\n",
+                       (unsigned)BEAM_FREQ_MIN_HZ, (unsigned)BEAM_FREQ_MAX_HZ);
                 return;
             }
             if (argc > 4 && !parse_u32(argv[4], &n)) { bad_arg("points", argv[4], "a whole number"); return; }
@@ -1520,7 +1695,14 @@ static void cmd_cal(int argc, char **argv) {
             adc_engine_set_mode(ADC_MODE_ARMED);
             bool ok = cal_demod_model(f0, f1, n, &s_phase_model);
             adc_engine_set_mode(ADC_MODE_IDLE);
-            if (!ok) { printf("model fit FAILED\n"); return; }
+            // cal_demod_model() writes the model only on success (image 1.15).
+            if (!ok) {
+                printf("%s -- %s\n",
+                       pitrac_abort_was_taken() ? "model STOPPED" : "model fit FAILED",
+                       s_phase_model.valid ? "the model held before is unchanged"
+                                           : "no model is held");
+                return;
+            }
             printf("\ntheta(f) = %.4f + %.4g*f + %.4g*f^2   rad, f in Hz\n",
                    (double)s_phase_model.a0, (double)s_phase_model.a1,
                    (double)s_phase_model.a2);
@@ -1628,10 +1810,12 @@ static void cmd_scan(int argc, char **argv) {
             printf("usage: scan carrier [f0] [f1] [n] [force]\n"); return;
         }
         uint32_t f0 = 80000u, f1 = 200000u, n = 16u;
-        if ((argc > 2 && !parse_u32_in(argv[2], 1u, SYSCLK_HZ / 2u, &f0)) ||
-            (argc > 3 && !parse_u32_in(argv[3], 1u, SYSCLK_HZ / 2u, &f1))) {
-            printf("ERR: frequencies must be whole Hz, 1-%lu. Nothing was run.\n",
-                   (unsigned long)(SYSCLK_HZ / 2u));
+        // The carrier's range (board.h, image 1.17, V116-F1); was 1 Hz-75 MHz.
+        if ((argc > 2 && !parse_u32_in(argv[2], BEAM_FREQ_MIN_HZ, BEAM_FREQ_MAX_HZ, &f0)) ||
+            (argc > 3 && !parse_u32_in(argv[3], BEAM_FREQ_MIN_HZ, BEAM_FREQ_MAX_HZ, &f1))) {
+            printf("ERR: frequencies must be whole Hz, %u-%u (the carrier's range).\n"
+                   "     Nothing was run.\n",
+                   (unsigned)BEAM_FREQ_MIN_HZ, (unsigned)BEAM_FREQ_MAX_HZ);
             return;
         }
         if (argc > 4 && !parse_u32(argv[4], &n)) { bad_arg("points", argv[4], "a whole number"); return; }
@@ -2447,10 +2631,11 @@ static void cmd_strobe_wave(void) {
     printf("# columns: ch0\n");
     for (size_t k = 0; k < n; k++) {
         printf("%u\n", w[k]);
-        // Live mode has armed the watchdog: keep it fed while CDC drains.
-        if ((k % 32u) == 0) pitrac_service();
+        // Live mode has armed the watchdog: keep it fed while CDC drains, and
+        // stop on a stop (image 1.15) -- unless it comes on the last line (1.16).
+        if (dump_poll_due(k + 1, n, 32u) && dump_stopped(k + 1, n)) return;
     }
-    printf("# end\n");
+    dump_end();
 }
 
 static void cmd_strobe(int argc, char **argv) {
@@ -2821,22 +3006,57 @@ static void cmd_led(int argc, char **argv) {
     
 }
 
+// `beam sweep`'s steps: f0 to f1 in n (n >= 2), `dw` ms at each. Ends early on a
+// stop request or a fault, within 20 ms (image 1.14, review finding V113-F3:
+// until 1.13 a stop waited out every remaining dwell, up to 60 s each, and was
+// then reported as a stop). Returns the steps run; *why says how it ended
+// (YIELD_OK: all of them). The frequency is interpolated in signed arithmetic,
+// so a sweep downwards (f1 < f0) works too: until 1.14 the unsigned difference
+// wrapped, and every step between the two ends was ~2^31 Hz off.
+static uint32_t beam_sweep_steps(uint32_t f0, uint32_t f1, uint32_t n, uint32_t dw, yield_t *why) {
+    *why = YIELD_OK;
+    for (uint32_t i = 0; i < n; i++) {
+        const uint32_t f = (uint32_t)((int64_t)f0 + ((int64_t)f1 - (int64_t)f0) * (int64_t)i
+                                                     / (int64_t)(n - 1u));
+        beam_configure(f, beam_duty(), beam_phase_ticks());
+        printf("  %2lu/%lu  %8lu   %8lu  %5lu  %5lu\n",
+               (unsigned long)(i + 1), (unsigned long)n, (unsigned long)f,
+               (unsigned long)beam_actual_freq_hz(), (unsigned long)beam_top(),
+               (unsigned long)beam_level());
+        const yield_t y = pitrac_yield_stoppable_ms(dw);
+        if (y != YIELD_OK) {
+            *why = y;
+            return i + 1u;
+        }
+    }
+    return n;
+}
+
 static void cmd_beam(int argc, char **argv) {
 
         if (argc < 2) {
             printf("beam     : %s\n", beam_enabled() ? "ON" : "off");
-            printf("freq     : %lu Hz  (TOP=%lu)\n",
-                   (unsigned long)beam_actual_freq_hz(), (unsigned long)beam_top());
-            printf("duty     : %.2f %%  (level %lu)\n", (double)(beam_duty() * 100.0f),
-                   (unsigned long)(beam_duty() * (beam_top() + 1)));
-            // The number that actually sets LED current and junction temperature.
-            // Differs from the commanded duty whenever U9's one-shot truncates
-            // the high phase -- notably during `beam clamp`.
-            printf("effective: %.2f %%  at the LED, after the U9 %u us clamp"
-                   "   (ceiling %.0f %%)\n",
-                   (double)(beam_effective_duty() * 100.0f),
-                   (unsigned)BEAM_ONESHOT_CLAMP_US,
-                   (double)(beam_duty_ceiling() * 100.0f));
+            printf("freq     : %lu Hz  (TOP=%lu)   (range %u-%u Hz)\n",
+                   (unsigned long)beam_actual_freq_hz(), (unsigned long)beam_top(),
+                   (unsigned)BEAM_FREQ_MIN_HZ, (unsigned)BEAM_FREQ_MAX_HZ);
+            {
+                // The pin's high time and period, to the ns: BRINGUP_NEW_BOARD.md
+                // Step 6.3b compares TP5's on-time with this (image 1.17, V116-F1).
+                const double us_per_count = (double)beam_clkdiv() * 1.0e6 / (double)SYSCLK_HZ;
+                printf("duty     : %.2f %%  (level %lu: the pin high %.3f of %.3f us)\n"
+                       "           (ceiling %.0f %% of the period, on the pin)\n",
+                       (double)(beam_duty() * 100.0f), (unsigned long)beam_level(),
+                       (double)beam_level() * us_per_count,
+                       ((double)beam_top() + 1.0) * us_per_count,
+                       (double)(beam_duty_ceiling() * 100.0f));
+            }
+            // The LED's duty is the pin's plus this board's drive stretch times the
+            // frequency (the owner, 2026-11-26): the 25 % binds the pin. The estimate
+            // cuts the pin's pulse to board 1's U9 clamp and leaves the stretch out.
+            printf("LED      : the pin's plus this board's drive stretch (BRINGUP 6.3b);\n"
+                   "           about %.2f %% here with board 1's %u us U9 clamp\n",
+                   (double)(beam_led_duty_estimate() * 100.0f),
+                   (unsigned)BEAM_ONESHOT_CLAMP_US);
             printf("phase    : %ld ticks  (%.2f deg)\n", (long)beam_phase_ticks(),
                    (double)(360.0f * beam_phase_ticks() / (beam_top() + 1)));
 
@@ -2934,12 +3154,20 @@ static void cmd_beam(int argc, char **argv) {
         if (!strcmp(argv[1], "freq")) {
             if (argc < 3) { printf("usage: beam freq <hz>\n"); return; }
             uint32_t f;
-            if (!parse_u32_in(argv[2], 1u, SYSCLK_HZ / 2u, &f)) {
-                printf("ERR: freq '%s' -- want whole Hz, 1-%lu. Nothing was changed.\n",
-                       argv[2], (unsigned long)(SYSCLK_HZ / 2u));
+            // The carrier's range (board.h): beam_configure() refuses the rest too.
+            if (!parse_u32_in(argv[2], BEAM_FREQ_MIN_HZ, BEAM_FREQ_MAX_HZ, &f)) {
+                printf("ERR: freq '%s' -- want whole Hz, %u-%u (the carrier's range).\n"
+                       "     Nothing was changed.\n",
+                       argv[2], (unsigned)BEAM_FREQ_MIN_HZ, (unsigned)BEAM_FREQ_MAX_HZ);
                 return;
             }
-            beam_configure(f, beam_duty(), beam_phase_ticks());
+            // The duty is a share of the period and the ceiling is too, so a new
+            // frequency never takes it over (image 1.16).
+            if (!beam_configure(f, beam_duty(), beam_phase_ticks())) {
+                printf("REFUSED: %lu Hz is outside the carrier's range. Nothing was changed.\n",
+                       (unsigned long)f);
+                return;
+            }
             printf("freq <- %lu Hz requested, %lu Hz actual (TOP=%lu, period %lu counts)\n",
                    (unsigned long)f, (unsigned long)beam_actual_freq_hz(),
                    (unsigned long)beam_top(), (unsigned long)(beam_top() + 1));
@@ -2957,24 +3185,20 @@ static void cmd_beam(int argc, char **argv) {
             float pct;
             if (!parse_float_in(argv[2], 0.0f, 100.0f, &pct)) { bad_arg("duty", argv[2], "0-100 %"); return; }
             float d = pct / 100.0f;
-            float eff;
-            if (beam_would_exceed_ceiling(beam_actual_freq_hz(), d, &eff)) {
-                printf("REFUSED: %.1f%% commanded -> %.1f%% EFFECTIVE at the LED,\n"
-                       "         over the %.0f%% ceiling. (U9's %u us one-shot does not\n"
-                       "         truncate a %.1f%% high phase at %lu Hz.)\n",
-                       (double)(d * 100.0f), (double)(eff * 100.0f),
-                       (double)(beam_duty_ceiling() * 100.0f),
-                       (unsigned)BEAM_ONESHOT_CLAMP_US, (double)(d * 100.0f),
-                       (unsigned long)beam_actual_freq_hz());
-                printf("         %.0f%% is the intended operating point (CR-12).\n",
-                       (double)(BEAM_DUTY_OPERATING * 100.0f));
+            if (!beam_duty_allowed(d)) {
+                printf("REFUSED: %.1f%% is over the %.0f%% ceiling. The PWM pin's high time\n"
+                       "         is held to %.0f%% of its period at every frequency (the\n"
+                       "         operating limit, CR-12, enforced in firmware: the owner,\n"
+                       "         2026-11-24). Nothing was changed.\n",
+                       (double)(d * 100.0f), (double)(beam_duty_ceiling() * 100.0f),
+                       (double)(beam_duty_ceiling() * 100.0f));
                 return;
             }
             beam_set_duty(d);      // preserves TOP; no round-trip through freq
-            printf("duty <- %.2f %%  (level %lu of %lu, effective %.2f %% at the LED)\n",
+            // The pin's share; the LED's adds this board's drive stretch (image 1.17).
+            printf("duty <- %.2f %%  (level %lu of %lu, on the pin)\n",
                    (double)(d * 100.0f),
-                   (unsigned long)(d * (beam_top() + 1)), (unsigned long)(beam_top() + 1),
-                   (double)(beam_effective_duty() * 100.0f));
+                   (unsigned long)beam_level(), (unsigned long)(beam_top() + 1));
             return;
         }
 
@@ -2985,17 +3209,27 @@ static void cmd_beam(int argc, char **argv) {
             if (!parse_float_in(argv[2], 0.0f, 100.0f, &pct)) { bad_arg("duty", argv[2], "0-100 %"); return; }
             if (argc > 3 && !parse_u32_in(argv[3], 1u, 10000u, &ms)) { bad_arg("step", argv[3], "1-10000 ms"); return; }
             float d = pct / 100.0f;
-            float eff;
-            if (beam_would_exceed_ceiling(beam_actual_freq_hz(), d, &eff)) {
-                printf("REFUSED: %.1f%% -> %.1f%% effective, over the %.0f%% ceiling.\n",
-                       (double)(d * 100.0f), (double)(eff * 100.0f),
-                       (double)(beam_duty_ceiling() * 100.0f));
+            if (!beam_duty_allowed(d)) {
+                printf("REFUSED: %.1f%% is over the %.0f%% ceiling. Nothing was changed.\n",
+                       (double)(d * 100.0f), (double)(beam_duty_ceiling() * 100.0f));
                 return;
             }
             printf("ramping %.1f%% -> %.1f%% in 1%% steps every %lu ms ...\n",
                    (double)(beam_duty() * 100.0f), (double)(d * 100.0f), (unsigned long)ms);
-            printf("WATCH R73/R74 and D11. Ctrl the PSU if current climbs unexpectedly.\n");
-            beam_ramp_duty(d, ms);
+            printf("WATCH R73/R74 and D11. Any key stops the ramp where it is.\n");
+            const yield_t y = beam_ramp_duty(d, ms);
+            if (y == YIELD_ABORT_KEY) {
+                pitrac_abort_taken();
+                printf("STOPPED -- duty held at %.2f %% (target was %.1f %%). Nothing was\n"
+                       "  written after the stop. 'beam off' to turn it off.\n",
+                       (double)(beam_duty() * 100.0f), (double)(d * 100.0f));
+                return;
+            }
+            if (y == YIELD_ABORT_FAULT) {
+                printf("STOPPED by a fault (%s) -- duty held at %.2f %%.\n",
+                       fault_name(fault_current()), (double)(beam_duty() * 100.0f));
+                return;
+            }
             printf("done -- duty now %.2f %%\n", (double)(beam_duty() * 100.0f));
             return;
         }
@@ -3013,13 +3247,16 @@ static void cmd_beam(int argc, char **argv) {
 
         // Q1: how wide is the U9 one-shot clamp really? Command a high phase far
         // longer than the clamp and scope TP5 -- the LED pulse is the answer.
+        // 25 %, not the 50 % of images up to 1.15: the ceiling is on the PWM's
+        // high time now (image 1.16, V115-F2). 250 us is still well past every
+        // clamp measured (121-135 us); one that reads 250 us is not clamping.
         if (!strcmp(argv[1], "clamp")) {
-            beam_configure(1000, 0.50f, beam_phase_ticks());
+            beam_configure(1000, BEAM_DUTY_OPERATING, beam_phase_ticks());
             {
                 // Commanded high phase in microseconds, computed from what the
                 // hardware actually ended up at rather than from the request --
                 // below ~2289 Hz beam_configure() has to engage a clock divider.
-                unsigned long lvl = (unsigned long)(beam_duty() * (beam_top() + 1));
+                unsigned long lvl = (unsigned long)beam_level();
                 unsigned long hi_us = (unsigned long)((uint64_t)lvl * beam_clkdiv()
                                                       * 1000000u / SYSCLK_HZ);
                 printf("Set %lu Hz / %.0f %% -> commanded high phase %lu us"
@@ -3028,14 +3265,19 @@ static void cmd_beam(int argc, char **argv) {
                        (double)(beam_duty() * 100.0f), hi_us,
                        (unsigned long)beam_top(), (unsigned long)beam_clkdiv());
                 printf("Scope TP5 and measure the LOW width -- that IS the U9 clamp.\n");
-                printf("  Measured 2026-08-13: 122.68 us (BEAM_ONESHOT_CLAMP_US = %u). The\n"
+                printf("  Board 1 measured 122.68 us (BEAM_ONESHOT_CLAMP_US = %u). The\n"
                        "  0.7*R68*C57 = ~86 us estimate was 30 %% short. This is U9 only:\n"
                        "  the strobe's U5 clamp is measured separately in 6a.1.\n",
                        (unsigned)BEAM_ONESHOT_CLAMP_US);
                 printf("WARNING: if the LOW width equals the %lu us commanded above, the\n"
                        "         one-shot is NOT clamping and that is not t_w.\n", hi_us);
-                printf("LED duty is clamp/period, NOT the %% commanded -- %.1f %% here.\n",
-                       (double)(beam_effective_duty() * 100.0f));
+                // Board 1's measured clamp for the estimate; the bound is the
+                // pin's (image 1.16, V115-F2; image 1.17, V116-F1).
+                printf("LED duty is clamp/period, NOT the %% commanded -- about %.1f %% here\n"
+                       "  with board 1's clamp. The pin is held to %.0f %%; at 1 kHz the drive\n"
+                       "  chain's stretch (ns) is negligible against the 1 ms period.\n",
+                       (double)(beam_led_duty_estimate() * 100.0f),
+                       (double)(beam_duty() * 100.0f));
             }
             if (!beam_enable(true)) printf("ERR: rails down -- use 'on' first.\n");
             return;
@@ -3047,14 +3289,16 @@ static void cmd_beam(int argc, char **argv) {
         if (!strcmp(argv[1], "sweep")) {
             if (argc < 6) {
                 printf("usage: beam sweep <f0_hz> <f1_hz> <steps> <dwell_ms>\n"
-                       "e.g.   beam sweep 5000 250000 25 2000\n");
+                       "e.g.   beam sweep 5000 200000 25 2000\n");
                 return;
             }
             uint32_t f0, f1, n, dw;
-            if (!parse_u32_in(argv[2], 1u, SYSCLK_HZ / 2u, &f0) ||
-                !parse_u32_in(argv[3], 1u, SYSCLK_HZ / 2u, &f1)) {
-                printf("ERR: frequencies must be whole Hz, 1-%lu. Nothing was run.\n",
-                       (unsigned long)(SYSCLK_HZ / 2u));
+            // The carrier's range (board.h, image 1.17, V116-F1); was 1 Hz-75 MHz.
+            if (!parse_u32_in(argv[2], BEAM_FREQ_MIN_HZ, BEAM_FREQ_MAX_HZ, &f0) ||
+                !parse_u32_in(argv[3], BEAM_FREQ_MIN_HZ, BEAM_FREQ_MAX_HZ, &f1)) {
+                printf("ERR: frequencies must be whole Hz, %u-%u (the carrier's range).\n"
+                       "     Nothing was run.\n",
+                       (unsigned)BEAM_FREQ_MIN_HZ, (unsigned)BEAM_FREQ_MAX_HZ);
                 return;
             }
             if (!parse_u32_in(argv[4], 2u, 1000u, &n)) { bad_arg("steps", argv[4], "2-1000"); return; }
@@ -3069,14 +3313,19 @@ static void cmd_beam(int argc, char **argv) {
             printf("  step   requested   actual   TOP    level\n");
 
             beam_enable(true);
-            for (uint32_t i = 0; i < n; i++) {
-                uint32_t f = f0 + (uint64_t)(f1 - f0) * i / (n - 1);
-                beam_configure(f, beam_duty(), beam_phase_ticks());
-                printf("  %2lu/%lu  %8lu   %8lu  %5lu  %5lu\n",
-                       (unsigned long)(i + 1), (unsigned long)n, (unsigned long)f,
-                       (unsigned long)beam_actual_freq_hz(), (unsigned long)beam_top(),
-                       (unsigned long)(beam_duty() * (beam_top() + 1)));
-                pitrac_yield_ms(dw);
+            yield_t why;
+            const uint32_t ran = beam_sweep_steps(f0, f1, n, dw, &why);
+            if (why == YIELD_ABORT_KEY) {
+                pitrac_abort_taken();
+                printf("\nSTOPPED after step %lu of %lu -- beam left running at %lu Hz.\n"
+                       "'beam off' when finished.\n", (unsigned long)ran, (unsigned long)n,
+                       (unsigned long)beam_actual_freq_hz());
+                return;
+            }
+            if (why == YIELD_ABORT_FAULT) {
+                printf("\nSTOPPED by a fault (%s) after step %lu of %lu.\n",
+                       fault_name(fault_current()), (unsigned long)ran, (unsigned long)n);
+                return;
             }
             printf("\nsweep done -- beam left running at %lu Hz. 'beam off' when finished.\n",
                    (unsigned long)beam_actual_freq_hz());
@@ -3114,6 +3363,16 @@ static void cmd_link(int argc, char **argv) {
                (unsigned long)(to_ms_since_boot(get_absolute_time()) - s.last_ms));
     else
         printf("requests : none this boot\n");
+    printf("pi cli   : session %08lx, %lu ticket(s) issued; %lu command(s) run, %lu refused\n"
+           "           by the Pi power rule; %lu answered from the record, %lu cancelled\n"
+           "           before they ran, %lu refused (malformed, old session or stale);\n"
+           "           stop asked of %lu, of which %lu stopped early; %lu frame(s) dropped\n"
+           "           while one ran\n",
+           (unsigned long)s.cli_session, (unsigned long)s.cli_tickets,
+           (unsigned long)s.cli_runs, (unsigned long)s.cli_rule,
+           (unsigned long)s.cli_repeats, (unsigned long)s.cli_cancelled,
+           (unsigned long)s.cli_refused, (unsigned long)s.cli_stop_asked,
+           (unsigned long)s.cli_stopped, (unsigned long)s.cli_dropped);
 }
 
 static void cmd_upd(int argc, char **argv) {
@@ -3303,7 +3562,12 @@ static void cmd_fault(int argc, char **argv) {
             // the on-board red LED went dark (it keys off the code).
             bool latched = (power_fsm_state() == PS_FAULT);
             fault_clear();
-            power_request_fault_ack();
+            // From the Pi, the acknowledgement is queued only in FAULT, where
+            // the power rule has already required `fault clear confirm` if it
+            // drops the rail (image 1.14, V113-F4). Elsewhere it would be
+            // dropped by the FSM's next step anyway; not queuing it at all keeps
+            // a remote `fault clear` to the code alone.
+            if (latched || !s_from_pi) power_request_fault_ack();
             if (latched)
                 printf("cleared, and acknowledging FAULT: the rail drops and we\n"
                        "return to STANDBY. Press the button again to power back up.\n");
@@ -3497,25 +3761,97 @@ static void dispatch_command(int argc, char **argv) {
 
 // ---------------------------------------------------------------------------
 
-static void handle_line(void) {
-    char *argv[CLI_MAX_ARGS];
-    int argc = 0;
-    char *p = s_line;
-    while (*p && argc < CLI_MAX_ARGS) {
+// Split a line in place into argv[0..*argc). False (and a message) if it has
+// more than CLI_MAX_ARGS words: then NOTHING runs. Shared by USB and the Pi, so
+// both parse a line the same way.
+static bool split_line(char *line, int *argc, char **argv) {
+    *argc = 0;
+    char *p = line;
+    while (*p && *argc < CLI_MAX_ARGS) {
         while (*p == ' ' || *p == '\t') p++;
         if (!*p) break;
-        argv[argc++] = p;
+        argv[(*argc)++] = p;
         while (*p && *p != ' ' && *p != '\t') p++;
         if (*p) *p++ = '\0';
     }
     while (*p == ' ' || *p == '\t') p++;
     if (*p) {
         printf("ERR: more than %d words -- NOTHING was run.\n", CLI_MAX_ARGS);
-        printf("> ");
-        return;
+        return false;
     }
-    dispatch(argc, argv);
+    return true;
+}
+
+static void handle_line(void) {
+    char *argv[CLI_MAX_ARGS];
+    int argc = 0;
+    if (split_line(s_line, &argc, argv)) dispatch(argc, argv);
     printf("> ");
+}
+
+// The board's state for the Pi-only power rule (link_cli.h), now.
+static link_cli_power_t pi_power_now(void) {
+    link_cli_power_t p;
+    p.off_orderly    = power_fsm_state() == PS_RUNNING;
+    p.fault_ack_cuts = power_fsm_state() == PS_FAULT && gpio_get_out_level(PIN_LATCH_CONTROL);
+    return p;
+}
+
+// The Pi-only power rule for one split line: true if it may be dispatched (any
+// `confirm` removed); otherwise it says why, and nothing runs. The hint at the
+// end names the orderly shutdown only where there is one: until 1.14 every
+// refusal pointed at plain `off`, which in FAULT is itself a hard cut (V113-F4).
+static bool pi_rule_admits(int *argc, char **argv) {
+    const link_cli_power_t now = pi_power_now();
+    const link_cli_rule_t r = link_cli_power_rule(argc, argv, &now);
+    if (r == LINK_CLI_ALLOW) return true;
+    const char *c = argv[0];
+    const pstate_t ps = power_fsm_state();
+    if (r == LINK_CLI_NOT_ORDERLY) {
+        printf("REFUSED from the Pi: 'off' in %s would cut this Pi's power at once, with\n"
+               "  no shutdown: the orderly shutdown runs only from RUNNING. NOTHING was done.\n",
+               power_state_name(ps));
+        if (ps == PS_FAULT)
+            printf("  To end FAULT: 'fault clear confirm' (it drops the rail at once), or the\n"
+                   "  panel button.\n");
+        else if (ps == PS_SHUTTING_DOWN)
+            printf("  A shutdown is already under way.\n");
+        else
+            printf("  Retry once 'stat' shows RUNNING: normally within a second of this Pi's\n"
+                   "  userspace coming up.\n");
+        return false;
+    }
+    if (!strcmp(c, "adc5vcal"))
+        printf("REFUSED from the Pi: 'adc5vcal' sets the scale the supply monitor reads\n"
+               "  +5V_IN with, and a wrong value drops the rail under this Pi at once. From\n"
+               "  the Pi it runs only as 'adc5vcal <volts> confirm'. NOTHING was changed.\n");
+    else if (!strcmp(c, "fault"))
+        printf("REFUSED from the Pi: acknowledging FAULT drops the rail under this Pi at\n"
+               "  once, with no shutdown. From the Pi it runs only as 'fault clear confirm'.\n"
+               "  NOTHING was done.\n");
+    else
+        printf("REFUSED from the Pi: '%s' cuts this Pi's power at once, with no\n"
+               "  shutdown. From the Pi it runs only as '%s confirm'. NOTHING was run.\n",
+               c, !strcmp(c, "forceoff") ? "forceoff"
+                : !strcmp(c, "reset")    ? "reset force" : "bootsel force");
+    if (now.off_orderly && strcmp(c, "adc5vcal"))
+        printf("  'off' is the orderly shutdown.\n");
+    return false;
+}
+
+cli_remote_t cli_run_remote(char *line) {
+    char *argv[CLI_MAX_ARGS];
+    int argc = 0;
+    if (!split_line(line, &argc, argv)) return CLI_REMOTE_RAN;   // its ERR was the output
+    if (argc > 0 && !pi_rule_admits(&argc, argv)) return CLI_REMOTE_PI_RULE;
+    s_from_pi = true;
+    dispatch(argc, argv);
+    s_from_pi = false;
+    return CLI_REMOTE_RAN;
+}
+
+void cli_prompt_redraw(void) {
+    printf("> %.*s", (int)s_len, s_line);
 }
 
 // Pull the phase model out of flash and back into RAM.
@@ -3575,7 +3911,9 @@ void cli_init(void) {
 
 void cli_service(void) {
     int ch;
-    while ((ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+    // Through the console's reader, which takes CR LF as one Enter (service.h):
+    // the command dispatched on the CR must not read the LF as a stop (V115-F1).
+    while ((ch = pitrac_console_getc()) != PICO_ERROR_TIMEOUT) {
         if (ch == '\r' || ch == '\n') {
             putchar('\n');
             s_line[s_len] = '\0';

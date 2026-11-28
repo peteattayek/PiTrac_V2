@@ -36,6 +36,7 @@ uint32_t        to_ms_since_boot(absolute_time_t t);
 void            busy_wait_us(uint64_t us);
 uint32_t        save_and_disable_interrupts(void);
 void            restore_interrupts(uint32_t status);
+void            tight_loop_contents(void);   // a test that runs code polling time defines it
 
 // --- GPIO ---------------------------------------------------------------------
 typedef enum {
@@ -119,8 +120,11 @@ void dma_channel_configure(uint ch, const dma_channel_config *c, volatile void *
 
 // --- PWM (the gate DAC) ---------------------------------------------------------
 typedef struct { uint32_t csr, div, top; } pwm_config;
-typedef struct { struct { uint32_t csr, div, ctr, cc, top; } slice[12]; } pwm_hw_t;
+// `en` for beam.c, which enables its two slices in one write (stop_test, 1.14).
+typedef struct { struct { uint32_t csr, div, ctr, cc, top; } slice[12]; uint32_t en; } pwm_hw_t;
 extern pwm_hw_t *pwm_hw;
+void       pwm_set_counter(uint slice, uint16_t c);
+uint16_t   pwm_get_counter(uint slice);
 uint       pwm_gpio_to_slice_num(uint pin);
 uint       pwm_gpio_to_channel(uint pin);
 pwm_config pwm_get_default_config(void);

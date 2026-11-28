@@ -50,6 +50,17 @@ bool power_request_on(void);
 void power_request_shutdown(void);
 void power_request_force_off(void);   // cancels pending requests; skips the orderly sequence
 
+// The shutdown a Pi may ask for itself (`off` over the link; image 1.14, review
+// finding V113-F4): queued only when it will be the ORDERLY one -- RUNNING now,
+// so the next step is begin_shutdown() -- and true then. Anywhere else nothing
+// is queued and it returns false: in FAULT and BENCH_RUNNING the same request
+// drops the latch at once, and before RUNNING it would wait to be consumed in
+// whichever of those the FSM reaches. A request queued in RUNNING cannot be
+// consumed anywhere else: RUNNING's only exits are begin_shutdown(), which takes
+// it, and FORCE_OFF, which clears every request. power_request_shutdown(), for
+// USB and the button's equivalent, is unchanged.
+bool power_request_shutdown_orderly(void);
+
 // Acknowledge a latched PS_FAULT, exactly as a button press does: clear the
 // fault code AND leave PS_FAULT via FORCE_OFF, so the rail drops and we return
 // to STANDBY. Ignored in every other state.

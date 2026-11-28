@@ -1770,6 +1770,30 @@ static bool proto_shapes(void) {
     return true;
 }
 
+// Protocol 4 (image 1.16; 3 in the rejected 1.14 and 1.15). The CLI family -- CLI,
+// CLI_ABORT, CLI_BEGIN -- is pi_link.c's, through link_cli.c's book
+// (tests/link_test.c), and never reaches this function: if one ever did it is
+// refused, so nothing can run or be cancelled by that path. CLI_OUT is never a
+// request.
+_Static_assert(LINK_PROTO_VERSION == 4u, "image 1.16 speaks link protocol 4");
+// The link's statuses stay clear of every fwu_err_t, and of each other.
+_Static_assert(LINK_E_MISMATCH >= FWU_E__COUNT, "a LINK_E_* collides with a fwu_err_t");
+_Static_assert(LINK_E_MISMATCH < LINK_E_STALE && LINK_E_STALE < LINK_E_SESSION &&
+               LINK_E_SESSION < LINK_E_PI_RULE && LINK_E_PI_RULE < LINK_E_LENGTH &&
+               LINK_E_LENGTH < LINK_E_UNKNOWN, "the LINK_E_* are distinct");
+
+static bool proto_cli_requests(void) {
+    uint8_t r[LINK_MAX_PAYLOAD], p[12] = { 1, 0, 0, 0, 1, 0, 0, 0, 'i', 'd', 0, 0 };
+    CHECK(req(LINK_CLI, p, 10, r) == 1u && r[0] == LINK_E_UNKNOWN);
+    CHECK(req(LINK_CLI_OUT, p, 10, r) == 1u && r[0] == LINK_E_UNKNOWN);
+    CHECK(req(LINK_CLI_ABORT, p, 8, r) == 1u && r[0] == LINK_E_UNKNOWN);
+    CHECK(req(LINK_CLI_ABORT, NULL, 0, r) == 1u && r[0] == LINK_E_UNKNOWN);
+    CHECK(req(LINK_CLI_BEGIN, NULL, 0, r) == 1u && r[0] == LINK_E_UNKNOWN);
+    CHECK(req((uint8_t)(LINK_CLI_ABORT | LINK_RESPONSE), NULL, 0, r) == 0u);   // an echo
+    CHECK(status().state == FWU_IDLE);
+    return true;
+}
+
 static bool proto_info_fields(void) {
     uint8_t r[LINK_MAX_PAYLOAD];
     size_t n = req(LINK_PING, NULL, 0, r);
@@ -1859,7 +1883,7 @@ int main(int argc, char **argv) {
         TEST(repower_refused_is_retried), TEST(repower_fault_ends_it), TEST(abort_cancels_repower),
         TEST(reset_during_shutdown_repowers), TEST(reset_during_install_repowers),
         TEST(note_commit_resets),
-        TEST(proto_shapes), TEST(proto_info_fields), TEST(proto_update_flow),
+        TEST(proto_shapes), TEST(proto_cli_requests), TEST(proto_info_fields), TEST(proto_update_flow),
     };
     if (argc != 2) {
         fprintf(stderr, "usage: %s <test>\n", argv[0]);

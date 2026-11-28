@@ -587,7 +587,9 @@ beam clamp
 beam
 ```
 `beam clamp` sets 1 kHz / 50 % **and turns the beam on at once**. U9 holds the real duty to
-~12 %, which is why this is safe.
+~12 %, which is why this is safe. From image 1.17 (in review, not released; 1.16 was
+rejected) it sets 1 kHz / 25 %: 250 µs commanded instead of 500 µs, still past every clamp
+measured. The steps below are the same; read "500 µs" as "250 µs" on 1.17.
 
 **Pass:**
 - `beam` reads `TOP=49999, clkdiv=3, 1000 Hz`.
@@ -621,7 +623,9 @@ beam
 ```
 🔴 `beam clamp` leaves the duty at 50 %. A bare `beam freq 104166` after it would be cut back
 only to the firmware's 35 % ceiling, which is still above the 25 % CR-12 allows, and U9
-cannot help at 104 kHz. So `beam duty 2` comes first.
+cannot help at 104 kHz. So `beam duty 2` comes first. On 1.17 it leaves 25 %, the most the
+firmware allows anywhere, and `beam duty 2` still comes first: 25 % at 104 kHz is the full
+operating point, not a resting one.
 
 **Pass:** `beam` reads `freq 104166 Hz (TOP=1439)`, at 2 %.
 
@@ -633,7 +637,210 @@ cannot help at 104 kHz. So `beam duty 2` comes first.
   - At or under 122 µs, the ceiling is conservative.
   - **Longer than 122 µs:** the ceiling under-reads by clamp/122 at those low frequencies. Note
     it, and run this board's beam below ~3 kHz only for `beam clamp`'s 1 kHz.
+  - **From image 1.17 no check uses a U9 width.** The 25 % is on the PWM pin's high time, and
+    U9's ~CLR is that pin, so U9 itself can only shorten a pulse whatever this board's clamp.
+    The measured width is kept for the record, and for `beam`'s estimate of the LED's duty.
+    Candidates 1.14 and 1.15 assumed 122 µs and then 200 µs, and failed review on it
+    ([V115-F2](captures/review_2026-11-25/INDEPENDENT_REVIEW_v1.15.md)). What the pin's bound
+    does not cover, the drive chain's stretch, Step 6.3b measures.
 - The strobe's limit is U5's clamp, not U9's: §12 measures it.
+
+### Step 6.3b — The drive chain's stretch, at the carrier, 150 and 200 kHz (image 1.17 or later; the MSO54B)
+
+From image 1.17 the beam's 25 % binds the PWM pin, GPIO31 (the owner, 2026-11-26; review
+finding [V116-F1](captures/review_2026-11-26/INDEPENDENT_REVIEW_v1.16.md)). The LED's on-time
+is the pin's plus the drive chain's **stretch**, Δ: how much longer U9, U10 and Q11 take to
+turn off than to turn on. No part in the chain publishes a maximum for it, and Board 1's Q2
+reading (1.2 of 4.0 µs at 250 kHz, `BENCH_P2_BEAM.md` 2d) bounds it only to about ±50 ns. So
+each board's is measured.
+
+**What this qualifies, and what it does not** (image 1.18, review finding
+[V117-F1](captures/review_2026-11-26_v1.17/INDEPENDENT_REVIEW_v1.17.md); image 1.19,
+[V118-F2](captures/review_2026-11-26_v1.18/INDEPENDENT_REVIEW_v1.18.md)):
+- **The quantity:** TP5's low (LED-on) width at 50 % of its swing, an electrical timing
+  quantity, at each frequency measured. Δ is that width minus the pin's high time there, taken
+  from the period measured on the same trace. The LED's electrical duty there is about
+  width / period.
+- **Not the thermal quantity.** CR-12's limit is on the LED's average power. This step checks
+  only that the drive chain adds no more than a few nanoseconds of on-time.
+- **Only the three settings measured:** the operating carrier, 104.17 kHz, then 150 and
+  200 kHz.
+  - Agreement between the three is a consistency check on the board and the readings. It does
+    not bound the stretch at any setting in between, and nothing is claimed for one.
+  - `cal model` and `scan carrier` sweep **80–200 kHz** by default (5 and 16 settings), mostly at
+    settings this step does not measure. There the pin's 25 % holds (the firmware's); the LED's
+    excess over it is not measured.
+  - Nothing is recorded for a setting that was not measured. 1.17's version of this step
+    measured at 200 kHz and recorded a duty for the carrier: an extrapolation. 1.18's said that
+    agreement bounded 104–200 kHz, "where the scans run": wrong on both counts.
+
+**State:** as §6: rail up, the beam off at 2 %, the scope on TP5 as Steps 6.2 and 6.3: the
+probe's tip on TP5 and its ground on board GND, **never a ground on TP5** (TP5 is Q11's drain:
+a ground there shorts it to earth and runs the LED at DC; `BENCH_P2_BEAM.md`, "Where the scope
+ground goes"). Attach or move a probe only with the PSU and USB off. Full bandwidth (no 20 MHz
+limit): this reads edge timing.
+
+**The scope: the Tek MSO54B.** The step needs records that hold many periods, finely sampled.
+The TDS 1002 cannot: its 2,500-point record spans 2.5 µs at its 1 GS/s, under one period, and
+a record of two periods (10 to 19.2 µs) samples every 4 to 7.7 ns. The Saleae's analog inputs
+sample every 20 ns (50 MS/s), and its digital inputs cannot read a 40 % or 60 % level. Without
+the MSO54B this step waits.
+
+**The acquisition** (image 1.20, review finding
+[V119-F3](captures/review_2026-11-26_v1.19/INDEPENDENT_REVIEW_v1.19.md)). 1.19 gave only a
+display scale, 200 ns/div (500 ns/div at the carrier). As a record, ten divisions of that span
+2 or 5 µs, shorter than one period (5 to 9.6 µs), so no record held two like edges and the
+period could not be measured. Now:
+- **Horizontal: Manual, sample rate 6.25 GS/s, record length 1.25 Mpoints.** That is a record
+  of 200 µs (20 µs/div): about 20 periods at the carrier, 30 at 150 kHz and 40 at 200 kHz.
+  Ts, the sample interval, is 0.16 ns.
+- **Acquisition mode: Sample.** Not Average: averaging does not move a ringing edge's 50 %
+  crossing back where it belongs (the threshold term t below is the allowance for that), and
+  each pulse is to be measured as it is.
+- **Trigger:** edge, falling, on TP5 at 50 % of its swing; Normal.
+- **Two measurements on TP5, over the whole record:** **Negative Pulse Width** (W) and
+  **Period** (T, between like edges). Reference levels as a percentage of TP5's swing (base
+  to top), the mid level at 50 %. **No gating**: every complete pulse and period in the
+  record, not only those on screen or in a zoom. Statistics on: population, mean, minimum,
+  maximum.
+- **The fine scale is for looking:** a zoom at 5 ns/div on a falling and on a rising edge of
+  TP5 shows whether an edge rings back through the 40–60 % band. The measurements stay on the
+  whole record.
+
+**Before the readings, at each frequency: is every edge counted?** (image 1.21, review note
+[V120-N3](captures/review_2026-11-27_v1.20/INDEPENDENT_REVIEW_v1.20.md)). The rules below screen
+the intervals the scope measured. A record, or an edge, that it left out of its statistics adds
+no minimum and no maximum, so they cannot show it. So, once per frequency:
+- **One record at a time:** clear the statistics, press Single, and read both populations.
+  Three times. Compare **each record** to its own acquired time endpoints, trigger
+  position and measured period, not to the nominal frequency times 200 µs. Count
+  visible 50 % crossings on the acquired trace (zoom the endpoints as needed):
+  for T, use the scope's period-edge polarity and count complete intervals between
+  adjacent like edges, i.e. one fewer than the number of those edges; for W, count
+  falling edges whose following rising edge is also in the record. Check the edge
+  spacing against the measured period from the trigger out to both ends; do not
+  extrapolate an edge just outside the record. For example, 29 like edges give
+  28 periods, and 39 give 38, both possible with a centered trigger near 150 and
+  200 kHz respectively. W need not equal T. Both population increments must match
+  their respective counts. If the endpoints, polarity or measurement population
+  cannot be resolved, or a mismatch persists after checking gating, the frequency
+  is INCONCLUSIVE. This changes neither the uncertainty calculation nor the +5 ns target.
+- **How the scope marks a measurement it could not make:** note what it shows for one (a mark
+  in the measurement's badge or results, or a count of them). A reading during which any
+  record was so marked does not count.
+
+**One reading of W and T:** clear the statistics, run, and stop once **both populations are
+at least 1000** (about 50 records at the carrier, 34 at 150 kHz, 25 at 200 kHz). Read both
+means, minima and maxima. **A reading counts only if all three hold.** Together with the check
+above, they are a screen for gross errors, not a proof that every edge was counted:
+1. **The rate:** the scope shows 6.25 GS/s. If it shows less (raising the record length
+   without the rate can lower it), set it back and read again. A Ts over 0.4 ns is never
+   used: there Ts's share of U, 1.25 Ts, would pass a tenth of the 5 ns target.
+2. **The populations:** each at least 1000.
+3. **No gross error among the measured intervals:** each measurement's minimum and maximum are
+   within 5 % of its mean. A missed edge inside a measured interval makes a period or a width
+   half a period longer or more; an edge ringing back through the threshold adds a sliver a few
+   ns long. Either lands far outside 5 %, at least 62 ns at the shortest width. A board whose
+   widths really spread that far fails here too, which is the safe side. What the scope left
+   out of its statistics altogether is not seen here: that is what the check above is for.
+
+A reading that fails 1, 2 or 3, or during which the scope marked a measurement it could not
+make, is not a reading: put the setup right (rate, trigger, probe) and read again. If it still
+fails, the frequency is INCONCLUSIVE. So is a crossing the zoom shows as unresolved.
+
+**At each frequency, from the readings.** U below is a screening budget built from them, not a
+calibrated coverage interval: five readings sample repeatability, not an error they share.
+- **W and T:** five readings, the statistics cleared between them. W and T are the means of the
+  five; s_W and s_T are their standard deviations.
+- **The period check:** T must be within 0.03 % of the table's. That is ten times Y1's ±30 ppm
+  at 25 °C, with room for its drift and the scope's timebase, and under half the gap to the
+  nearest other setting: 0.069 % at the carrier, one count in 1440. Anything further is the
+  wrong setting or the wrong signal: stop.
+- **Threshold, t:** one more reading with the mid level at 40 %, and one at 60 %, each
+  counting as above. t is the **larger** of |W40 − W| and |W60 − W|: never negative, and the
+  worse side when the two edges respond differently. If an edge rings back through the 40–60 %
+  band (the zoom shows it, or rule 3 fails at 40 or 60 %), the width is not resolved. Then,
+  with the PSU and USB off, put a spring ground on the probe: its tip on TP5, the spring on a
+  board GND point within its reach, never on TP5. Read again. With no board GND within the
+  spring's reach, record INCONCLUSIVE.
+- **Resolution, Ts:** the scope's sample interval as it shows it: 0.16 ns at 6.25 GS/s.
+- **The pin's high time, H = k × T,** with k = level / (TOP + 1) from the table below. It is taken
+  from the measured period, not the programmed one. The board's crystal and the scope's timebase
+  stretch the width and the period by the same fraction, so in Δ their errors cancel, leaving
+  that fraction of Δ itself: under 0.001 ns at 5 ns.
+  - 1.18 used the programmed high time, and said the clock's and timebase's errors were under
+    0.01 ns. Y1 is an ABM8-272-T3. As the review reads Abracon's drawing, it is ±30 ppm at
+    25 °C, before temperature, which alone is 0.072 ns over 2400 ns (V118-F2).
+- **Δ = W − k × T**, and **U = 2 s_W + t + Ts + k (2 s_T + Ts).**
+- **The beam runs at 25 % for a few minutes at each frequency.** §6's FLIR stays on the LED.
+
+**Do:**
+```
+beam duty 2
+beam freq 104166
+beam on
+beam ramp 25 200
+beam
+```
+Measure at the carrier. Then, with the beam still on at 25 %:
+```
+beam freq 150000
+beam
+```
+Measure. Then:
+```
+beam freq 200000
+beam
+```
+Measure. Then, at once:
+```
+beam duty 2
+beam off
+beam freq 104166
+beam
+```
+
+| `beam freq` | `beam` reads | k = level / (TOP + 1) | Period (nominal) | The pin's high time (nominal) |
+|---|---|---|---|---|
+| 104166 | `TOP=1439`, `level 360: the pin high 2.400 of 9.600 us` | **360 / 1440 = 0.25** | 9600.0 ns | 2400.0 ns |
+| 150000 | `TOP=999`, `level 250: the pin high 1.667 of 6.667 us` | **250 / 1000 = 0.25** | 6666.7 ns | 1666.7 ns |
+| 200000 | `TOP=749`, `level 187: the pin high 1.247 of 5.000 us` | **187 / 750 = 0.249333** | 5000.0 ns | 1246.7 ns |
+
+The nominal columns are for the 0.03 % check and for orientation. Δ uses k × the measured
+period.
+
+**The criterion, at each frequency** (+5 ns is a screening target, not a proof of a strict duty
+limit; the owner may change it):
+- **PASS:** Δ + U ≤ +5 ns. A negative Δ (the chain shortens the pulse) passes the same way.
+- **FAIL:** Δ − U > +5 ns.
+- **INCONCLUSIVE:** anything between, a frequency whose single records did not count every edge,
+  or one where no reading counts (rules 1–3). Read
+  again with larger populations (10,000 a reading), which narrows s_W and s_T; Ts is already
+  the MSO54B's finest. If it is still inconclusive, treat it as a fail.
+
+**The consistency check, across the three:** the intervals [Δ − U, Δ + U] must have a point in
+common: the largest Δ − U is no more than the smallest Δ + U. If not, the stretch differs between
+the settings by more than the readings resolve, or one reading is wrong. Passing it says nothing
+about a setting that was not measured.
+
+**What +5 ns would mean:**
+- At the carrier, 25.00 % + 5 ns × 104.17 kHz = **25.05 %**, about +5.7 mW in D11. At CR-12's
+  24.5 K/W that is about **0.14 °C**.
+- At a setting near the top where 25 % of the period rounds exactly (188 of 752 counts, about
+  199.5 kHz), **25.10 %**, if the stretch there were +5 ns. That setting is not measured here.
+
+**Pass:** `beam` reads `freq 104166 Hz (TOP=1439)` at 2 %, all three frequencies PASS, and the
+consistency check holds.
+
+**Stop if:** any FAIL or unresolved INCONCLUSIVE, a period off by more than 0.03 %, or the
+consistency check fails. Record it, and report it before the beam runs at 25 % on this board;
+the owner decides.
+
+**Record:** 📝 the sample rate and record length used. At each of the three frequencies: the
+three single records' populations (W and T), W, s_W, T, s_T, k, t, Ts, U and Δ (ns), the smallest
+population of any reading, and the verdict. Also
+the LED's electrical duty **at the carrier, from the carrier's own reading**: W / T, written as
+"about". Nothing for a setting that was not measured.
 
 ### Step 6.4 — Thermals at 25 %
 
@@ -1813,6 +2020,7 @@ the threshold applies from 1.7.
 | 5 | Standby current | 32 mA | *not recorded* | *not recorded* | |
 | 5 | Rail-up idle current | 129 mA @ 5.2 V | *not recorded* | *not recorded* | |
 | 6 | **U9 clamp width** | 122.68 µs | *not recorded* | *not recorded* | |
+| 6.3b | **Drive stretch Δ ± U at 104.17 / 150 / 200 kHz, and the consistency check** (MSO54B, 200 µs records at 6.25 GS/s; screen populations against the visible complete intervals) | *not measured* (Q2 at 250 kHz: within ±50 ns) | *not measured* | *not measured* | |
 | 6 | Beam temp at 25 % duty | 87.5 °C plateau | ⚠ **98 °C at 10 min** (sink 78 °C) | *not recorded* | |
 | 7 | TP7 TIA_Out, beam off | 2.59 V | **2.589 V**, 2.4 mV p-p ✅ | *not recorded* | |
 | 7 | ADC5 σ, beam on 25 %, TRACK | — | **2.19 mV** ✅ | *not recorded* | |
@@ -1880,7 +2088,7 @@ be deleted from here.
 | GPIO33 polarity: **TRACK is LOW** | the TMUX1219 truth table, plus 4 independent bench confirmations |
 | **Carrier = 104.1667 kHz, fixed for every board** | design decision 2026-08-28, `PROGRESS.md` §8 |
 | PWM slice collisions, PIO `GPIOBASE` allocation | `ARCHITECTURE.md` A2/A7; A7 fixed in firmware 2026-10-02 (the GPIO12 ready LED is SIO on/off) |
-| Q1's mechanism (U9 clamp ≈ K·R·C), Q2 (no duty limit to 250 kHz) | Phase 2c / 2d |
+| Q1's mechanism (U9 clamp ≈ K·R·C), Q2 (no duty-fidelity limit to 250 kHz, read to two figures; the stretch is per board, Step 6.3b) | Phase 2c / 2d |
 | Ambient rejection ≈ **48 dB**; the lock-in premise | Phase 3.3, board 2 |
 | The "bursty noise" was **beam return off the room**, not a fault | Phase 3.3, board 2 |
 | Netlist-derived corner frequencies | `HARDWARE_REFERENCE.md` |
@@ -1899,6 +2107,7 @@ be deleted from here.
 | Latch guard + sustained supply monitor 🔴 | it is what stops a Pi being fed through a 1 A diode | 5 |
 | Beam thermals | *this* heatsink's mounting: board 1 87.5 °C, board 2 98 °C | 6 |
 | **U9 clamp width** | the 109–136 µs band from 1 % R / 10 % C | 6 |
+| **The drive chain's stretch Δ** | U9, U10 and Q11's turn-off against turn-on delays; no part publishes a maximum. The beam's 25 % binds the pin, and Δ is the LED's excess (owner, 2026-11-26), measured at three settings: the carrier itself, 150 and 200 kHz, with the pin's high time from the measured period. Nothing is claimed between them | 6.3b |
 | Static detect-chain health | assembly | 7 |
 | `hpf test` polarity + **switch leakage** | leakage spans 52–250 pA across boards | 7 |
 | CR-15 baffle acceptance | optics and operator discipline | 8 |

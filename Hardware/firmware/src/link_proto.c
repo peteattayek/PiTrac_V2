@@ -131,6 +131,10 @@ size_t link_proto_handle(uint8_t type, const uint8_t *req, size_t req_len,
     case LINK_UPD_APPLY:  if (req_len) break; return put8(rsp, 0u, (uint8_t)fwu_apply());
     case LINK_UPD_ABORT:  if (req_len) break; return put8(rsp, 0u, (uint8_t)fwu_abort());
 
+    // The CLI family (CLI, CLI_ABORT, CLI_BEGIN) is pi_link.c's, through
+    // link_cli.c: it needs the board's ticket record, and CLI the UART to stream
+    // its output. None of them reaches here. Were one to, it is refused, and
+    // nothing runs.
     default:
         return put8(rsp, 0u, LINK_E_UNKNOWN);
     }

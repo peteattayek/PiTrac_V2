@@ -396,14 +396,45 @@
 // part and RC. They have already diverged: U5 measured 135 us on board 1 against
 // U9's 122.68 us. A shared constant would silently move the beam's safety check
 // with the strobe's.
+//
+// Board 1's figure, for what `beam` and `beam clamp` print as an ESTIMATE. No
+// check uses it, and no check uses any U9 width (image 1.16, review finding
+// V115-F2): the duty ceiling is on the PWM pin's high time (beam.h), and U9's
+// ~CLR is that pin, so U9 itself can only shorten the pulse. Widths of this circuit measured so far: U9 120.96 and 122.68 us
+// (boards 4 and 1), U5 134 and 135 us (boards 5 and 1; the same part, R and C).
+// Board 5's U9 has not been measured. No maximum is published for this R and C
+// (R68 56 k 1 %, C57 2.2 nF C0G 5 %: R*C 115.9-130.7 us; TI gives K in K*R*C only
+// as typical curves), so a width of any board is not known until it is measured.
+// Images 1.14 and 1.15 bounded the LED's duty with 122 us and then 200 us; neither
+// held for every board.
 #define BEAM_ONESHOT_CLAMP_US    122u    // U9, MEASURED 2026-08-13 (122.68 us)
 
-// Average-current ceiling for the beam LED, as an EFFECTIVE duty after the U9
-// clamp -- see beam_effective_duty(). 35 % is the design ceiling; CR-12 lowered
-// the intended sustained operating point to 25 % (junction ~87.5 C) because 30 %
-// puts it at 123-133 C against a 145 C max.
+// Average-current ceiling for the beam: since image 1.16 the Modulation_PWM pin's
+// high time as a share of its period (beam.h). The LED's duty is the pin's plus
+// the drive chain's stretch times the frequency, measured per board (owner,
+// 2026-11-26; image 1.17, review finding V116-F1). 35 % is the design ceiling;
+// CR-12 lowered the intended sustained operating point to 25 % (base ~87.5 C)
+// because 30 % puts the junction at 123-133 C against a 145 C max.
 #define BEAM_DUTY_CEILING      0.35f
 #define BEAM_DUTY_OPERATING    0.25f   // Phase 3 onward; see NEXT_BOARD_REV CR-12
+
+// THE CARRIER'S RANGE, enforced in beam.c for every path that sets it (`beam freq`,
+// `beam sweep`, `beam clamp`, `cal model`, `scan carrier`, a restore, the saved
+// config): beam_configure() refuses anything else and changes nothing (owner,
+// 2026-11-26; image 1.17, review finding V116-F1). Until 1.16 the CLI took 1 Hz to
+// 75 MHz, far past anything measured.
+//  - 1 kHz is `beam clamp`'s, the lowest anything uses. At 25 % the pin's longest
+//    pulse is then 250 us, whatever U9 does.
+//  - 200 kHz is above everything in use: the carrier is 104.17 kHz, and `cal model`
+//    and `scan carrier` default to 80-200 kHz. Board 1's Q2 sweep went to 250 kHz
+//    (BENCH_P2_BEAM.md 2d), but it read the duty to two figures (1.2 of 4.0 us),
+//    which bounds the chain's stretch only to about +-50 ns. BRINGUP_NEW_BOARD.md
+//    Step 6.3b measures each board's at the carrier and at 150 and 200 kHz.
+#define BEAM_FREQ_MIN_HZ          1000u
+#define BEAM_FREQ_MAX_HZ        200000u
+// The same range as a period in sysclk ticks (divider x (TOP + 1)): 750..150000.
+#define BEAM_PERIOD_MIN_TICKS   (SYSCLK_HZ / BEAM_FREQ_MAX_HZ)
+#define BEAM_PERIOD_MAX_TICKS   (SYSCLK_HZ / BEAM_FREQ_MIN_HZ)
 
 // DAC PWM: TOP+1 = 1024 -> 146.5 kHz, 3.2 mV steps.
 //
